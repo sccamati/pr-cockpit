@@ -6,7 +6,7 @@ PR Cockpit helps developers understand changes in pull requests. This first slic
 
 - .NET SDK 10
 - Node.js 24 and npm
-- Access to Azure DevOps Services and a short-lived PAT with read access to projects, code, and linked work items
+- Access to Azure DevOps Services and a short-lived PAT with **Code (Read)** and **Project and team (Read)** scopes. The current app reads linked work item IDs through the Git API, so it does not need **Work items (Read)**.
 
 ## Azure DevOps configuration
 
