@@ -48,7 +48,9 @@ public static class AzureDevOpsMapper
     public static ChangedFile ChangedFile(JsonElement value) => new(
         RequiredString(value.GetProperty("item"), "path"),
         RequiredString(value, "changeType"),
-        value.TryGetProperty("originalPath", out var originalPath) ? originalPath.GetString() : null);
+        value.TryGetProperty("originalPath", out var originalPath) ? originalPath.GetString() : null,
+        // Tolerant on purpose: a delete has no blob, and the HTTP fakes in the tests omit it.
+        value.GetProperty("item").TryGetProperty("objectId", out var objectId) ? objectId.GetString() : null);
 
     public static WorkItem WorkItem(JsonElement value) => new(
         RequiredString(value, "id"), RequiredString(value, "url"));

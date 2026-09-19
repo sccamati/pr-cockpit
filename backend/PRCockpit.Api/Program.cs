@@ -12,6 +12,7 @@ builder.Services.AddHttpClient<AzureDevOpsClient>(client =>
 builder.Services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
 builder.Services.AddSingleton<ChecklistStore>();
 builder.Services.AddSingleton<SummaryStore>();
+builder.Services.AddSingleton<ReviewProgressStore>();
 
 var app = builder.Build();
 
@@ -71,6 +72,25 @@ api.MapPost("/projects/{project}/repositories/{repositoryId}/pull-requests/{pull
         await store.SaveAsync(project, repositoryId, pullRequestId, result, ct);
         return result;
     }));
+
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/file-review-progress", async (
+    string project, string repositoryId, ReviewProgressStore store, CancellationToken ct) =>
+    await Execute(() => store.GetProgressAsync(project, repositoryId, ct)));
+
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/file-reviews", async (
+    string project, string repositoryId, int pullRequestId, ReviewProgressStore store, CancellationToken ct) =>
+    await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
+
+// The file path travels in the body: a route segment cannot carry a slash-laden path safely.
+api.MapPut("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/file-reviews", async (
+    string project, string repositoryId, int pullRequestId, FileReviewUpdate update,
+    ReviewProgressStore store, CancellationToken ct) =>
+    await Execute(() => store.SetFileAsync(project, repositoryId, pullRequestId, update, ct)));
+
+api.MapPut("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/reading-path", async (
+    string project, string repositoryId, int pullRequestId, ReadingPathUpdate update,
+    ReviewProgressStore store, CancellationToken ct) =>
+    await Execute(() => store.SetReadingPathAsync(project, repositoryId, pullRequestId, update.Paths, ct)));
 
 api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/checklist", async (
     string project, string repositoryId, int pullRequestId, ChecklistStore store, CancellationToken ct) =>

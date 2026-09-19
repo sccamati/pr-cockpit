@@ -4,7 +4,10 @@ public record Project(string Id, string Name);
 public record Repository(string Id, string Name);
 public record Reviewer(string Name, int Vote);
 public record WorkItem(string Id, string Url);
-public record ChangedFile(string Path, string ChangeType, string? OriginalPath);
+// ObjectId is the blob id of the file at this iteration. It changes if and only if this
+// file's content changed, which is what lets a reviewed marker survive an unrelated commit.
+// Optional so every existing construction site, including the tests, keeps compiling.
+public record ChangedFile(string Path, string ChangeType, string? OriginalPath, string? ObjectId = null);
 public record Commit(string Id, string Message, string Author, DateTimeOffset? AuthoredAt);
 public record FileDiff(string Path, string? OriginalPath, string Kind, string? OriginalText, string? ModifiedText);
 

@@ -116,10 +116,26 @@ Status: zaimplementowane we frontendzie. Backend nietknięty.
 
 **Zależności:** dodano `markdown-it` (MIT, 15.0.2). `dompurify` (MPL-2.0 OR Apache-2.0, 3.4.15) był już w drzewie przez monaco-editor i został awansowany do zależności bezpośredniej; przypięcie w `overrides` zmieniono na `$dompurify`, żeby zachować wymuszenie wersji w całym drzewie bez duplikowania numeru.
 
+## Wdrożone — trwała pamięć czytania
+
+### B-11 — Trwały postęp czytania i ścieżka czytania
+
+Status: zaimplementowane po obu stronach.
+
+**Dlaczego:** znacznik „Obejrzałem” i ścieżka kluczowych plików żyły wyłącznie w `ref`-ach Vue i ginęły po odświeżeniu. To była techniczna przyczyna zgłoszenia „nie pamiętam, co czytałem”.
+
+**Zakres:** `ReviewProgressStore` na wzór `ChecklistStore`, reużywający `ChecklistException`, więc `Execute` w `Program.cs` nie wymagał zmiany. Cztery nowe trasy (odczyt stanu, zapis pliku, zapis ścieżki, zbiorczy postęp dla repozytorium). `ChangedFile` niesie teraz `objectId`, przechwycony z odpowiedzi, którą klient i tak pobierał. Front: stan per PR zamiast słowników kluczowanych po PR, zapis optymistyczny z wycofaniem, licznik `x/y plików` na liście PR, odznaka „zmienione” i wznowienie sesji na pierwszym nieprzeczytanym pliku.
+
+**Reguła nieaktualności:** znacznik nigdy nie jest kasowany przez backend. Staje się nieaktualny tylko przy pozytywnym dowodzie zmiany — niezgodny blob ID, a w jego braku niezgodne SHA głowy. Odrzucono kasowanie znaczników przy nowym commicie (utrata danych wpisanych ręcznie) oraz milczące utrzymywanie ich (kłamstwo o jedynej rzeczy, do której narzędzie istnieje).
+
+**Zweryfikowane:** 48 testów backendu, w tym 16 nowych testów magazynu na tymczasowym pliku SQLite: obieg oznacz→odznacz, przestemplowanie tożsamości, rozdział per PR i repozytorium, odrzucenie złej ścieżki, złego blob ID, braku flagi, ścieżki czytania ponad limit i z duplikatem, oraz limit 2000 wierszy wraz z tym, że istniejący wiersz nadal da się zaktualizować po jego osiągnięciu. Frontend: 33 testy, build przechodzi.
+
+**Niesprawdzone:** działanie na rzeczywistym PR w Azure DevOps — w szczególności czy `item.objectId` faktycznie przychodzi dla wszystkich typów zmian (dodanie, usunięcie, przeniesienie) i czy znacznik poprawnie przeżywa dorzucenie commita do PR.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
-- **Trwały postęp czytania:** znacznik „Obejrzałem” i ścieżka kluczowych plików nadal giną po odświeżeniu; plan zakłada magazyn SQLite na wzór `ChecklistStore` i klasyfikację nieaktualności po `objectId` pliku.
+- **Entity Framework Core i przejście na SQL Server:** decyzja użytkownika. Obecne `CREATE TABLE IF NOT EXISTS` przy każdej operacji nie potrafi rozwinąć schematu — dołożenie kolumny do istniejącej bazy po cichu nic nie zrobi. Migracje EF to naprawiają, a dostawca staje się wyborem konfiguracji. Obejmie wszystkie trzy magazyny naraz. Odchodzi od PRODUCT.md §14, który wyklucza Azure SQL na tym etapie — zapis do aktualizacji przy tej zmianie.
 - **Komentarze Azure DevOps:** wątki PR, najpierw do odczytu (bez zmiany PAT), potem zapis za wyłącznikiem konfiguracyjnym.
 - **Quality i Architecture:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
 - **Lokalne repozytorium i zapis pozostałych analiz:** osobne etapy po Summary.

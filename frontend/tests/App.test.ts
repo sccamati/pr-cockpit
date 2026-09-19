@@ -13,6 +13,10 @@ const api = vi.hoisted(() => ({
   generateSummary: vi.fn(),
   savedSummary: vi.fn(),
   checklist: vi.fn(),
+  fileReviews: vi.fn(),
+  setFileReviewed: vi.fn(),
+  setReadingPath: vi.fn(),
+  fileReviewProgress: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -70,6 +74,15 @@ beforeEach(() => {
       wasLimited: true, omittedFiles: [{ path: '/tests/third.cs', reason: 'fileCharacterLimit' }],
     },
   })
+  api.fileReviews.mockResolvedValue({ files: [], readingPath: [], updatedAt: null })
+  api.fileReviewProgress.mockResolvedValue([])
+  api.setReadingPath.mockImplementation(async (_project, _repository, _id, paths) => ({ paths, updatedAt: null }))
+  api.setFileReviewed.mockImplementation(async (_project, _repository, _id, update) => ({
+    entry: update.reviewed
+      ? { path: update.path, blobId: update.blobId ?? null, headSha: update.headCommitSha ?? null, updatedAt: '2026-09-01T12:00:00Z' }
+      : null,
+    reviewedCount: update.reviewed ? 1 : 0,
+  }))
   window.matchMedia = vi.fn().mockReturnValue({ matches: false })
 })
 

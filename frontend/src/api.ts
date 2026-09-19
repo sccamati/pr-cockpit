@@ -2,7 +2,7 @@ export interface Project { id: string; name: string }
 export interface Repository { id: string; name: string }
 export interface Reviewer { name: string; vote: number }
 export interface WorkItem { id: string; url: string }
-export interface ChangedFile { path: string; changeType: string; originalPath: string | null }
+export interface ChangedFile { path: string; changeType: string; originalPath: string | null; objectId?: string | null }
 export interface Commit { id: string; message: string; author: string; authoredAt: string | null }
 interface FileDiffBase { path: string; originalPath: string | null }
 export type FileDiff = FileDiffBase & (
@@ -68,6 +68,23 @@ export interface SummaryResponse {
 }
 export interface StoredSummary { result: SummaryResponse; savedAt: string }
 
+export interface FileReviewEntry { path: string; blobId: string | null; headSha: string | null; updatedAt: string }
+export interface FileReviewState {
+  files: FileReviewEntry[]
+  readingPath: string[]
+  updatedAt: string | null
+}
+export interface FileReviewUpdate {
+  path: string
+  reviewed: boolean
+  blobId?: string | null
+  headCommitSha?: string | null
+  changedFilesCount?: number
+}
+export interface FileReviewResult { entry: FileReviewEntry | null; reviewedCount: number }
+export interface ReadingPathState { paths: string[]; updatedAt: string | null }
+export interface FileReviewProgress { pullRequestId: number; reviewedCount: number; changedFilesCount: number }
+
 export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
 export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null }
 export interface ChecklistProgress { pullRequestId: number; completedCount: number }
@@ -131,6 +148,14 @@ export const api = {
       .then(response => response.stored),
   checklist: (project: string, repository: string, id: number) =>
     get<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist`),
+  fileReviews: (project: string, repository: string, id: number) =>
+    get<FileReviewState>(`${location(project, repository)}/pull-requests/${id}/file-reviews`),
+  setFileReviewed: (project: string, repository: string, id: number, update: FileReviewUpdate) =>
+    put<FileReviewResult>(`${location(project, repository)}/pull-requests/${id}/file-reviews`, update),
+  setReadingPath: (project: string, repository: string, id: number, paths: string[]) =>
+    put<ReadingPathState>(`${location(project, repository)}/pull-requests/${id}/reading-path`, { paths }),
+  fileReviewProgress: (project: string, repository: string) =>
+    get<FileReviewProgress[]>(`${location(project, repository)}/pull-requests/file-review-progress`),
   setChecklistItem: (project: string, repository: string, id: number, item: ChecklistItem, completed: boolean) =>
     put<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist/${item === 'aiReview' ? 'ai-review' : item}`, { completed }),
 }

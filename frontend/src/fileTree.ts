@@ -4,6 +4,7 @@ export interface TreeFile {
   changeType: string
   originalPath: string | null
   reviewed: boolean
+  stale: boolean
   critical: boolean
   criticalDisabled: boolean
   selected: boolean

@@ -42,7 +42,7 @@ The response needs 2–5 nonempty sentences, each at most 500 characters. Put di
 
 ## PR checklist storage
 
-Each pull request has six manual checklist items. The backend saves them in SQLite at `%LOCALAPPDATA%\PRCockpit\checklist.db` on Windows. Set `Checklist:DatabasePath` (or `Checklist__DatabasePath`) to use another local file. The key includes the Azure DevOps organization, project, repository ID and PR ID. Summary results are stored in the same file. File review markers and the reading path are still held only in the current browser view and disappear on refresh.
+Each pull request has six manual checklist items. The backend saves them in SQLite at `%LOCALAPPDATA%\PRCockpit\checklist.db` on Windows. Set `Checklist:DatabasePath` (or `Checklist__DatabasePath`) to use another local file. The key includes the Azure DevOps organization, project, repository ID and PR ID. Summary results, the per-file "reviewed" markers and the reading path are stored in the same file. A marker records the blob id of the file it was set on, so an unrelated commit does not clear it; the marker is only reported as out of date when that file's content actually changed.
 
 ## Run locally
 

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type C
 import FileTree from './FileTree.vue'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
 import { renderDescription } from './description'
-import { api, type ChecklistItem, type ChecklistState, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { api, type ChecklistItem, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -32,8 +32,13 @@ const progressLoading = ref(false)
 const progressError = ref('')
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
-const reviewedFiles = ref<Record<string, string[]>>({})
-const criticalFiles = ref<Record<string, string[]>>({})
+// Server-backed and therefore per-PR by construction: loaded when a PR opens, cleared
+// when it closes. The old tab-local dictionaries keyed by PR are gone, and so is the key.
+const fileReviews = ref<Record<string, FileReviewEntry>>({})
+const readingPath = ref<string[]>([])
+const fileReviewSaving = ref<string | null>(null)
+const fileReviewError = ref('')
+const fileReviewProgress = ref<Record<number, { reviewed: number; total: number }>>({})
 const diffPanel = ref<HTMLElement | null>(null)
 const lastFilePath = ref('')
 const monacoComponent = shallowRef<Component | null>(null)
@@ -47,6 +52,7 @@ let requestId = 0
 let diffRequestId = 0
 let summaryRequestId = 0
 let checklistRequestId = 0
+let reviewRequestId = 0
 
 const checklistItems: { key: ChecklistItem; label: string }[] = [
   { key: 'aiReview', label: 'AI Review' },
@@ -66,17 +72,15 @@ const summaryFreshness = computed(() => {
   return savedSha.toLowerCase() === currentSha.toLowerCase() ? 'current' : 'stale'
 })
 
-const currentPrKey = computed(() => details.value
-  ? `${projectId.value}\u0000${repositoryId.value}\u0000${details.value.id}`
-  : '')
-const reviewedPaths = computed(() => {
-  const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
-  return (reviewedFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
-})
+const reviewedPaths = computed(() =>
+  (details.value?.changedFiles ?? []).filter(file => reviewState(file.path) === 'current').map(file => file.path))
+const stalePaths = computed(() =>
+  (details.value?.changedFiles ?? []).filter(file => reviewState(file.path) === 'stale').map(file => file.path))
 const reviewedPathSet = computed(() => new Set(reviewedPaths.value))
+const stalePathSet = computed(() => new Set(stalePaths.value))
 const criticalPaths = computed(() => {
   const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
-  return (criticalFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
+  return readingPath.value.filter(path => currentPaths.has(path))
 })
 const criticalPathSet = computed(() => new Set(criticalPaths.value))
 const matchingFiles = computed(() => {
@@ -97,6 +101,7 @@ const fileTree = computed(() => buildFileTree(
     changeType: changeLabel(file.changeType),
     originalPath: file.originalPath,
     reviewed: isReviewed(file.path),
+    stale: isStale(file.path),
     critical: isCritical(file.path),
     criticalDisabled: !isCritical(file.path) && criticalPaths.value.length >= 10,
     selected: selectedFilePath.value === file.path,
@@ -131,8 +136,31 @@ const nextUnreviewedPath = computed(() => {
   return afterSelected ?? beforeSelected ?? null
 })
 
+// A marker goes stale only on positive evidence that the file changed: a blob id that no
+// longer matches, or a head SHA that moved. With nothing to compare against we keep the
+// mark, because nagging without cause is worse than a slightly optimistic tick.
+// ponytail: the head SHA fallback is per-PR, so when Azure DevOps omits a blob id any new
+// commit marks that file stale. Precise per-file tracking would need iteration diffing.
+function reviewState(path: string): 'none' | 'current' | 'stale' {
+  const entry = fileReviews.value[path]
+  if (!entry) return 'none'
+  const objectId = details.value?.changedFiles.find(file => file.path === path)?.objectId
+  if (entry.blobId && objectId) return same(entry.blobId, objectId) ? 'current' : 'stale'
+  const head = details.value?.headCommitSha
+  if (entry.headSha && head) return same(entry.headSha, head) ? 'current' : 'stale'
+  return 'current'
+}
+
+function same(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
 function isReviewed(path: string): boolean {
   return reviewedPathSet.value.has(path)
+}
+
+function isStale(path: string): boolean {
+  return stalePathSet.value.has(path)
 }
 
 function isCritical(path: string): boolean {
@@ -142,11 +170,8 @@ function isCritical(path: string): boolean {
 function toggleCritical(path: string) {
   if (!details.value?.changedFiles.some(file => file.path === path)) return
   const selected = criticalPaths.value
-  if (selected.includes(path)) {
-    criticalFiles.value[currentPrKey.value] = selected.filter(item => item !== path)
-  } else if (selected.length < 10) {
-    criticalFiles.value[currentPrKey.value] = [...selected, path]
-  }
+  if (selected.includes(path)) saveReadingPath(selected.filter(item => item !== path))
+  else if (selected.length < 10) saveReadingPath([...selected, path])
 }
 
 function moveCritical(path: string, offset: -1 | 1) {
@@ -157,7 +182,29 @@ function moveCritical(path: string, offset: -1 | 1) {
   const moved = selected[index]!
   selected[index] = selected[target]!
   selected[target] = moved
-  criticalFiles.value[currentPrKey.value] = selected
+  saveReadingPath(selected)
+}
+
+// Optimistic with rollback, the same shape as setChecklistItem: the request id is captured
+// without incrementing, because this is a mutation of the current generation, not a load.
+async function saveReadingPath(paths: string[]) {
+  if (!details.value) return
+  const current = reviewRequestId
+  const previous = readingPath.value
+  const id = details.value.id
+  const project = projectId.value
+  const repository = repositoryId.value
+  readingPath.value = paths
+  fileReviewError.value = ''
+  try {
+    const result = await api.setReadingPath(project, repository, id, paths)
+    if (current === reviewRequestId) readingPath.value = result.paths
+  } catch (cause) {
+    if (current === reviewRequestId) {
+      readingPath.value = previous
+      fileReviewError.value = message(cause)
+    }
+  }
 }
 
 function openCriticalFile(path: string) {
@@ -172,9 +219,54 @@ function openNextUnreviewed() {
 function toggleReviewed() {
   if (!selectedFilePath.value || (!fileDiff.value && !isReviewed(selectedFilePath.value))) return
   const path = selectedFilePath.value
-  reviewedFiles.value[currentPrKey.value] = isReviewed(path)
-    ? reviewedPaths.value.filter(reviewedPath => reviewedPath !== path)
-    : [...reviewedPaths.value, path]
+  // A stale marker counts as unread, so ticking the box restamps it rather than clearing it.
+  void setFileReviewed(path, !isReviewed(path))
+}
+
+async function setFileReviewed(path: string, reviewed: boolean) {
+  if (!details.value) return
+  const current = reviewRequestId
+  const previous = fileReviews.value[path]
+  const id = details.value.id
+  const project = projectId.value
+  const repository = repositoryId.value
+  const file = details.value.changedFiles.find(entry => entry.path === path)
+  const next = { ...fileReviews.value }
+  if (reviewed) {
+    next[path] = {
+      path,
+      blobId: file?.objectId ?? null,
+      headSha: details.value.headCommitSha ?? null,
+      updatedAt: new Date().toISOString(),
+    }
+  } else {
+    delete next[path]
+  }
+  fileReviews.value = next
+  fileReviewSaving.value = path
+  fileReviewError.value = ''
+  try {
+    const result = await api.setFileReviewed(project, repository, id, {
+      path,
+      reviewed,
+      blobId: file?.objectId ?? null,
+      headCommitSha: details.value.headCommitSha ?? null,
+      changedFilesCount: details.value.changedFilesCount,
+    })
+    if (current === reviewRequestId && result.entry) {
+      fileReviews.value = { ...fileReviews.value, [path]: result.entry }
+    }
+  } catch (cause) {
+    if (current === reviewRequestId) {
+      const restored = { ...fileReviews.value }
+      if (previous) restored[path] = previous
+      else delete restored[path]
+      fileReviews.value = restored
+      fileReviewError.value = message(cause)
+    }
+  } finally {
+    if (current === reviewRequestId) fileReviewSaving.value = null
+  }
 }
 
 function resetDiff() {
@@ -228,6 +320,55 @@ function resetChecklistProgress() {
   checklistProgress.value = {}
   progressLoading.value = false
   progressError.value = ''
+}
+
+function resetFileReviews() {
+  ++reviewRequestId
+  fileReviews.value = {}
+  readingPath.value = []
+  fileReviewSaving.value = null
+  fileReviewError.value = ''
+}
+
+function resetFileReviewProgress() {
+  fileReviewProgress.value = {}
+}
+
+// Same shape as loadChecklist: capture the id, compare before every write including finally.
+async function loadFileReviews(project: string, repository: string, id: number) {
+  const current = ++reviewRequestId
+  fileReviewError.value = ''
+  try {
+    const result = await api.fileReviews(project, repository, id)
+    if (current !== reviewRequestId) return
+    fileReviews.value = Object.fromEntries(result.files.map(entry => [entry.path, entry]))
+    readingPath.value = result.readingPath
+    resumeAtFirstUnread()
+  } catch (cause) {
+    if (current === reviewRequestId) fileReviewError.value = message(cause)
+  }
+}
+
+// Picks up where the last session stopped instead of opening on an empty panel.
+function resumeAtFirstUnread() {
+  if (selectedFilePath.value || reviewedPaths.value.length === 0) return
+  const next = nextUnreviewedPath.value
+  if (next) void openFile(next)
+}
+
+// Guards the outer requestId, not its own, exactly like loadChecklistProgress.
+async function loadFileReviewProgress(current: number, project: string, repository: string) {
+  try {
+    const result = await api.fileReviewProgress(project, repository)
+    if (current === requestId) {
+      fileReviewProgress.value = Object.fromEntries(result.map(item =>
+        [item.pullRequestId, { reviewed: item.reviewedCount, total: item.changedFilesCount }]))
+    }
+  } catch {
+    // The checklist progress row already reports loading failures for this list; a second
+    // banner for the file counter would be noise. Missing counters simply do not render.
+    if (current === requestId) fileReviewProgress.value = {}
+  }
 }
 
 async function loadChecklistProgress(current: number, project: string, repository: string) {
@@ -311,6 +452,8 @@ async function loadRepositories() {
   resetSummary()
   resetChecklist()
   resetChecklistProgress()
+  resetFileReviews()
+  resetFileReviewProgress()
   repositories.value = []
   repositoryId.value = ''
   pullRequests.value = []
@@ -339,6 +482,8 @@ async function loadPullRequests() {
   resetSummary()
   resetChecklist()
   resetChecklistProgress()
+  resetFileReviews()
+  resetFileReviewProgress()
   pullRequests.value = []
   details.value = null
   error.value = ''
@@ -348,7 +493,10 @@ async function loadPullRequests() {
     const result = await api.pullRequests(projectId.value, repositoryId.value)
     if (current === requestId) {
       pullRequests.value = result
-      if (result.length > 0) void loadChecklistProgress(current, projectId.value, repositoryId.value)
+      if (result.length > 0) {
+        void loadChecklistProgress(current, projectId.value, repositoryId.value)
+        void loadFileReviewProgress(current, projectId.value, repositoryId.value)
+      }
     }
   } catch (cause) {
     if (current === requestId) error.value = message(cause)
@@ -362,6 +510,7 @@ async function openPullRequest(id: number) {
   resetDiff()
   resetSummary()
   resetChecklist()
+  resetFileReviews()
   details.value = null
   error.value = ''
   loading.value = true
@@ -371,7 +520,7 @@ async function openPullRequest(id: number) {
       details.value = result
       void loadChecklist(projectId.value, repositoryId.value, id)
       void loadSavedSummary(projectId.value, repositoryId.value, id)
-      criticalFiles.value[currentPrKey.value] = criticalPaths.value
+      void loadFileReviews(projectId.value, repositoryId.value, id)
     }
   } catch (cause) {
     if (current === requestId) error.value = message(cause)
@@ -438,11 +587,13 @@ function backToList() {
   resetDiff()
   resetSummary()
   resetChecklist()
+  resetFileReviews()
   details.value = null
   error.value = ''
   loading.value = false
   if (repositoryId.value && pullRequests.value.length > 0) {
     void loadChecklistProgress(requestId, projectId.value, repositoryId.value)
+    void loadFileReviewProgress(requestId, projectId.value, repositoryId.value)
   }
 }
 
@@ -671,10 +822,14 @@ onMounted(loadProjects)
             <div class="file-list-head">
               <div class="file-review-heading">
                 <h3>Zmienione pliki ({{ details.changedFilesCount }})</h3>
-                <span>{{ reviewedPaths.length }} / {{ details.changedFiles.length }} obejrzanych w tej sesji</span>
+                <span>{{ reviewedPaths.length }} / {{ details.changedFiles.length }} obejrzanych</span>
               </div>
               <progress v-if="details.changedFiles.length" class="file-progress" :value="reviewedPaths.length"
                 :max="details.changedFiles.length" aria-label="Postęp przeglądania plików" />
+              <p v-if="stalePaths.length" class="file-stale-note">
+                {{ stalePaths.length }} {{ stalePaths.length === 1 ? 'plik zmienił się' : 'plików zmieniło się' }} od czasu przeczytania.
+              </p>
+              <p v-if="fileReviewError" class="notice error file-review-error" role="alert">{{ fileReviewError }}</p>
               <p v-if="details.changedFiles.length && remainingCount === 0" class="review-complete" role="status">
                 Wszystkie pliki obejrzane.<template v-if="remainingChecklist.length"> Zostało w checkliście: {{ remainingChecklist.join(', ') }}.</template>
               </p>
@@ -773,7 +928,7 @@ onMounted(loadProjects)
 
             <details class="rail-block critical-section" :open="criticalPaths.length > 0">
               <summary>Ścieżka kluczowych plików<span> · {{ criticalPaths.length }} / 10</span></summary>
-              <p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Wybór zostaje w tej karcie.</p>
+              <p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Zapisuje się lokalnie.</p>
               <p v-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian po lewej.</p>
               <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
                 <li v-for="(path, index) in criticalPaths" :key="path">
@@ -829,6 +984,7 @@ onMounted(loadProjects)
           <span class="pr-title"><strong>{{ pr.title }}</strong><small>{{ pr.author }} · {{ pr.repository }}</small></span>
           <span class="status">{{ pr.status }}</span>
           <span class="pr-progress" :aria-label="`Postęp checklisty: ${progressLoading ? 'wczytywanie' : progressError ? 'błąd wczytywania' : `${checklistProgress[pr.id] ?? 0} z 6`}`">{{ progressLoading ? '…/6' : progressError ? '—/6' : `${checklistProgress[pr.id] ?? 0}/6` }}</span>
+          <span class="pr-files">{{ fileReviewProgress[pr.id] ? `${fileReviewProgress[pr.id]!.reviewed}/${fileReviewProgress[pr.id]!.total} plików` : '' }}</span>
           <span class="pr-date">Utworzono {{ formatDate(pr.createdAt) }}</span>
           <span class="row-arrow">→</span>
         </button>

@@ -29,6 +29,7 @@ defineEmits<{ open: [path: string]; toggleCritical: [path: string] }>()
           <span class="file-badges">
             <span class="change-type">{{ file.changeType }}</span>
             <span v-if="file.reviewed" class="reviewed-badge">✓</span>
+            <span v-else-if="file.stale" class="reviewed-badge reviewed-badge--stale" title="Plik zmienił się od czasu przeczytania">✓ zmienione</span>
           </span>
         </button>
         <button class="critical-toggle" :class="{ active: file.critical }" type="button"
