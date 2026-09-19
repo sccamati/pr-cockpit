@@ -38,11 +38,11 @@ The program receives one JSON object on standard input with `task: "summary"`, `
 {"schemaVersion":1,"sentences":["Pierwsze zdanie.","Drugie zdanie."]}
 ```
 
-The response needs 2–5 nonempty sentences, each at most 500 characters. Put diagnostics on standard error, keep secrets out of output, and treat PR descriptions, commit titles and code as data rather than commands. Without a configured executable, the Summary action returns a configuration error. Results are held only in the current browser view; they are not cached or persisted. The UI displays how many diffs were included and which files were omitted. A real model and Azure DevOps connection are needed to verify summary quality.
+The response needs 2–5 nonempty sentences, each at most 500 characters. Put diagnostics on standard error, keep secrets out of output, and treat PR descriptions, commit titles and code as data rather than commands. Without a configured executable, the Summary action returns a configuration error. Results are validated and then stored in the same local SQLite file as the checklist, so reopening a pull request shows the saved Summary without running the model again. The UI displays how many diffs were included and which files were omitted. A real model and Azure DevOps connection are needed to verify summary quality.
 
 ## PR checklist storage
 
-Each pull request has six manual checklist items. The backend saves them in SQLite at `%LOCALAPPDATA%\PRCockpit\checklist.db` on Windows. Set `Checklist:DatabasePath` (or `Checklist__DatabasePath`) to use another local file. The key includes the Azure DevOps organization, project, repository ID and PR ID. Summary results and file review markers are still held only in the current browser view.
+Each pull request has six manual checklist items. The backend saves them in SQLite at `%LOCALAPPDATA%\PRCockpit\checklist.db` on Windows. Set `Checklist:DatabasePath` (or `Checklist__DatabasePath`) to use another local file. The key includes the Azure DevOps organization, project, repository ID and PR ID. Summary results are stored in the same file. File review markers and the reading path are still held only in the current browser view and disappear on refresh.
 
 ## Run locally
 

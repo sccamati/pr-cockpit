@@ -19,10 +19,12 @@
     "vue-tsc": "^3.3.11"
   },
   "dependencies": {
+    "dompurify": "3.4.15",
+    "markdown-it": "^15.0.2",
     "monaco-editor": "^0.56.0",
     "vue": "^3.5.43"
   },
   "overrides": {
-    "dompurify": "3.4.15"
+    "dompurify": "$dompurify"
   }
 }

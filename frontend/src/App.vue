@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, shallowRef, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type Component } from 'vue'
+import FileTree from './FileTree.vue'
+import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
+import { renderDescription } from './description'
 import { api, type ChecklistItem, type ChecklistState, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
@@ -32,7 +35,14 @@ const onlyUnreviewed = ref(false)
 const reviewedFiles = ref<Record<string, string[]>>({})
 const criticalFiles = ref<Record<string, string[]>>({})
 const diffPanel = ref<HTMLElement | null>(null)
+const lastFilePath = ref('')
 const monacoComponent = shallowRef<Component | null>(null)
+const focusMode = ref(false)
+const sideBySide = ref(false)
+const helpDialog = ref<HTMLDialogElement | null>(null)
+// ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
+// dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
+const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void } | null>(null)
 let requestId = 0
 let diffRequestId = 0
 let summaryRequestId = 0
@@ -80,12 +90,45 @@ const filteredFiles = computed(() => onlyUnreviewed.value
   : matchingFiles.value)
 const remainingCount = computed(() => (details.value?.changedFiles.length ?? 0) - reviewedPaths.value.length)
 const unreviewedMatches = computed(() => matchingFiles.value.filter(file => !isReviewed(file.path)))
+const fileTree = computed(() => buildFileTree(
+  filteredFiles.value.map<TreeFile>(file => ({
+    path: file.path,
+    name: fileName(file.path),
+    changeType: changeLabel(file.changeType),
+    originalPath: file.originalPath,
+    reviewed: isReviewed(file.path),
+    critical: isCritical(file.path),
+    criticalDisabled: !isCritical(file.path) && criticalPaths.value.length >= 10,
+    selected: selectedFilePath.value === file.path,
+  })),
+  fileSearch.value.trim().length > 0))
+// Everything on screen is either all matching files, or only the unreviewed ones — so the
+// rendered tree is the right basis for both stepping and "next unreviewed".
+const orderedPaths = computed(() => flattenTree(fileTree.value))
+const orderedIndex = computed(() => orderedPaths.value.indexOf(selectedFilePath.value))
+const hasPreviousFile = computed(() => orderedIndex.value > 0)
+const hasNextFile = computed(() => orderedIndex.value >= 0 && orderedIndex.value < orderedPaths.value.length - 1)
+const lastFileName = computed(() => lastFilePath.value ? fileName(lastFilePath.value) : '')
+const descriptionHtml = computed(() => details.value?.description
+  ? renderDescription(details.value.description, details.value.workItems)
+  : '')
+const filePosition = computed(() => {
+  const index = details.value?.changedFiles.findIndex(file => file.path === selectedFilePath.value) ?? -1
+  return index < 0 ? null : index + 1
+})
+const remainingChecklist = computed(() => checklist.value
+  ? checklistItems.filter(item => !checklist.value![item.key]).map(item => item.label)
+  : [])
+// j/k/m deliberately do not move focus, so a screen reader needs this spoken instead.
+const readingStatus = computed(() => filePosition.value && details.value
+  ? `Plik ${filePosition.value} z ${details.value.changedFilesCount} · ${selectedFilePath.value}`
+  : '')
 const nextUnreviewedPath = computed(() => {
-  const files = matchingFiles.value
-  const selectedIndex = files.findIndex(file => file.path === selectedFilePath.value)
-  const afterSelected = files.slice(selectedIndex + 1).find(file => !isReviewed(file.path))
-  const beforeSelected = files.slice(0, Math.max(selectedIndex, 0)).find(file => !isReviewed(file.path))
-  return afterSelected?.path ?? beforeSelected?.path ?? null
+  const paths = orderedPaths.value
+  const selectedIndex = paths.indexOf(selectedFilePath.value)
+  const afterSelected = paths.slice(selectedIndex + 1).find(path => !isReviewed(path))
+  const beforeSelected = paths.slice(0, Math.max(selectedIndex, 0)).find(path => !isReviewed(path))
+  return afterSelected ?? beforeSelected ?? null
 })
 
 function isReviewed(path: string): boolean {
@@ -119,7 +162,7 @@ function moveCritical(path: string, offset: -1 | 1) {
 
 function openCriticalFile(path: string) {
   void openFile(path)
-  diffPanel.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  diffPanel.value?.scrollIntoView?.({ behavior: scrollBehavior(), block: 'start' })
 }
 
 function openNextUnreviewed() {
@@ -136,6 +179,7 @@ function toggleReviewed() {
 
 function resetDiff() {
   ++diffRequestId
+  lastFilePath.value = ''
   selectedFilePath.value = ''
   fileDiff.value = null
   monacoComponent.value = null
@@ -371,7 +415,7 @@ async function openFile(path: string) {
   await nextTick()
   if (current !== diffRequestId) return
   if (window.matchMedia('(max-width: 900px)').matches) {
-    diffPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    diffPanel.value?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
   }
   try {
     const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path)
@@ -446,6 +490,130 @@ function omissionLabel(reason: string): string {
   return omissionLabels[reason] ?? reason
 }
 
+
+const shortcutHelp = [
+  { keys: 'j / n', label: 'Następny plik' },
+  { keys: 'k / p', label: 'Poprzedni plik' },
+  { keys: 'm', label: 'Obejrzałem i przejdź dalej' },
+  { keys: '. / ]', label: 'Następna zmiana w pliku' },
+  { keys: ', / [', label: 'Poprzednia zmiana w pliku' },
+  { keys: '/', label: 'Szukaj pliku' },
+  { keys: 's', label: 'Widok obok siebie / w linii' },
+  { keys: 'f', label: 'Tryb skupienia' },
+  { keys: 'g', label: 'Przejdź kursorem do kodu' },
+  { keys: 'o', label: 'Opis PR i powrót do pliku' },
+  { keys: 'Esc', label: 'Zamknij pomoc albo wróć do listy' },
+  { keys: '?', label: 'Ta pomoc' },
+]
+
+// A CSS prefers-reduced-motion block cannot override the JS `behavior` option, so the
+// two smooth-scroll call sites have to ask for themselves.
+function scrollBehavior(): ScrollBehavior {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+}
+
+function goToDiff(target: 'next' | 'previous') {
+  diffView.value?.goToDiff(target)
+}
+
+// Leaving a file for the description has to be reversible, so the path is kept and the
+// briefing offers a way back. resetDiff() clears it first, hence the order here.
+function showBriefing() {
+  const path = selectedFilePath.value
+  resetDiff()
+  lastFilePath.value = path
+}
+
+function toggleBriefing() {
+  if (selectedFilePath.value) showBriefing()
+  else if (lastFilePath.value) void openFile(lastFilePath.value)
+}
+
+function focusSearch() {
+  const input = document.getElementById('file-search') as HTMLInputElement | null
+  input?.focus()
+  input?.select()
+}
+
+function stepFile(offset: 1 | -1) {
+  const paths = orderedPaths.value
+  if (paths.length === 0) return
+  const index = paths.indexOf(selectedFilePath.value)
+  if (index < 0) {
+    void openFile(paths[0]!)
+    return
+  }
+  const target = index + offset
+  if (target < 0 || target >= paths.length) return
+  void openFile(paths[target]!)
+}
+
+// toggleReviewed writes synchronously, so the computed below it re-evaluates against
+// the new state on the next line. That ordering is what the keyboard test pins.
+function markAndAdvance() {
+  if (!selectedFilePath.value) return
+  if (!fileDiff.value && !isReviewed(selectedFilePath.value)) return
+  if (!isReviewed(selectedFilePath.value)) toggleReviewed()
+  openNextUnreviewed()
+}
+
+function toggleHelp() {
+  const dialog = helpDialog.value
+  if (!dialog) return
+  if (dialog.open) dialog.close?.()
+  else dialog.showModal?.()
+}
+
+function closeHelp() {
+  helpDialog.value?.close?.()
+}
+
+const shortcuts: Record<string, () => void> = {
+  j: () => stepFile(1),
+  n: () => stepFile(1),
+  k: () => stepFile(-1),
+  p: () => stepFile(-1),
+  m: markAndAdvance,
+  '.': () => goToDiff('next'),
+  ']': () => goToDiff('next'),
+  ',': () => goToDiff('previous'),
+  '[': () => goToDiff('previous'),
+  '/': focusSearch,
+  s: () => { sideBySide.value = !sideBySide.value },
+  f: () => { focusMode.value = !focusMode.value },
+  g: () => diffView.value?.focusEditor(),
+  o: toggleBriefing,
+}
+
+// Capture phase: Monaco stops propagation of the keys it owns, so a bubble-phase
+// listener would never see them. Unmapped keys fall straight through to the editor,
+// which is why arrows, PageUp/Down, Home/End and F-keys are deliberately absent.
+function handleKey(event: KeyboardEvent) {
+  if (event.ctrlKey || event.metaKey || event.altKey) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+  if (event.key === '?') {
+    event.preventDefault()
+    toggleHelp()
+    return
+  }
+  if (!details.value) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    if (helpDialog.value?.open) closeHelp()
+    else backToList()
+    return
+  }
+  const action = shortcuts[event.key]
+  if (!action) return
+  event.preventDefault()
+  event.stopPropagation()
+  action()
+}
+
+onMounted(() => window.addEventListener('keydown', handleKey, { capture: true }))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleKey, { capture: true }))
+
 onMounted(loadProjects)
 </script>
 
@@ -457,16 +625,15 @@ onMounted(loadProjects)
     </header>
 
     <main :class="{ 'main--details': details }">
-      <div class="intro">
+      <div v-if="!details" class="intro">
         <div>
           <p class="eyebrow">PULL REQUESTS</p>
-          <h1>{{ details ? `PR #${details.id}` : 'Aktywne Pull Requesty' }}</h1>
+          <h1>Aktywne Pull Requesty</h1>
           <p class="subtitle">Wybierz projekt i repozytorium, aby zobaczyć bieżące zmiany.</p>
         </div>
-        <button v-if="details" class="back-button" type="button" @click="backToList">← Wróć do listy</button>
       </div>
 
-      <section class="filters" aria-label="Wybór źródła">
+      <section v-if="!details" class="filters" aria-label="Wybór źródła">
         <label>
           <span>Projekt</span>
           <select v-model="projectId" :disabled="loading && projects.length === 0" @change="loadRepositories">
@@ -487,83 +654,33 @@ onMounted(loadProjects)
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
       <p v-if="loading" class="notice" role="status">Pobieranie danych…</p>
 
-      <section v-if="details" class="details card">
-        <div class="details-heading">
-          <div><p class="eyebrow">PR #{{ details.id }}</p><h2>{{ details.title }}</h2></div>
+      <section v-if="details" class="details">
+        <div class="pr-header">
+          <button class="back-button" type="button" @click="backToList">← Wróć</button>
+          <h2 :title="details.title"><span class="pr-header-number">#{{ details.id }}</span> {{ details.title }}</h2>
           <span class="status">{{ details.status }}</span>
+          <span class="pr-header-meta">{{ details.sourceBranch }} → {{ details.targetBranch }}</span>
+          <span class="pr-header-meta">{{ details.author }}</span>
+          <span v-if="checklist" class="pr-header-progress">Checklista {{ checklistCompleted }} / 6</span>
+          <button class="shortcut-button" type="button" aria-label="Skróty klawiszowe" title="Skróty klawiszowe (?)"
+            @click="toggleHelp">?</button>
         </div>
-        <div class="metadata">
-          <div><span>Autor</span><strong>{{ details.author }}</strong></div>
-          <div><span>Repozytorium</span><strong>{{ details.repository }}</strong></div>
-          <div><span>Utworzono</span><strong>{{ formatDate(details.createdAt) }}</strong></div>
-          <div><span>Gałąź źródłowa</span><strong>{{ details.sourceBranch }}</strong></div>
-          <div><span>Gałąź docelowa</span><strong>{{ details.targetBranch }}</strong></div>
-          <div><span>Zmienione pliki</span><strong>{{ details.changedFilesCount }}</strong></div>
-          <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
-        </div>
-        <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
-        <div class="details-section checklist-section">
-          <div class="checklist-heading"><div><h3>Checklista PR</h3><p class="muted">Zaznaczaj ręcznie po wykonaniu każdego kroku. Stan zapisuje się lokalnie.</p></div><strong v-if="checklist">{{ checklistCompleted }} / 6</strong></div>
-          <p v-if="checklistLoading" class="notice" role="status">Wczytywanie checklisty…</p>
-          <p v-if="checklistError" class="notice error" role="alert">{{ checklistError }}</p>
-          <div v-if="checklist" class="checklist-items">
-            <label v-for="item in checklistItems" :key="item.key" class="checklist-item" :class="{ 'checklist-item--done': checklist[item.key] }">
-              <input type="checkbox" :checked="checklist[item.key]" :disabled="checklistSaving !== null" @change="setChecklistItem(item.key, ($event.target as HTMLInputElement).checked)">
-              <span>{{ item.label }}</span>
-            </label>
-          </div>
-          <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
-        </div>
-        <div class="details-section summary-section">
-          <div class="summary-heading"><div><h3>Summary</h3><p class="muted">Analiza korzysta z ograniczonego kontekstu PR i uruchamia się tylko po kliknięciu.</p></div>
-            <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>
-          </div>
-          <p v-if="summaryReadLoading" class="notice" role="status">Wczytywanie zapisanego Summary…</p>
-          <div v-if="summaryReadError" class="notice error" role="alert">Nie udało się wczytać zapisanego Summary: {{ summaryReadError }} <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="loadSavedSummary(projectId, repositoryId, details.id)">Spróbuj ponownie</button></div>
-          <p v-if="summaryLoading" class="notice" role="status">Generowanie Summary…</p>
-          <p v-if="summaryError" class="notice error" role="alert">{{ summaryError }}</p>
-          <template v-if="summary">
-            <div class="summary-meta"><span class="summary-saved">Zapisano lokalnie<template v-if="summarySavedAt"> · {{ formatDate(summarySavedAt) }}</template></span><span v-if="summaryFreshness === 'current'" class="summary-current">Aktualne dla tego PR</span></div>
-            <p v-if="summaryFreshness === 'stale'" class="notice summary-stale" role="status">PR zmienił się od zapisania tego Summary. Wygeneruj je ponownie, aby uwzględnić aktualny commit.</p>
-            <p v-else-if="summaryFreshness === 'unknown'" class="notice summary-stale" role="status">Nie można potwierdzić aktualności Summary, ponieważ brakuje SHA commita.</p>
-            <div v-if="summary.sentences?.length" class="summary-text" aria-label="Podsumowanie PR"><p v-for="(sentence, index) in summary.sentences" :key="index" :class="{ 'summary-lead': index === 0 }">{{ sentence }}</p></div>
-            <p v-else class="summary-text">{{ summary.summary }}</p>
-            <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem · {{ summary.contextReport.includedDiffCharacters }} znaków diffu<span v-if="summary.headCommitSha"> · commit {{ summary.headCommitSha.slice(0, 8) }}</span></p>
-            <details v-if="summary.contextReport.wasLimited" class="summary-omissions">
-              <summary>Pominięto treść {{ summary.contextReport.omittedFiles.length }} plików</summary>
-              <ul><li v-for="file in summary.contextReport.omittedFiles" :key="file.path"><code>{{ file.path }}</code> — {{ omissionLabel(file.reason) }}</li></ul>
-            </details>
-          </template>
-        </div>
-        <div class="details-section"><h3>Commity ({{ details.commitsCount }})</h3>
-          <p v-if="details.commits.length === 0" class="muted">Brak commitów.</p>
-          <ul v-else class="commit-list">
-            <li v-for="commit in details.commits" :key="commit.id">
-              <code class="commit-id" :title="commit.id">{{ commit.id.slice(0, 8) }}</code>
-              <span class="commit-info"><strong>{{ commitTitle(commit.message) }}</strong><small>{{ commit.author }}<template v-if="commit.authoredAt"> · {{ formatDate(commit.authoredAt) }}</template></small></span>
-            </li>
-          </ul>
-        </div>
-        <div class="details-section critical-section">
-          <div class="critical-heading"><div><h3>Ścieżka kluczowych plików</h3><p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Wybór zostaje w tej karcie.</p></div><span>{{ criticalPaths.length }} / 10</span></div>
-          <p v-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian poniżej.</p>
-          <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
-            <li v-for="(path, index) in criticalPaths" :key="path">
-              <button class="critical-open" type="button" :title="path" @click="openCriticalFile(path)"><span class="critical-order">{{ index + 1 }}</span><span>{{ path }}</span></button>
-              <div class="critical-actions">
-                <button type="button" :disabled="index === 0" :aria-label="`Przesuń ${path} w górę`" @click="moveCritical(path, -1)">↑</button>
-                <button type="button" :disabled="index === criticalPaths.length - 1" :aria-label="`Przesuń ${path} w dół`" @click="moveCritical(path, 1)">↓</button>
-                <button type="button" :aria-label="`Usuń ${path} ze ścieżki`" @click="toggleCritical(path)">Usuń</button>
+
+        <div class="pr-workspace" :class="{ 'pr-workspace--focus': focusMode }">
+          <div class="file-list-pane">
+            <div class="file-list-head">
+              <div class="file-review-heading">
+                <h3>Zmienione pliki ({{ details.changedFilesCount }})</h3>
+                <span>{{ reviewedPaths.length }} / {{ details.changedFiles.length }} obejrzanych w tej sesji</span>
               </div>
-            </li>
-          </ol>
-        </div>
-        <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ reviewedPaths.length }} / {{ details.changedFiles.length }} obejrzanych w tej sesji</span></div>
-          <progress v-if="details.changedFiles.length" class="file-progress" :value="reviewedPaths.length" :max="details.changedFiles.length" aria-label="Postęp przeglądania plików" />
-          <p v-if="details.changedFiles.length && remainingCount === 0" class="review-complete" role="status">Wszystkie pliki obejrzane.</p>
-          <p v-if="details.changedFiles.length === 0" class="muted">Brak zmienionych plików.</p>
-          <div v-else class="file-review">
-            <div class="file-list-pane">
+              <progress v-if="details.changedFiles.length" class="file-progress" :value="reviewedPaths.length"
+                :max="details.changedFiles.length" aria-label="Postęp przeglądania plików" />
+              <p v-if="details.changedFiles.length && remainingCount === 0" class="review-complete" role="status">
+                Wszystkie pliki obejrzane.<template v-if="remainingChecklist.length"> Zostało w checkliście: {{ remainingChecklist.join(', ') }}.</template>
+              </p>
+            </div>
+            <p v-if="details.changedFiles.length === 0" class="file-list-empty">Brak zmienionych plików.</p>
+            <template v-else>
               <label class="file-search-label" for="file-search">Szukaj pliku</label>
               <input id="file-search" v-model="fileSearch" class="file-search" type="search" placeholder="Nazwa lub ścieżka" autocomplete="off">
               <div class="file-filter" role="group" aria-label="Filtr plików">
@@ -573,44 +690,132 @@ onMounted(loadProjects)
               <button class="next-file-button" type="button" :disabled="!nextUnreviewedPath" @click="openNextUnreviewed">Następny nieobejrzany →</button>
               <p v-if="matchingFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
               <p v-else-if="!nextUnreviewedPath && remainingCount > 0" class="file-list-hint">{{ unreviewedMatches.length === 0 ? 'Brak nieobejrzanych plików w wynikach wyszukiwania.' : 'To ostatni nieobejrzany plik. Oznacz go po przejrzeniu.' }}</p>
-              <ul v-if="filteredFiles.length > 0" class="changed-files" aria-label="Zmienione pliki">
-                <li v-for="(file, index) in filteredFiles" :key="`${file.path}-${index}`">
-                  <button class="file-button" :class="{ selected: selectedFilePath === file.path }" type="button"
-                    :aria-current="selectedFilePath === file.path ? 'true' : undefined" @click="openFile(file.path)">
-                    <span class="file-path" :title="file.path"><strong class="file-name">{{ fileName(file.path) }}</strong><span class="file-directory">{{ fileDirectory(file.path) }}</span></span>
-                    <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
-                    <span class="file-badges"><span class="change-type">{{ changeLabel(file.changeType) }}</span><span v-if="isReviewed(file.path)" class="reviewed-badge">✓ Obejrzane</span></span>
-                  </button>
-                  <button class="critical-toggle" :class="{ active: isCritical(file.path) }" type="button"
-                    :aria-pressed="isCritical(file.path)" :disabled="!isCritical(file.path) && criticalPaths.length >= 10"
-                    @click="toggleCritical(file.path)">{{ isCritical(file.path) ? '★ W ścieżce' : '+ Dodaj do ścieżki' }}</button>
-                </li>
-              </ul>
-            </div>
-            <div ref="diffPanel" class="diff-panel">
-              <template v-if="selectedFilePath">
-                <div class="diff-toolbar">
-                  <div class="diff-toolbar-title" :title="selectedFilePath"><h4>{{ fileName(selectedFilePath) }}</h4><span>{{ fileDirectory(selectedFilePath) }}</span></div>
-                  <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
+              <div v-if="filteredFiles.length > 0" class="changed-files" aria-label="Zmienione pliki">
+                <FileTree :node="fileTree" :show-ratio="!onlyUnreviewed" @open="openFile" @toggle-critical="toggleCritical" />
+              </div>
+            </template>
+          </div>
+
+          <div ref="diffPanel" class="diff-panel">
+            <template v-if="selectedFilePath">
+              <div class="diff-toolbar">
+                <div class="diff-toolbar-title" :title="selectedFilePath"><h4>{{ fileName(selectedFilePath) }}</h4><span>{{ fileDirectory(selectedFilePath) }}</span></div>
+                <span v-if="filePosition" class="diff-position">Plik {{ filePosition }} z {{ details.changedFilesCount }}</span>
+                <div class="diff-actions">
+                  <span class="diff-actions-label">Plik</span>
+                  <button type="button" title="Poprzedni plik (k)" aria-label="Poprzedni plik"
+                    :disabled="!hasPreviousFile" @click="stepFile(-1)">‹</button>
+                  <button type="button" title="Następny plik (j)" aria-label="Następny plik"
+                    :disabled="!hasNextFile" @click="stepFile(1)">›</button>
+                  <span class="diff-actions-label">Zmiana</span>
+                  <button type="button" title="Poprzednia zmiana w pliku (,)" aria-label="Poprzednia zmiana w pliku" @click="goToDiff('previous')">‹</button>
+                  <button type="button" title="Następna zmiana w pliku (.)" aria-label="Następna zmiana w pliku" @click="goToDiff('next')">›</button>
+                  <button type="button" class="diff-layout-toggle" :aria-pressed="sideBySide" @click="sideBySide = !sideBySide">{{ sideBySide ? 'Obok siebie' : 'W linii' }}</button>
+                  <button type="button" title="Opis PR (o)" @click="showBriefing">Opis PR</button>
                 </div>
-                <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
-                <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
-                <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
-                <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
-                <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" :path="fileDiff.path"
-                  :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText" />
-              </template>
-              <p v-else class="diff-placeholder">Wybierz plik z listy, aby zobaczyć jego diff.</p>
+                <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
+              </div>
+              <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
+              <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
+              <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
+              <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
+              <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
+              <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" ref="diffView" :path="fileDiff.path"
+                :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
+                :side-by-side="sideBySide" />
+            </template>
+            <div v-else class="pr-briefing">
+              <button v-if="lastFilePath" class="briefing-back" type="button" title="Wróć do pliku (o)"
+                @click="openFile(lastFilePath)">← Wróć do {{ lastFileName }}</button>
+              <h3>O co chodzi w tym PR</h3>
+              <p v-if="!details.description" class="muted">Brak opisu.</p>
+              <div v-else class="description markdown-body" v-html="descriptionHtml" />
+              <p class="diff-placeholder">Wybierz plik z listy, aby zobaczyć jego diff.</p>
             </div>
           </div>
-        </div>
-        <div class="details-section"><h3>Reviewerzy</h3>
-          <p v-if="details.reviewers.length === 0" class="muted">Brak reviewerów.</p>
-          <ul v-else class="plain-list"><li v-for="reviewer in details.reviewers" :key="reviewer.name">{{ reviewer.name }} <span class="muted">· {{ reviewerVote(reviewer.vote) }}</span></li></ul>
-        </div>
-        <div class="details-section"><h3>Powiązane Work Items</h3>
-          <p v-if="details.workItems.length === 0" class="muted">Brak powiązanych Work Items.</p>
-          <ul v-else class="plain-list"><li v-for="item in details.workItems" :key="item.id">#{{ item.id }}</li></ul>
+
+          <aside class="context-rail" aria-label="Kontekst pull requesta">
+            <div class="details-section summary-section">
+              <div class="summary-heading"><div><h3>Summary</h3><p class="muted">Analiza korzysta z ograniczonego kontekstu PR i uruchamia się tylko po kliknięciu.</p></div>
+                <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>
+              </div>
+              <p v-if="summaryReadLoading" class="notice" role="status">Wczytywanie zapisanego Summary…</p>
+              <div v-if="summaryReadError" class="notice error" role="alert">Nie udało się wczytać zapisanego Summary: {{ summaryReadError }} <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="loadSavedSummary(projectId, repositoryId, details.id)">Spróbuj ponownie</button></div>
+              <p v-if="summaryLoading" class="notice" role="status">Generowanie Summary…</p>
+              <p v-if="summaryError" class="notice error" role="alert">{{ summaryError }}</p>
+              <template v-if="summary">
+                <div class="summary-meta"><span class="summary-saved">Zapisano lokalnie<template v-if="summarySavedAt"> · {{ formatDate(summarySavedAt) }}</template></span><span v-if="summaryFreshness === 'current'" class="summary-current">Aktualne dla tego PR</span></div>
+                <p v-if="summaryFreshness === 'stale'" class="notice summary-stale" role="status">PR zmienił się od zapisania tego Summary. Wygeneruj je ponownie, aby uwzględnić aktualny commit.</p>
+                <p v-else-if="summaryFreshness === 'unknown'" class="notice summary-stale" role="status">Nie można potwierdzić aktualności Summary, ponieważ brakuje SHA commita.</p>
+                <div v-if="summary.sentences?.length" class="summary-text" aria-label="Podsumowanie PR"><p v-for="(sentence, index) in summary.sentences" :key="index" :class="{ 'summary-lead': index === 0 }">{{ sentence }}</p></div>
+                <p v-else class="summary-text">{{ summary.summary }}</p>
+                <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem · {{ summary.contextReport.includedDiffCharacters }} znaków diffu<span v-if="summary.headCommitSha"> · commit {{ summary.headCommitSha.slice(0, 8) }}</span></p>
+                <details v-if="summary.contextReport.wasLimited" class="summary-omissions">
+                  <summary>Pominięto treść {{ summary.contextReport.omittedFiles.length }} plików</summary>
+                  <ul><li v-for="file in summary.contextReport.omittedFiles" :key="file.path"><code>{{ file.path }}</code> — {{ omissionLabel(file.reason) }}</li></ul>
+                </details>
+              </template>
+            </div>
+
+            <details class="rail-block checklist-section" open>
+              <summary>Checklista PR<span v-if="checklist"> · {{ checklistCompleted }} / 6</span></summary>
+              <p class="muted">Zaznaczaj ręcznie po wykonaniu każdego kroku. Stan zapisuje się lokalnie.</p>
+              <p v-if="checklistLoading" class="notice" role="status">Wczytywanie checklisty…</p>
+              <p v-if="checklistError" class="notice error" role="alert">{{ checklistError }}</p>
+              <div v-if="checklist" class="checklist-items">
+                <label v-for="item in checklistItems" :key="item.key" class="checklist-item" :class="{ 'checklist-item--done': checklist[item.key] }">
+                  <input type="checkbox" :checked="checklist[item.key]" :disabled="checklistSaving !== null" @change="setChecklistItem(item.key, ($event.target as HTMLInputElement).checked)">
+                  <span>{{ item.label }}</span>
+                </label>
+              </div>
+              <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
+            </details>
+
+            <details class="rail-block critical-section" :open="criticalPaths.length > 0">
+              <summary>Ścieżka kluczowych plików<span> · {{ criticalPaths.length }} / 10</span></summary>
+              <p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Wybór zostaje w tej karcie.</p>
+              <p v-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian po lewej.</p>
+              <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
+                <li v-for="(path, index) in criticalPaths" :key="path">
+                  <button class="critical-open" type="button" :title="path" @click="openCriticalFile(path)"><span class="critical-order">{{ index + 1 }}</span><span>{{ path }}</span></button>
+                  <div class="critical-actions">
+                    <button type="button" :disabled="index === 0" :aria-label="`Przesuń ${path} w górę`" @click="moveCritical(path, -1)">↑</button>
+                    <button type="button" :disabled="index === criticalPaths.length - 1" :aria-label="`Przesuń ${path} w dół`" @click="moveCritical(path, 1)">↓</button>
+                    <button type="button" :aria-label="`Usuń ${path} ze ścieżki`" @click="toggleCritical(path)">Usuń</button>
+                  </div>
+                </li>
+              </ol>
+            </details>
+
+            <details class="rail-block">
+              <summary>Commity ({{ details.commitsCount }})</summary>
+              <p v-if="details.commits.length === 0" class="muted">Brak commitów.</p>
+              <ul v-else class="commit-list">
+                <li v-for="commit in details.commits" :key="commit.id">
+                  <code class="commit-id" :title="commit.id">{{ commit.id.slice(0, 8) }}</code>
+                  <span class="commit-info"><strong>{{ commitTitle(commit.message) }}</strong><small>{{ commit.author }}<template v-if="commit.authoredAt"> · {{ formatDate(commit.authoredAt) }}</template></small></span>
+                </li>
+              </ul>
+            </details>
+
+            <details class="rail-block">
+              <summary>Szczegóły PR</summary>
+              <div class="metadata">
+                <div><span>Autor</span><strong>{{ details.author }}</strong></div>
+                <div><span>Repozytorium</span><strong>{{ details.repository }}</strong></div>
+                <div><span>Utworzono</span><strong>{{ formatDate(details.createdAt) }}</strong></div>
+                <div><span>Gałąź źródłowa</span><strong>{{ details.sourceBranch }}</strong></div>
+                <div><span>Gałąź docelowa</span><strong>{{ details.targetBranch }}</strong></div>
+                <div><span>Zmienione pliki</span><strong>{{ details.changedFilesCount }}</strong></div>
+              </div>
+              <h4>Reviewerzy</h4>
+              <p v-if="details.reviewers.length === 0" class="muted">Brak reviewerów.</p>
+              <ul v-else class="plain-list"><li v-for="reviewer in details.reviewers" :key="reviewer.name">{{ reviewer.name }} <span class="muted">· {{ reviewerVote(reviewer.vote) }}</span></li></ul>
+              <h4>Powiązane Work Items</h4>
+              <p v-if="details.workItems.length === 0" class="muted">Brak powiązanych Work Items.</p>
+              <ul v-else class="plain-list"><li v-for="item in details.workItems" :key="item.id">#{{ item.id }}</li></ul>
+            </details>
+          </aside>
         </div>
       </section>
 
@@ -630,5 +835,13 @@ onMounted(loadProjects)
       </section>
       <section v-else-if="!loading" class="card empty">Wybierz projekt i repozytorium, aby rozpocząć.</section>
     </main>
+
+    <dialog ref="helpDialog" class="shortcut-help" aria-label="Skróty klawiszowe">
+      <h3>Skróty klawiszowe</h3>
+      <dl>
+        <div v-for="shortcut in shortcutHelp" :key="shortcut.keys"><dt>{{ shortcut.keys }}</dt><dd>{{ shortcut.label }}</dd></div>
+      </dl>
+      <button type="button" class="refresh-button" @click="closeHelp">Zamknij</button>
+    </dialog>
   </div>
 </template>

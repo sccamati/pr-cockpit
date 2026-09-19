@@ -92,8 +92,34 @@ Weryfikacja: `dotnet build PRCockpit.slnx` i `npm run build` przeszły. Testów 
 
 Do potwierdzenia w aplikacji: ponowne otwarcie PR, zmiana SHA, brak SHA oraz odczyt i ponowne generowanie przy błędzie zapisu.
 
+## Wdrożone — tryb czytania
+
+### B-10 — Tryb czytania: układ, skróty, motyw i render opisu
+
+Status: zaimplementowane we frontendzie. Backend nietknięty.
+
+**Dlaczego:** widok PR był jedną długą stroną z dziewięcioma sekcjami, w której diff — jedyna rzecz faktycznie czytana — był siódmy w kolejności i dostawał okienko `clamp(500px, 76vh, 960px)` między listą commitów a reviewerami. Nie było żadnego skrótu klawiszowego. Przy PR-ach generowanych przez AI oznaczało to przewijanie zamiast czytania.
+
+**Zakres:** trzypanelowy układ na wysokość okna (lista plików / diff / szyna kontekstu w `<details>`), nagłówek PR z powrotem i postępem checklisty, tryb skupienia. Skróty `j/k/n/p`, `m` (obejrzałem i dalej), `.`/`,` (skok po zmianach), `/`, `s`, `f`, `g`, `o`, `Esc`, `?` plus natywny `<dialog>` z pomocą. Monaco: `hideUnchangedRegions`, przełącznik widoku obok siebie, otwieranie na pierwszej zmianie, `showMoves`. Tokeny CSS i tryb ciemny wraz z drugim motywem Monaka. Render opisu PR z Markdowna (`markdown-it` + DOMPurify), z linkami do Work Itemów i zamianą załączników-obrazków na linki.
+
+**Zweryfikowane:** `npm test` — 22 testy w 3 plikach. Cztery istniejące testy `App.test.ts` przeszły po przebudowie układu **bez żadnej edycji**, co było punktem kontrolnym kontraktu nazw klas i napisów. Nowe testy pokrywają: `m` oznacza i przechodzi dalej, `m` w polu wyszukiwania jest ignorowane (test montuje drzewo przez `attachTo`, bo bez tego zdarzenie nie dociera do nasłuchu na `window` i test przechodziłby pusto), `j`/`k`, brak przecieku nasłuchu po odmontowaniu, opcje `hideUnchangedRegions` i przełącznik kolumn, definicja obu motywów, oraz osiem testów renderu opisu — w tym sanityzacja `<script>`, atrybutów `on*` i linków `javascript:`. `npm run build` przechodzi.
+
+**Niesprawdzone — do potwierdzenia w przeglądarce na rzeczywistym PR:**
+- wygląd układu trójpanelowego, zwłaszcza między 900 a 1200 px, gdzie diff dostaje około 550 px; wyjściem awaryjnym jest tryb skupienia (`f`);
+- czy nasłuch w fazie przechwytywania faktycznie wygrywa z obsługą klawiszy Monaka — wcisnąć `s`, `m`, `.` z kursorem w edytorze;
+- kontrast palety ciemnej (dobrana ręcznie, nie mierzona);
+- zachowanie `hideUnchangedRegions` i `experimental.showMoves` na prawdziwym, dużym diffie;
+- wygląd wyrenderowanego opisu na rzeczywistych PR-ach, w szczególności czy Azure DevOps nie zapisuje wzmianek o osobach jako `@<GUID>`;
+- `revealFirstDiff` jest w typach Monaka 0.56 oznaczone jako `unknown` i nieudokumentowane — wywołanie jest osłonięte `?.`, ale zachowanie wymaga obejrzenia.
+
+**Doszło po pierwszej informacji zwrotnej:** lista plików jest drzewem folderów ze zwijaniem (`fileTree.ts` + `FileTree.vue`), bo przy 44 plikach powtarzana i ucięta ścieżka w każdym wierszu nie niosła informacji, a wiersz pliku zajmował cztery linie. Nawigacja `j`/`k` i „następny nieobejrzany” chodzą teraz w kolejności drzewa, nie w kolejności zwróconej przez Azure DevOps. Przejście do opisu PR jest odwracalne: zapamiętuje otwarty plik, `o` działa w obie strony, a na ekranie startowym jest widoczny przycisk powrotu.
+
+**Zależności:** dodano `markdown-it` (MIT, 15.0.2). `dompurify` (MPL-2.0 OR Apache-2.0, 3.4.15) był już w drzewie przez monaco-editor i został awansowany do zależności bezpośredniej; przypięcie w `overrides` zmieniono na `$dompurify`, żeby zachować wymuszenie wersji w całym drzewie bez duplikowania numeru.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
+- **Trwały postęp czytania:** znacznik „Obejrzałem” i ścieżka kluczowych plików nadal giną po odświeżeniu; plan zakłada magazyn SQLite na wzór `ChecklistStore` i klasyfikację nieaktualności po `objectId` pliku.
+- **Komentarze Azure DevOps:** wątki PR, najpierw do odczytu (bez zmiany PAT), potem zapis za wyłącznikiem konfiguracyjnym.
 - **Quality i Architecture:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
 - **Lokalne repozytorium i zapis pozostałych analiz:** osobne etapy po Summary.

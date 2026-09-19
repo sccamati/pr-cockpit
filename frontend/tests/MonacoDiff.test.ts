@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as monaco from 'monaco-editor'
 import MonacoDiff from '../src/MonacoDiff.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -13,14 +14,20 @@ const mocks = vi.hoisted(() => ({
   semanticProvider: null as null | { getLegend: () => { tokenTypes: string[] }; provideDocumentSemanticTokens: (model: unknown) => { data: Uint32Array } },
   disposeSemanticProvider: vi.fn(),
   defineTheme: vi.fn(),
+  setTheme: vi.fn(),
   originalUpdate: vi.fn(),
   modifiedUpdate: vi.fn(),
+  diffUpdateOptions: vi.fn(),
+  goToDiff: vi.fn(),
+  revealFirstDiff: vi.fn(),
+  onDidUpdateDiff: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api: { csharpHovers: mocks.csharpHovers } }))
 vi.mock('monaco-editor', () => ({
   editor: {
     defineTheme: mocks.defineTheme,
+    setTheme: mocks.setTheme,
     createModel: vi.fn(() => {
       const id = mocks.models.length
       const model = { uri: { toString: () => `model-${id}` }, dispose: vi.fn() }
@@ -29,8 +36,12 @@ vi.mock('monaco-editor', () => ({
     }),
     createDiffEditor: vi.fn(() => ({
       setModel: vi.fn(), layout: vi.fn(), dispose: vi.fn(),
+      updateOptions: mocks.diffUpdateOptions,
+      goToDiff: mocks.goToDiff,
+      revealFirstDiff: mocks.revealFirstDiff,
+      onDidUpdateDiff: mocks.onDidUpdateDiff,
       getOriginalEditor: () => ({ updateOptions: mocks.originalUpdate }),
-      getModifiedEditor: () => ({ updateOptions: mocks.modifiedUpdate }),
+      getModifiedEditor: () => ({ updateOptions: mocks.modifiedUpdate, focus: vi.fn() }),
     })),
   },
   languages: {
@@ -66,6 +77,12 @@ beforeEach(() => {
     mocks.semanticProvider = provider
     return { dispose: mocks.disposeSemanticProvider }
   })
+  mocks.onDidUpdateDiff.mockReturnValue({ dispose: vi.fn() })
+  window.matchMedia = vi.fn().mockReturnValue({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }) as unknown as typeof window.matchMedia
   globalThis.ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -135,5 +152,52 @@ describe('Monaco C# hover', () => {
     expect(signal.aborted).toBe(true)
     expect(mocks.registerHoverProvider).not.toHaveBeenCalled()
     expect(mocks.registerSemanticProvider).not.toHaveBeenCalled()
+  })
+})
+
+describe('Monaco reading options', () => {
+  it('collapses unchanged regions and opens on the first change', () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/sample.ts', originalPath: null, originalText: 'old', modifiedText: 'new' },
+    })
+
+    const options = vi.mocked(monaco.editor.createDiffEditor).mock.calls[0]![1]!
+    expect(options.hideUnchangedRegions)
+      .toEqual({ enabled: true, revealLineCount: 20, minimumLineCount: 6, contextLineCount: 3 })
+    expect(options.renderSideBySide).toBe(false)
+
+    // The one-shot listener must release itself so later recomputes cannot move the view.
+    const onFirstDiff = mocks.onDidUpdateDiff.mock.calls[0]![0] as () => void
+    onFirstDiff()
+    expect(mocks.revealFirstDiff).toHaveBeenCalledOnce()
+
+    wrapper.unmount()
+  })
+
+  it('switches between inline and side-by-side without recreating the editor', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: {
+        path: '/src/sample.ts', originalPath: null,
+        originalText: 'old', modifiedText: 'new', sideBySide: false,
+      },
+    })
+
+    await wrapper.setProps({ sideBySide: true })
+
+    expect(mocks.diffUpdateOptions).toHaveBeenCalledWith({ renderSideBySide: true })
+    expect(vi.mocked(monaco.editor.createDiffEditor)).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('defines both themes and picks the light one when the system is light', () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/sample.ts', originalPath: null, originalText: 'old', modifiedText: 'new' },
+    })
+
+    const themes = mocks.defineTheme.mock.calls.map(call => call[0])
+    expect(themes).toContain('pr-cockpit-code')
+    expect(themes).toContain('pr-cockpit-code-dark')
+    expect(vi.mocked(monaco.editor.createDiffEditor).mock.calls[0]![1]!.theme).toBe('pr-cockpit-code')
+    wrapper.unmount()
   })
 })

@@ -187,3 +187,120 @@ describe('PR review', () => {
     wrapper.unmount()
   })
 })
+
+describe('Skróty klawiszowe', () => {
+  // Attached to the document on purpose: the keydown listener lives on window, and a
+  // detached tree never propagates events to it — which would make these tests vacuous.
+  async function openFirstFile() {
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  function press(key: string, target: EventTarget = window) {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  }
+
+  it('marks the open file and moves to the next one on "m"', async () => {
+    const wrapper = await openFirstFile()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    expect(wrapper.text()).toContain('0 / 3 obejrzanych')
+
+    press('m')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 / 3 obejrzanych')
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    wrapper.unmount()
+  })
+
+  it('ignores shortcuts while the file search has focus', async () => {
+    const wrapper = await openFirstFile()
+    const search = wrapper.find('#file-search').element
+
+    press('m', search)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('0 / 3 obejrzanych')
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+
+    // Same key from a non-typing element must still work — otherwise the assertion
+    // above would pass simply because the event never reached the window listener.
+    press('m', wrapper.find('.diff-panel').element)
+    await flushPromises()
+    expect(wrapper.text()).toContain('1 / 3 obejrzanych')
+    wrapper.unmount()
+  })
+
+  it('walks the visible file list with j and k', async () => {
+    const wrapper = await openFirstFile()
+
+    press('j')
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+
+    press('k')
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    wrapper.unmount()
+  })
+
+  it('goes to the description and back to the file that was open', async () => {
+    const wrapper = await openFirstFile()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+
+    press('o')
+    await flushPromises()
+
+    // The way back has to be visible, not only bound to a key.
+    expect(wrapper.find('.pr-briefing').exists()).toBe(true)
+    expect(wrapper.find('.briefing-back').text()).toContain('first.cs')
+
+    press('o')
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    wrapper.unmount()
+  })
+
+  it('returns to the file by clicking the button in the description', async () => {
+    const wrapper = await openFirstFile()
+    press('o')
+    await flushPromises()
+
+    await wrapper.find('.briefing-back').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    wrapper.unmount()
+  })
+
+  it('separates file navigation from change navigation in the readbar', async () => {
+    const wrapper = await openFirstFile()
+    const labels = wrapper.findAll('.diff-actions-label').map(node => node.text())
+    expect(labels).toEqual(['Plik', 'Zmiana'])
+
+    // The first pair walks files; the second pair walks hunks inside the open file.
+    const buttons = wrapper.findAll('.diff-actions button')
+    expect(buttons[0]!.attributes('disabled')).toBeDefined()   // first file, nothing before it
+    await buttons[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+
+    await buttons[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    wrapper.unmount()
+  })
+
+  it('stops listening once the app is unmounted', async () => {
+    const wrapper = await openFirstFile()
+    wrapper.unmount()
+
+    // A leaked capture-phase listener would throw or mutate state after teardown.
+    expect(() => press('m')).not.toThrow()
+  })
+})
