@@ -57,10 +57,7 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         var (pr, _) = await GetAsync($"{path}?{ApiVersion}", ct);
         using (pr)
         {
-            var iterationsTask = GetAsync($"{path}/iterations?{ApiVersion}", ct);
-            var commitsTask = CountCommitsAsync(path, ct);
-            var workItemsTask = GetWorkItemsAsync(path, ct);
-            var (iterations, _) = await iterationsTask;
+            var (iterations, _) = await GetAsync($"{path}/iterations?{ApiVersion}", ct);
             int changedFiles;
             using (iterations)
             {
@@ -69,8 +66,9 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
                     .DefaultIfEmpty(0).Max();
                 changedFiles = lastId == 0 ? 0 : await CountChangedFilesAsync(path, lastId, ct);
             }
-            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles,
-                await commitsTask, await workItemsTask);
+            var commitsCount = await CountCommitsAsync(path, ct);
+            var workItems = await GetWorkItemsAsync(path, ct);
+            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commitsCount, workItems);
         }
     }
 
@@ -124,6 +122,7 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
 
         using var request = new HttpRequestMessage(HttpMethod.Get,
             $"https://dev.azure.com/{organization}/{path}");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic",
             Convert.ToBase64String(Encoding.UTF8.GetBytes(":" + pat)));
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -146,7 +145,15 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             throw new AzureDevOpsException(message, status);
         }
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        var json = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        JsonDocument json;
+        try
+        {
+            json = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        }
+        catch (JsonException)
+        {
+            throw new AzureDevOpsException("Azure DevOps returned an unexpected response.", 502);
+        }
         var continuation = response.Headers.TryGetValues("x-ms-continuationtoken", out var values)
             ? values.FirstOrDefault() : null;
         return (json, string.IsNullOrEmpty(continuation) ? null : continuation);
