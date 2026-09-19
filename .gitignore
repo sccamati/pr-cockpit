@@ -33,3 +33,6 @@
 coverage/
 TestResults/
 *.log
+
+# Unused binary from the initial Vite scaffold
+frontend/src/assets/hero.png
