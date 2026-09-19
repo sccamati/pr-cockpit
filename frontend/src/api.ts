@@ -16,7 +16,18 @@ export interface CSharpHoverEntry {
   endColumn: number
   signature: string
 }
-export interface CSharpHovers { original: CSharpHoverEntry[]; modified: CSharpHoverEntry[] }
+export interface CSharpSemanticToken {
+  line: number
+  startColumn: number
+  endColumn: number
+  kind: string
+}
+export interface CSharpHovers {
+  original: CSharpHoverEntry[]
+  modified: CSharpHoverEntry[]
+  originalTokens: CSharpSemanticToken[]
+  modifiedTokens: CSharpSemanticToken[]
+}
 
 export interface PullRequestSummary {
   id: number

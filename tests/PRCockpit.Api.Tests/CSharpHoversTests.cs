@@ -32,6 +32,35 @@ public sealed class CSharpHoversTests
     }
 
     [Fact]
+    public void ClassifiesDeclarationsCallsAndExternalTypeSyntax()
+    {
+        const string source = """
+            class Customer
+            {
+                public string Name { get; set; }
+                public void Save(int amount) { }
+                public void Run(Customer customer)
+                {
+                    customer.Save(1);
+                    var item = new ExternalType();
+                    item.Value = 1;
+                }
+            }
+            """;
+
+        var tokens = CSharpHovers.Build(new CSharpHoverRequest("", source)).ModifiedTokens;
+
+        Assert.Contains(tokens, token => token.Line == 1 && token.Kind == "class");
+        Assert.Contains(tokens, token => token.Line == 3 && token.Kind == "property");
+        Assert.Contains(tokens, token => token.Line == 4 && token.Kind == "method");
+        Assert.Contains(tokens, token => token.Line == 5 && token.Kind == "parameter");
+        Assert.Contains(tokens, token => token.Line == 7 && token.Kind == "method");
+        Assert.Contains(tokens, token => token.Line == 8 && token.Kind == "class");
+        Assert.Contains(tokens, token => token.Line == 9 && token.Kind == "property");
+        Assert.DoesNotContain(tokens, token => token.Line == 8 && token.StartColumn == 5);
+    }
+
+    [Fact]
     public void RejectsSourcesLargerThanTheDiffLimit()
     {
         var source = new string('x', 256 * 1024 + 1);
