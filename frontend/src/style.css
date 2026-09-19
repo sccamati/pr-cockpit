@@ -79,9 +79,13 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .previous-path { color: #647386; overflow-wrap: anywhere; font-size: 12px; }
 .file-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .change-type { padding: 4px 8px; border-radius: 6px; background: #eef3f7; color: #4a5b6d; font-size: 12px; white-space: nowrap; }
-.opened-badge { padding: 4px 8px; border-radius: 6px; background: #e7f6f0; color: #147351; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.reviewed-badge { padding: 4px 8px; border-radius: 6px; background: #e7f6f0; color: #147351; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .diff-panel { display: flex; flex-direction: column; scroll-margin-top: 16px; background: #f8fafc; }
-.diff-panel h4 { flex: none; margin: 0; padding: 12px 14px; border-bottom: 1px solid #dce5ec; overflow-wrap: anywhere; background: white; font-size: 14px; }
+.diff-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; padding: 10px 14px; border-bottom: 1px solid #dce5ec; background: white; }
+.diff-panel h4 { margin: 0; overflow-wrap: anywhere; font-size: 14px; }
+.review-check { display: flex; align-items: center; gap: 6px; flex: none; color: #21415a; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.review-check:has(input:disabled) { opacity: .55; cursor: not-allowed; }
+.review-check input { width: 16px; height: 16px; margin: 0; accent-color: #087f77; }
 .diff-placeholder { margin: auto; padding: 20px; color: #647386; text-align: center; }
 .diff-message { margin: 16px; }
 .diff-scroll { flex: 1; min-height: 0; overflow: auto; font: 12px/1.5 Consolas, 'Courier New', monospace; }
@@ -99,6 +103,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
   .diff-panel { height: min(70vh, 680px); min-height: 300px; }
 }
 @media (max-width: 720px) {
+  .diff-toolbar { align-items: flex-start; flex-direction: column; }
   .topbar-caption { display: none; }
   main { padding: 28px 16px 50px; }
   .intro { align-items: start; flex-direction: column; }

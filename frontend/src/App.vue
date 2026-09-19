@@ -15,7 +15,7 @@ const fileDiff = ref<FileDiff | null>(null)
 const diffLoading = ref(false)
 const diffError = ref('')
 const fileSearch = ref('')
-const openedFiles = ref<Record<string, string[]>>({})
+const reviewedFiles = ref<Record<string, string[]>>({})
 const diffPanel = ref<HTMLElement | null>(null)
 let requestId = 0
 let diffRequestId = 0
@@ -23,9 +23,9 @@ let diffRequestId = 0
 const currentPrKey = computed(() => details.value
   ? `${projectId.value}\u0000${repositoryId.value}\u0000${details.value.id}`
   : '')
-const openedPaths = computed(() => {
+const reviewedPaths = computed(() => {
   const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
-  return (openedFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
+  return (reviewedFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
 })
 const filteredFiles = computed(() => {
   const search = fileSearch.value.trim().toLocaleLowerCase()
@@ -34,8 +34,16 @@ const filteredFiles = computed(() => {
     file.originalPath?.toLocaleLowerCase().includes(search)) ?? []
 })
 
-function wasOpened(path: string): boolean {
-  return openedPaths.value.includes(path)
+function isReviewed(path: string): boolean {
+  return reviewedPaths.value.includes(path)
+}
+
+function toggleReviewed() {
+  if (!selectedFilePath.value || (!fileDiff.value && !isReviewed(selectedFilePath.value))) return
+  const path = selectedFilePath.value
+  reviewedFiles.value[currentPrKey.value] = isReviewed(path)
+    ? reviewedPaths.value.filter(reviewedPath => reviewedPath !== path)
+    : [...reviewedPaths.value, path]
 }
 
 function resetDiff() {
@@ -141,12 +149,7 @@ async function openFile(path: string) {
   }
   try {
     const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path)
-    if (current === diffRequestId) {
-      fileDiff.value = result
-      if (!wasOpened(path)) {
-        openedFiles.value[currentPrKey.value] = [...openedPaths.value, path]
-      }
-    }
+    if (current === diffRequestId) fileDiff.value = result
   } catch (cause) {
     if (current === diffRequestId) diffError.value = message(cause)
   } finally {
@@ -239,7 +242,7 @@ onMounted(loadProjects)
           <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
         </div>
         <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
-        <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ openedPaths.length }} otworzonych w tej sesji</span></div>
+        <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ reviewedPaths.length }} obejrzanych w tej sesji</span></div>
           <p v-if="details.changedFiles.length === 0" class="muted">Brak zmienionych plików.</p>
           <div v-else class="file-review">
             <div class="file-list-pane">
@@ -252,14 +255,17 @@ onMounted(loadProjects)
                     :aria-current="selectedFilePath === file.path ? 'true' : undefined" @click="openFile(file.path)">
                     <span class="file-path">{{ file.path }}</span>
                     <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
-                    <span class="file-badges"><span class="change-type">{{ changeLabel(file.changeType) }}</span><span v-if="wasOpened(file.path)" class="opened-badge">✓ Otworzono</span></span>
+                    <span class="file-badges"><span class="change-type">{{ changeLabel(file.changeType) }}</span><span v-if="isReviewed(file.path)" class="reviewed-badge">✓ Obejrzane</span></span>
                   </button>
                 </li>
               </ul>
             </div>
             <div ref="diffPanel" class="diff-panel">
               <template v-if="selectedFilePath">
-                <h4>Diff: {{ selectedFilePath }}</h4>
+                <div class="diff-toolbar">
+                  <h4>Diff: {{ selectedFilePath }}</h4>
+                  <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
+                </div>
                 <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
                 <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
                 <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
