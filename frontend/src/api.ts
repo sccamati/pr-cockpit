@@ -9,6 +9,14 @@ export type FileDiff = FileDiffBase & (
   { kind: 'text'; originalText: string; modifiedText: string } |
   { kind: 'binary' | 'tooLarge'; originalText: null; modifiedText: null }
 )
+export interface CSharpHoverEntry {
+  startLine: number
+  startColumn: number
+  endLine: number
+  endColumn: number
+  signature: string
+}
+export interface CSharpHovers { original: CSharpHoverEntry[]; modified: CSharpHoverEntry[] }
 
 export interface PullRequestSummary {
   id: number
@@ -59,8 +67,13 @@ async function get<T>(path: string): Promise<T> {
   return response.json() as Promise<T>
 }
 
-async function post<T>(path: string): Promise<T> {
-  const response = await fetch(`/api${path}`, { method: 'POST' })
+async function post<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  })
   if (!response.ok) {
     const problem = await response.json().catch(() => null) as { detail?: string } | null
     throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
@@ -93,6 +106,8 @@ export const api = {
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
   fileDiff: (project: string, repository: string, id: number, path: string) =>
     get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}`),
+  csharpHovers: (originalText: string, modifiedText: string, signal?: AbortSignal) =>
+    post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
   checklist: (project: string, repository: string, id: number) =>

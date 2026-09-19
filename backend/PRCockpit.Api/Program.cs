@@ -36,6 +36,9 @@ api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullR
     string project, string repositoryId, int pullRequestId, string path, AzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)));
 
+api.MapPost("/csharp/hovers", async (CSharpHoverRequest request) =>
+    await Execute(() => Task.FromResult(CSharpHovers.Build(request))));
+
 api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/context", async (
     string project, string repositoryId, int pullRequestId, AzureDevOpsClient client, CancellationToken ct) =>
     await Execute(async () =>
