@@ -1,0 +1,35 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+*.rsuser
+
+# Node / Vite
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/secrets.json
+*.pfx
+*.pem
+*.key
+
+# Local data and tooling
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+.vs/
+.vscode/
+.idea/
+coverage/
+TestResults/
+*.log
