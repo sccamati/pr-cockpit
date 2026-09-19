@@ -132,10 +132,28 @@ Status: zaimplementowane po obu stronach.
 
 **Niesprawdzone:** działanie na rzeczywistym PR w Azure DevOps — w szczególności czy `item.objectId` faktycznie przychodzi dla wszystkich typów zmian (dodanie, usunięcie, przeniesienie) i czy znacznik poprawnie przeżywa dorzucenie commita do PR.
 
+## Wdrożone — Entity Framework Core i SQL Server
+
+### B-12 — Persystencja na EF Core i lokalnym SQL Server
+
+Status: zaimplementowane. Decyzja użytkownika po przedstawieniu kompromisów.
+
+**Dlaczego:** ręczne `CREATE TABLE IF NOT EXISTS` przy każdej operacji nie potrafiło rozwinąć schematu — dołożenie kolumny do istniejącej bazy po cichu nic by nie zrobiło, a zapytania przestałyby działać. Nie było żadnej ścieżki migracji. EF to naprawia migracjami.
+
+**Zakres:** `PrCockpitContext` z czterema encjami w `Persistence/Entities`, przepisane `ChecklistStore`, `SummaryStore` i `ReviewProgressStore`, migracja `InitialSchema`, stosowanie migracji przy starcie, rejestracja magazynów jako scoped, nowe gałęzie `SqlException` i `DbUpdateException` w `Execute`. Usunięto `LocalDatabase` i `Microsoft.Data.Sqlite` z aplikacji.
+
+**Zweryfikowane na żywo:** migracja zastosowana na rzeczywistej instancji SQL Server i zarejestrowana w `__EFMigrationsHistory`; aplikacja wstaje i wykonuje realny zapis oraz odczyt przez API (checklista, oznaczenie pliku, ścieżka czytania, zbiorczy postęp). 49 testów backendu przechodzi na SQLite w pamięci, 33 testy frontendu i build przechodzą.
+
+**Pułapka warta zapamiętania:** pierwszy connection string nie zawierał `Initial Catalog`, więc EF utworzył tabele w bazie `master`. Wykryte, tabele z `master` usunięte, baza `PRCockpit` założona poprawnie, a wymóg jawnego `Initial Catalog` zapisany w README i `.env.example`.
+
+**Dług:** do projektu API trzeba było dołożyć `Microsoft.CodeAnalysis.Workspaces.Common` i `Microsoft.CodeAnalysis.CSharp.Workspaces` w wersji 5.9.0, bo generator migracji EF zderzał się z Roslynem używanym przez podpowiedzi C#. Po rozdzieleniu na projekty warstwowe infrastruktura nie będzie zależeć od Roslyna i te dwa pakiety powinny zniknąć.
+
+**Niesprawdzone:** zachowanie przy równoległych zapisach z dwóch okien oraz to, czy dotychczasowe dane z pliku SQLite mają zostać przeniesione — obecnie **nie są**, baza SQL Server startuje pusta.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
-- **Entity Framework Core i przejście na SQL Server:** decyzja użytkownika. Obecne `CREATE TABLE IF NOT EXISTS` przy każdej operacji nie potrafi rozwinąć schematu — dołożenie kolumny do istniejącej bazy po cichu nic nie zrobi. Migracje EF to naprawiają, a dostawca staje się wyborem konfiguracji. Obejmie wszystkie trzy magazyny naraz. Odchodzi od PRODUCT.md §14, który wyklucza Azure SQL na tym etapie — zapis do aktualizacji przy tej zmianie.
+- **Podział na warstwy (Clean Architecture, osobne projekty):** decyzja użytkownika, cały backend naraz. Odchodzi od zapisu w `CLAUDE.md` tego repo, który mówi, że narzędzie jednoosobowe nie zarabia na warstwy — zapis do aktualizacji przy tej zmianie.
 - **Komentarze Azure DevOps:** wątki PR, najpierw do odczytu (bez zmiany PAT), potem zapis za wyłącznikiem konfiguracyjnym.
 - **Quality i Architecture:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
 - **Lokalne repozytorium i zapis pozostałych analiz:** osobne etapy po Summary.

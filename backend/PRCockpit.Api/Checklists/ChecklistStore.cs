@@ -1,6 +1,6 @@
-using System.Globalization;
-using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using PRCockpit.Api.Persistence;
+using PRCockpit.Api.Persistence.Entities;
 
 namespace PRCockpit.Api.Checklists;
 
@@ -16,62 +16,32 @@ public sealed class ChecklistException(string message, int statusCode) : Excepti
     public int StatusCode { get; } = statusCode;
 }
 
-public sealed class ChecklistStore(IConfiguration configuration)
+public sealed class ChecklistStore(PrCockpitContext context, IConfiguration configuration)
 {
-    private const string Columns = "ai_review, quality, understand, architecture, debug, ready, updated_at";
-    private const string Schema = """
-        CREATE TABLE IF NOT EXISTS pr_checklists (
-            organization TEXT NOT NULL,
-            project TEXT NOT NULL,
-            repository_id TEXT NOT NULL,
-            pull_request_id INTEGER NOT NULL,
-            ai_review INTEGER NOT NULL DEFAULT 0 CHECK (ai_review IN (0, 1)),
-            quality INTEGER NOT NULL DEFAULT 0 CHECK (quality IN (0, 1)),
-            understand INTEGER NOT NULL DEFAULT 0 CHECK (understand IN (0, 1)),
-            architecture INTEGER NOT NULL DEFAULT 0 CHECK (architecture IN (0, 1)),
-            debug INTEGER NOT NULL DEFAULT 0 CHECK (debug IN (0, 1)),
-            ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1)),
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (organization, project, repository_id, pull_request_id)
-        );
-        """;
-
     public async Task<ChecklistState> GetAsync(
         string project, string repositoryId, int pullRequestId, CancellationToken ct)
     {
         var organization = ValidateKey(project, repositoryId, pullRequestId);
-        await using var connection = await OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"""
-            SELECT {Columns} FROM pr_checklists
-            WHERE organization = $organization AND project = $project
-              AND repository_id = $repository AND pull_request_id = $pullRequestId;
-            """;
-        AddKey(command, organization, project, repositoryId, pullRequestId);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadState(reader) : new(false, false, false, false, false, false, null);
+        var row = await context.Checklists
+            .AsNoTracking()
+            .FirstOrDefaultAsync(Match(organization, project, repositoryId, pullRequestId), ct);
+        return row is null ? new(false, false, false, false, false, false, null) : ToState(row);
     }
 
     public async Task<IReadOnlyList<ChecklistProgress>> GetProgressAsync(
         string project, string repositoryId, CancellationToken ct)
     {
         var organization = ValidateLocation(project, repositoryId);
-        await using var connection = await OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT pull_request_id,
-                   ai_review + quality + understand + architecture + debug + ready
-            FROM pr_checklists
-            WHERE organization = $organization AND project = $project AND repository_id = $repository;
-            """;
-        command.Parameters.AddWithValue("$organization", organization);
-        command.Parameters.AddWithValue("$project", project);
-        command.Parameters.AddWithValue("$repository", repositoryId);
-        var progress = new List<ChecklistProgress>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-            progress.Add(new(checked((int)reader.GetInt64(0)), checked((int)reader.GetInt64(1))));
-        return progress;
+        // Summed in SQL, one query for the whole repository, the way the list view needs it.
+        return await context.Checklists
+            .AsNoTracking()
+            .Where(row => row.Organization == organization && row.Project == project &&
+                          row.RepositoryId == repositoryId)
+            .Select(row => new ChecklistProgress(
+                row.PullRequestId,
+                (row.AiReview ? 1 : 0) + (row.Quality ? 1 : 0) + (row.Understand ? 1 : 0) +
+                (row.Architecture ? 1 : 0) + (row.Debug ? 1 : 0) + (row.Ready ? 1 : 0)))
+            .ToListAsync(ct);
     }
 
     public async Task<ChecklistState> SetAsync(
@@ -80,34 +50,45 @@ public sealed class ChecklistStore(IConfiguration configuration)
     {
         var organization = ValidateKey(project, repositoryId, pullRequestId);
         if (completed is null) throw new ChecklistException("Specify completed as true or false.", 400);
-        var column = item.ToLowerInvariant() switch
-        {
-            "ai-review" => "ai_review",
-            "quality" => "quality",
-            "understand" => "understand",
-            "architecture" => "architecture",
-            "debug" => "debug",
-            "ready" => "ready",
-            _ => throw new ChecklistException("Unknown checklist item.", 400)
-        };
 
-        await using var connection = await OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"""
-            INSERT INTO pr_checklists
-                (organization, project, repository_id, pull_request_id, {column}, updated_at)
-            VALUES ($organization, $project, $repository, $pullRequestId, $completed, $updatedAt)
-            ON CONFLICT (organization, project, repository_id, pull_request_id)
-            DO UPDATE SET {column} = excluded.{column}, updated_at = excluded.updated_at
-            RETURNING {Columns};
-            """;
-        AddKey(command, organization, project, repositoryId, pullRequestId);
-        command.Parameters.AddWithValue("$completed", completed.Value ? 1 : 0);
-        command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) throw new ChecklistException("Checklist could not be saved.", 503);
-        return ReadState(reader);
+        var row = await context.Checklists
+            .FirstOrDefaultAsync(Match(organization, project, repositoryId, pullRequestId), ct);
+        if (row is null)
+        {
+            row = new PrChecklistRow
+            {
+                Organization = organization,
+                Project = project,
+                RepositoryId = repositoryId,
+                PullRequestId = pullRequestId,
+            };
+            context.Checklists.Add(row);
+        }
+
+        // A closed set of names, so an unknown item can never reach the database.
+        switch (item.ToLowerInvariant())
+        {
+            case "ai-review": row.AiReview = completed.Value; break;
+            case "quality": row.Quality = completed.Value; break;
+            case "understand": row.Understand = completed.Value; break;
+            case "architecture": row.Architecture = completed.Value; break;
+            case "debug": row.Debug = completed.Value; break;
+            case "ready": row.Ready = completed.Value; break;
+            default: throw new ChecklistException("Unknown checklist item.", 400);
+        }
+
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(ct);
+        return ToState(row);
     }
+
+    private static ChecklistState ToState(PrChecklistRow row) => new(
+        row.AiReview, row.Quality, row.Understand, row.Architecture, row.Debug, row.Ready, row.UpdatedAt);
+
+    private static System.Linq.Expressions.Expression<Func<PrChecklistRow, bool>> Match(
+        string organization, string project, string repositoryId, int pullRequestId) =>
+        row => row.Organization == organization && row.Project == project &&
+               row.RepositoryId == repositoryId && row.PullRequestId == pullRequestId;
 
     private string ValidateKey(string project, string repositoryId, int pullRequestId)
     {
@@ -126,39 +107,4 @@ public sealed class ChecklistStore(IConfiguration configuration)
             throw new ChecklistException("Invalid pull request location.", 400);
         return organization;
     }
-
-    private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
-    {
-        var connection = await LocalDatabase.OpenAsync(configuration, ct);
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = Schema;
-            await command.ExecuteNonQueryAsync(ct);
-            return connection;
-        }
-        catch
-        {
-            await connection.DisposeAsync();
-            throw;
-        }
-    }
-
-    private static void AddKey(
-        SqliteCommand command, string organization, string project, string repositoryId, int pullRequestId)
-    {
-        command.Parameters.AddWithValue("$organization", organization);
-        command.Parameters.AddWithValue("$project", project);
-        command.Parameters.AddWithValue("$repository", repositoryId);
-        command.Parameters.AddWithValue("$pullRequestId", pullRequestId);
-    }
-
-    private static ChecklistState ReadState(SqliteDataReader reader) => new(
-        reader.GetInt64(0) != 0,
-        reader.GetInt64(1) != 0,
-        reader.GetInt64(2) != 0,
-        reader.GetInt64(3) != 0,
-        reader.GetInt64(4) != 0,
-        reader.GetInt64(5) != 0,
-        DateTimeOffset.Parse(reader.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
 }

@@ -473,14 +473,14 @@ PR Cockpit UI
 Baza:
 
 ```text
-SQLite
+lokalny SQL Server (Entity Framework Core)
 ```
 
-w MVP.
+Pierwotnie MVP zakładało SQLite. Zmienione świadomie: ręczne tworzenie tabel nie dawało żadnej ścieżki migracji schematu, a deweloper ma SQL Server lokalnie. Baza nadal jest lokalna i jednoosobowa — to nie jest Azure SQL ani usługa współdzielona.
 
 Nie potrzebujemy na początku:
 
-* Azure SQL,
+* Azure SQL (hostowanego w chmurze),
 * Redis,
 * Service Bus,
 * Kubernetes,
@@ -610,7 +610,7 @@ Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików →
 
 ### Persistence
 
-* [x] zapis checklist w lokalnym SQLite
+* [x] zapis checklist w lokalnej bazie SQL Server przez EF Core
 * [ ] zapis analizy (Summary jest zapisywane; pozostałe wyniki jeszcze nie)
 * [ ] ponowne otwarcie wcześniej przeanalizowanego PR (zapisane Summary jest wczytywane)
 
@@ -647,7 +647,7 @@ Kolejność najbliższych, małych zadań i warunki ich zakończenia są w [docs
 
 * [x] Utworzyć solution .NET
 * [x] Utworzyć Vue frontend
-* [x] Dodać SQLite dla checklisty
+* [x] Dodać lokalną bazę dla checklisty (SQLite w MVP, obecnie SQL Server przez EF Core)
 * [x] Przygotować podstawowy layout
 * [x] Przygotować konfigurację aplikacji
 

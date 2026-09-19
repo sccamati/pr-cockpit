@@ -1,29 +1,53 @@
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PRCockpit.Api.Checklists;
+using PRCockpit.Api.Persistence;
 
 namespace PRCockpit.Api.Tests;
 
+/// <summary>
+/// Runs against SQLite in memory so `dotnet test` needs no database on the machine. The
+/// application itself runs on SQL Server; the schema those migrations produce is verified
+/// by applying them, not here. What these tests pin is the store's own behaviour.
+/// </summary>
 public sealed class ReviewProgressStoreTests : IDisposable
 {
-    private readonly string _databasePath =
-        Path.Combine(Path.GetTempPath(), $"pr-cockpit-tests-{Guid.NewGuid():N}.db");
-
     private const string Sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
     private const string OtherSha = "00112233445566778899aabbccddeeff00112233";
 
-    private ReviewProgressStore Store() => new(new ConfigurationBuilder()
-        .AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["AzureDevOps:Organization"] = "contoso",
-            ["Checklist:DatabasePath"] = _databasePath,
-        })
-        .Build());
+    private readonly SqliteConnection _connection;
+    private readonly DbContextOptions<PrCockpitContext> _options;
+    private readonly List<PrCockpitContext> _contexts = [];
+
+    public ReviewProgressStoreTests()
+    {
+        // The in-memory database lives as long as this connection does.
+        _connection = new SqliteConnection("Filename=:memory:");
+        _connection.Open();
+        _options = new DbContextOptionsBuilder<PrCockpitContext>().UseSqlite(_connection).Options;
+        using var context = new PrCockpitContext(_options);
+        context.Database.EnsureCreated();
+    }
+
+    // A fresh context per call, the way a scoped one behaves per request.
+    private ReviewProgressStore Store()
+    {
+        var context = new PrCockpitContext(_options);
+        _contexts.Add(context);
+        return new ReviewProgressStore(context, new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AzureDevOps:Organization"] = "contoso",
+            })
+            .Build());
+    }
 
     private static FileReviewUpdate Mark(string path, bool reviewed = true, string? blobId = Sha) =>
         new(path, reviewed, blobId, Sha, 3);
 
     [Fact]
-    public async Task RemembersAReviewedFileAcrossConnections()
+    public async Task RemembersAReviewedFileAcrossContexts()
     {
         await Store().SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
 
@@ -38,23 +62,22 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task UnmarkingRemovesTheRowRatherThanStoringAZero()
     {
-        var store = Store();
-        await store.SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
+        await Store().SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
 
-        var result = await store.SetFileAsync("proj", "repo", 7, Mark("/src/One.cs", reviewed: false), CancellationToken.None);
+        var result = await Store().SetFileAsync("proj", "repo", 7,
+            Mark("/src/One.cs", reviewed: false), CancellationToken.None);
 
         Assert.Null(result.Entry);
         Assert.Equal(0, result.ReviewedCount);
-        Assert.Empty((await store.GetAsync("proj", "repo", 7, CancellationToken.None)).Files);
+        Assert.Empty((await Store().GetAsync("proj", "repo", 7, CancellationToken.None)).Files);
     }
 
     [Fact]
     public async Task ReMarkingRestampsTheStoredIdentity()
     {
-        var store = Store();
-        await store.SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
+        await Store().SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
 
-        var result = await store.SetFileAsync("proj", "repo", 7,
+        var result = await Store().SetFileAsync("proj", "repo", 7,
             new FileReviewUpdate("/src/One.cs", true, OtherSha, OtherSha, 3), CancellationToken.None);
 
         Assert.Equal(OtherSha, result.Entry!.BlobId);
@@ -64,12 +87,11 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task KeepsStateSeparatePerPullRequestAndRepository()
     {
-        var store = Store();
-        await store.SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
-        await store.SetFileAsync("proj", "other", 7, Mark("/src/One.cs"), CancellationToken.None);
-        await store.SetFileAsync("proj", "repo", 8, Mark("/src/Two.cs"), CancellationToken.None);
+        await Store().SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
+        await Store().SetFileAsync("proj", "other", 7, Mark("/src/One.cs"), CancellationToken.None);
+        await Store().SetFileAsync("proj", "repo", 8, Mark("/src/Two.cs"), CancellationToken.None);
 
-        var progress = await store.GetProgressAsync("proj", "repo", CancellationToken.None);
+        var progress = await Store().GetProgressAsync("proj", "repo", CancellationToken.None);
 
         Assert.Equal(2, progress.Count);
         Assert.Equal(1, progress.Single(item => item.PullRequestId == 7).ReviewedCount);
@@ -79,10 +101,9 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task ReportsNoProgressForAPullRequestThatWasNeverRead()
     {
-        var store = Store();
-        await store.SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
+        await Store().SetFileAsync("proj", "repo", 7, Mark("/src/One.cs"), CancellationToken.None);
 
-        var progress = await store.GetProgressAsync("proj", "repo", CancellationToken.None);
+        var progress = await Store().GetProgressAsync("proj", "repo", CancellationToken.None);
 
         Assert.DoesNotContain(progress, item => item.PullRequestId == 99);
     }
@@ -90,13 +111,22 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task StoresTheReadingPathInOrderAndReplacesItWholesale()
     {
-        var store = Store();
-        await store.SetReadingPathAsync("proj", "repo", 7, ["/b.cs", "/a.cs"], CancellationToken.None);
-        await store.SetReadingPathAsync("proj", "repo", 7, ["/a.cs"], CancellationToken.None);
+        await Store().SetReadingPathAsync("proj", "repo", 7, ["/b.cs", "/a.cs"], CancellationToken.None);
+        await Store().SetReadingPathAsync("proj", "repo", 7, ["/a.cs"], CancellationToken.None);
 
-        var state = await store.GetAsync("proj", "repo", 7, CancellationToken.None);
+        var state = await Store().GetAsync("proj", "repo", 7, CancellationToken.None);
 
         Assert.Equal(["/a.cs"], state.ReadingPath);
+    }
+
+    [Fact]
+    public async Task KeepsTheReadingPathOrderExactly()
+    {
+        await Store().SetReadingPathAsync("proj", "repo", 7, ["/c.cs", "/a.cs", "/b.cs"], CancellationToken.None);
+
+        var state = await Store().GetAsync("proj", "repo", 7, CancellationToken.None);
+
+        Assert.Equal(["/c.cs", "/a.cs", "/b.cs"], state.ReadingPath);
     }
 
     [Theory]
@@ -131,11 +161,10 @@ public sealed class ReviewProgressStoreTests : IDisposable
         Assert.Equal(400, failure.StatusCode);
     }
 
-    [Theory]
-    [InlineData(11)]  // over the ten-file limit
-    public async Task RejectsAnOversizeReadingPath(int count)
+    [Fact]
+    public async Task RejectsAnOversizeReadingPath()
     {
-        var paths = Enumerable.Range(0, count).Select(index => $"/file{index}.cs").ToArray();
+        var paths = Enumerable.Range(0, 11).Select(index => $"/file{index}.cs").ToArray();
 
         var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
             Store().SetReadingPathAsync("proj", "repo", 7, paths, CancellationToken.None));
@@ -172,7 +201,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task StopsAtTheRowCapWithoutDisturbingExistingRows()
+    public async Task StopsAtTheRowCapWithoutBlockingAnExistingFile()
     {
         var store = Store();
         // The cap is 2000; filling it honestly keeps the test truthful about the real bound.
@@ -181,16 +210,15 @@ public sealed class ReviewProgressStoreTests : IDisposable
 
         var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
             store.SetFileAsync("proj", "repo", 7, Mark("/one-too-many.cs"), CancellationToken.None));
-
         Assert.Equal(400, failure.StatusCode);
-        // An existing file must still be updatable once the cap is reached.
+
         var again = await store.SetFileAsync("proj", "repo", 7, Mark("/file0.cs"), CancellationToken.None);
         Assert.Equal(2000, again.ReviewedCount);
     }
 
     public void Dispose()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        try { File.Delete(_databasePath); } catch (IOException) { }
+        foreach (var context in _contexts) context.Dispose();
+        _connection.Dispose();
     }
 }

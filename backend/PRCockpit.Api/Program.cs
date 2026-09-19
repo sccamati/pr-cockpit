@@ -1,7 +1,9 @@
-using Microsoft.Data.Sqlite;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using PRCockpit.Api.Analysis;
 using PRCockpit.Api.AzureDevOps;
 using PRCockpit.Api.Checklists;
+using PRCockpit.Api.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,11 +12,23 @@ builder.Services.AddHttpClient<AzureDevOpsClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 builder.Services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
-builder.Services.AddSingleton<ChecklistStore>();
-builder.Services.AddSingleton<SummaryStore>();
-builder.Services.AddSingleton<ReviewProgressStore>();
+builder.Services.AddDbContext<PrCockpitContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("PrCockpit")));
+// Scoped, because they now depend on the scoped DbContext.
+builder.Services.AddScoped<ChecklistStore>();
+builder.Services.AddScoped<SummaryStore>();
+builder.Services.AddScoped<ReviewProgressStore>();
 
 var app = builder.Build();
+
+// A single-user local tool: applying migrations on start beats asking the user to run
+// `dotnet ef database update` after every pull.
+// ponytail: fine for one machine and one process. A shared deployment would need the
+// migration to run as its own deliberate step instead.
+using (var scope = app.Services.CreateScope())
+{
+    await scope.ServiceProvider.GetRequiredService<PrCockpitContext>().Database.MigrateAsync();
+}
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
@@ -121,7 +135,11 @@ static async Task<IResult> Execute<T>(Func<Task<T>> action)
     {
         return Results.Problem(ex.Message, statusCode: ex.StatusCode);
     }
-    catch (SqliteException)
+    catch (SqlException)
+    {
+        return Results.Problem("Local storage is unavailable.", statusCode: 503);
+    }
+    catch (DbUpdateException)
     {
         return Results.Problem("Local storage is unavailable.", statusCode: 503);
     }
