@@ -28,6 +28,10 @@ api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests", asyn
     string project, string repositoryId, AzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetPullRequestsAsync(project, repositoryId, ct)));
 
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/checklist-progress", async (
+    string project, string repositoryId, ChecklistStore store, CancellationToken ct) =>
+    await Execute(() => store.GetProgressAsync(project, repositoryId, ct)));
+
 api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}", async (
     string project, string repositoryId, int pullRequestId, AzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct)));

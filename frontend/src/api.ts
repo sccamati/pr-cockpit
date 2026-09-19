@@ -57,6 +57,7 @@ export interface SummaryResponse {
 
 export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
 export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null }
+export interface ChecklistProgress { pullRequestId: number; completedCount: number }
 
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`)
@@ -102,6 +103,8 @@ export const api = {
   repositories: (project: string) => get<Repository[]>(`/projects/${encodeURIComponent(project)}/repositories`),
   pullRequests: (project: string, repository: string) =>
     get<PullRequestSummary[]>(`${location(project, repository)}/pull-requests`),
+  checklistProgress: (project: string, repository: string) =>
+    get<ChecklistProgress[]>(`${location(project, repository)}/pull-requests/checklist-progress`),
   pullRequest: (project: string, repository: string, id: number) =>
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
   fileDiff: (project: string, repository: string, id: number, path: string) =>

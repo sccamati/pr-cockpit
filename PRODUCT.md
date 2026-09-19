@@ -602,7 +602,7 @@ Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików →
 
 ### UI
 
-* [ ] Dashboard PR (lista PR działa; brak postępu checklisty pokazanego w sekcji 5)
+* [x] Dashboard PR (lista aktywnych PR pokazuje postęp zapisanej checklisty jako `x/6`)
 * [ ] PR Overview (podstawowe szczegóły są; brak affected areas i risk z sekcji 5)
 * [ ] Understand
 * [ ] Quality

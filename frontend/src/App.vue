@@ -21,6 +21,9 @@ const checklist = ref<ChecklistState | null>(null)
 const checklistLoading = ref(false)
 const checklistSaving = ref<ChecklistItem | null>(null)
 const checklistError = ref('')
+const checklistProgress = ref<Record<number, number>>({})
+const progressLoading = ref(false)
+const progressError = ref('')
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
 const reviewedFiles = ref<Record<string, string[]>>({})
@@ -148,6 +151,27 @@ function resetChecklist() {
   checklistError.value = ''
 }
 
+function resetChecklistProgress() {
+  checklistProgress.value = {}
+  progressLoading.value = false
+  progressError.value = ''
+}
+
+async function loadChecklistProgress(current: number, project: string, repository: string) {
+  progressLoading.value = true
+  progressError.value = ''
+  try {
+    const result = await api.checklistProgress(project, repository)
+    if (current === requestId) {
+      checklistProgress.value = Object.fromEntries(result.map(item => [item.pullRequestId, item.completedCount]))
+    }
+  } catch (cause) {
+    if (current === requestId) progressError.value = message(cause)
+  } finally {
+    if (current === requestId) progressLoading.value = false
+  }
+}
+
 async function loadChecklist(project: string, repository: string, id: number) {
   const current = ++checklistRequestId
   checklistLoading.value = true
@@ -213,6 +237,7 @@ async function loadRepositories() {
   resetDiff()
   resetSummary()
   resetChecklist()
+  resetChecklistProgress()
   repositories.value = []
   repositoryId.value = ''
   pullRequests.value = []
@@ -221,8 +246,9 @@ async function loadRepositories() {
   if (!projectId.value) return
   loading.value = true
   try {
-    repositories.value = await api.repositories(projectId.value)
+    const result = await api.repositories(projectId.value)
     if (current !== requestId) return
+    repositories.value = result
     if (repositories.value.length === 1) {
       repositoryId.value = repositories.value[0]!.id
       await loadPullRequests()
@@ -239,6 +265,7 @@ async function loadPullRequests() {
   resetDiff()
   resetSummary()
   resetChecklist()
+  resetChecklistProgress()
   pullRequests.value = []
   details.value = null
   error.value = ''
@@ -246,7 +273,10 @@ async function loadPullRequests() {
   loading.value = true
   try {
     const result = await api.pullRequests(projectId.value, repositoryId.value)
-    if (current === requestId) pullRequests.value = result
+    if (current === requestId) {
+      pullRequests.value = result
+      if (result.length > 0) void loadChecklistProgress(current, projectId.value, repositoryId.value)
+    }
   } catch (cause) {
     if (current === requestId) error.value = message(cause)
   } finally {
@@ -331,6 +361,9 @@ function backToList() {
   details.value = null
   error.value = ''
   loading.value = false
+  if (repositoryId.value && pullRequests.value.length > 0) {
+    void loadChecklistProgress(requestId, projectId.value, repositoryId.value)
+  }
 }
 
 function formatDate(value: string): string {
@@ -541,11 +574,14 @@ onMounted(loadProjects)
 
       <section v-else-if="repositoryId && !loading" class="card list-card">
         <div class="list-heading"><h2>Pull Requesty</h2><span>{{ pullRequests.length }} aktywnych</span></div>
+        <p v-if="progressLoading" class="notice" role="status">Wczytywanie postępu checklist…</p>
+        <div v-if="progressError" class="notice error" role="alert">Nie udało się wczytać postępu checklist: {{ progressError }} <button class="checklist-retry" type="button" @click="loadChecklistProgress(requestId, projectId, repositoryId)">Spróbuj ponownie</button></div>
         <p v-if="pullRequests.length === 0" class="empty">W tym repozytorium nie ma aktywnych Pull Requestów.</p>
         <button v-for="pr in pullRequests" :key="pr.id" class="pr-row" type="button" @click="openPullRequest(pr.id)">
           <span class="pr-number">#{{ pr.id }}</span>
           <span class="pr-title"><strong>{{ pr.title }}</strong><small>{{ pr.author }} · {{ pr.repository }}</small></span>
           <span class="status">{{ pr.status }}</span>
+          <span class="pr-progress" :aria-label="`Postęp checklisty: ${progressLoading ? 'wczytywanie' : progressError ? 'błąd wczytywania' : `${checklistProgress[pr.id] ?? 0} z 6`}`">{{ progressLoading ? '…/6' : progressError ? '—/6' : `${checklistProgress[pr.id] ?? 0}/6` }}</span>
           <span class="pr-date">Utworzono {{ formatDate(pr.createdAt) }}</span>
           <span class="row-arrow">→</span>
         </button>

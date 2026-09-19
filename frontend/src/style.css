@@ -45,6 +45,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .pr-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-title small { color: #647386; }
 .status { padding: 5px 10px; border-radius: 999px; background: #e7f6f0; color: #147351; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.pr-progress { min-width: 40px; color: #087f77; font-size: 14px; font-weight: 800; white-space: nowrap; text-align: center; }
 .pr-date { min-width: 166px; text-align: right; color: #647386; font-size: 12px; }
 .row-arrow { color: #9aabb7; font-size: 22px; }
 .empty { padding: 36px 24px; color: #647386; }

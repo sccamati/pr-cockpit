@@ -8,6 +8,7 @@ public record ChecklistState(
     DateTimeOffset? UpdatedAt);
 
 public record ChecklistUpdate(bool? Completed);
+public record ChecklistProgress(int PullRequestId, int CompletedCount);
 
 public sealed class ChecklistException(string message, int statusCode) : Exception(message)
 {
@@ -50,6 +51,28 @@ public sealed class ChecklistStore(IConfiguration configuration)
         return await reader.ReadAsync(ct) ? ReadState(reader) : new(false, false, false, false, false, false, null);
     }
 
+    public async Task<IReadOnlyList<ChecklistProgress>> GetProgressAsync(
+        string project, string repositoryId, CancellationToken ct)
+    {
+        var organization = ValidateLocation(project, repositoryId);
+        await using var connection = await OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT pull_request_id,
+                   ai_review + quality + understand + architecture + debug + ready
+            FROM pr_checklists
+            WHERE organization = $organization AND project = $project AND repository_id = $repository;
+            """;
+        command.Parameters.AddWithValue("$organization", organization);
+        command.Parameters.AddWithValue("$project", project);
+        command.Parameters.AddWithValue("$repository", repositoryId);
+        var progress = new List<ChecklistProgress>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            progress.Add(new(checked((int)reader.GetInt64(0)), checked((int)reader.GetInt64(1))));
+        return progress;
+    }
+
     public async Task<ChecklistState> SetAsync(
         string project, string repositoryId, int pullRequestId, string item, bool? completed,
         CancellationToken ct)
@@ -87,10 +110,18 @@ public sealed class ChecklistStore(IConfiguration configuration)
 
     private string ValidateKey(string project, string repositoryId, int pullRequestId)
     {
+        var organization = ValidateLocation(project, repositoryId);
+        if (pullRequestId <= 0)
+            throw new ChecklistException("Invalid pull request location.", 400);
+        return organization;
+    }
+
+    private string ValidateLocation(string project, string repositoryId)
+    {
         var organization = configuration["AzureDevOps:Organization"];
         if (string.IsNullOrWhiteSpace(organization))
             throw new ChecklistException("Configure AzureDevOps:Organization on the backend.", 503);
-        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repositoryId) || pullRequestId <= 0)
+        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repositoryId))
             throw new ChecklistException("Invalid pull request location.", 400);
         return organization;
     }
