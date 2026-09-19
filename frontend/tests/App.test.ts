@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   pullRequests: vi.fn(),
   pullRequest: vi.fn(),
   fileDiff: vi.fn(),
+  generateSummary: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -50,6 +51,16 @@ beforeEach(() => {
   api.fileDiff.mockImplementation(async (_project, _repository, _id, path) => ({
     kind: 'text', path, originalPath: null, originalText: 'old', modifiedText: 'new',
   }))
+  api.generateSummary.mockResolvedValue({
+    schemaVersion: 1,
+    summary: 'Zmieniono przepływ faktur. Dodano testy.',
+    baseCommitSha: 'a'.repeat(40),
+    headCommitSha: 'b'.repeat(40),
+    contextReport: {
+      changedFiles: 3, includedFiles: 2, includedDiffCharacters: 20,
+      wasLimited: true, omittedFiles: [{ path: '/tests/third.cs', reason: 'fileCharacterLimit' }],
+    },
+  })
   window.matchMedia = vi.fn().mockReturnValue({ matches: false })
 })
 
@@ -71,7 +82,8 @@ describe('PR review', () => {
     expect(wrapper.findAll('.changed-files li')).toHaveLength(2)
     await wrapper.find('.next-file-button').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.diff-toolbar h4').text()).toContain('/src/first.cs')
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    expect(wrapper.find('.diff-toolbar-title').attributes('title')).toBe('/src/first.cs')
     expect(wrapper.find('.review-check input').element.checked).toBe(false)
     expect(wrapper.text()).toContain('0 / 3 obejrzanych')
 
@@ -80,7 +92,8 @@ describe('PR review', () => {
     expect(wrapper.text()).toContain('1 / 3 obejrzanych')
     await wrapper.find('.next-file-button').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.diff-toolbar h4').text()).toContain('/src/second.cs')
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    expect(wrapper.find('.diff-toolbar-title').attributes('title')).toBe('/src/second.cs')
     expect(api.fileDiff).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/second.cs')
 
     await wrapper.find('.review-check input').setValue(true)
@@ -89,7 +102,8 @@ describe('PR review', () => {
     await wrapper.find('#file-search').setValue('')
     await wrapper.find('.next-file-button').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.diff-toolbar h4').text()).toContain('/tests/third.cs')
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('third.cs')
+    expect(wrapper.find('.diff-toolbar-title').attributes('title')).toBe('/tests/third.cs')
     await wrapper.find('.review-check input').setValue(true)
     expect(wrapper.text()).toContain('Wszystkie pliki obejrzane.')
     wrapper.unmount()
@@ -117,6 +131,50 @@ describe('PR review', () => {
     await flushPromises()
     expect(wrapper.findAll('.pr-row')).toHaveLength(1)
     expect(wrapper.find('.pr-row').text()).toContain('Current repo PR')
+    wrapper.unmount()
+  })
+
+  it('runs Summary only on click and shows the context limitation', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    expect(api.generateSummary).not.toHaveBeenCalled()
+    await wrapper.find('.summary-button').trigger('click')
+    await flushPromises()
+
+    expect(api.generateSummary).toHaveBeenCalledExactlyOnceWith('project', 'repo-a', 123)
+    expect(wrapper.find('.summary-text').text()).toBe('Zmieniono przepływ faktur. Dodano testy.')
+    expect(wrapper.find('.summary-report').text()).toContain('2 / 3 plików z diffem')
+    expect(wrapper.find('.summary-omissions').text()).toContain('/tests/third.cs')
+    expect(wrapper.find('.summary-omissions').text()).toContain('limit na plik')
+    wrapper.unmount()
+  })
+
+  it('shows an analysis error and ignores a late result after changing PR', async () => {
+    let resolveOld!: (value: unknown) => void
+    api.generateSummary.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    api.pullRequests.mockResolvedValue([details, { ...details, id: 456, title: 'Another PR' }])
+    api.pullRequest.mockImplementation(async (_project, _repo, id) => ({ ...details, id }))
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.findAll('.pr-row')[0]!.trigger('click')
+    await flushPromises()
+    await wrapper.find('.summary-button').trigger('click')
+    expect(wrapper.find('.summary-button').attributes('disabled')).toBeDefined()
+    await wrapper.find('.back-button').trigger('click')
+    await wrapper.findAll('.pr-row')[1]!.trigger('click')
+    await flushPromises()
+    resolveOld({ summary: 'Old PR summary' })
+    await flushPromises()
+    expect(wrapper.find('.summary-text').exists()).toBe(false)
+
+    api.generateSummary.mockRejectedValueOnce(new Error('AI CLI timed out.'))
+    await wrapper.find('.summary-button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.summary-section [role="alert"]').text()).toContain('AI CLI timed out.')
     wrapper.unmount()
   })
 })

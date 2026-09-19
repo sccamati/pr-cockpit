@@ -29,10 +29,35 @@ export interface PullRequestDetails extends PullRequestSummary {
   commitsCount: number
   commits: Commit[]
   workItems: WorkItem[]
+  baseCommitSha?: string | null
+  headCommitSha?: string | null
+}
+
+export interface SummaryResponse {
+  schemaVersion: number
+  summary: string
+  baseCommitSha: string | null
+  headCommitSha: string | null
+  contextReport: {
+    changedFiles: number
+    includedFiles: number
+    includedDiffCharacters: number
+    wasLimited: boolean
+    omittedFiles: { path: string; reason: string }[]
+  }
 }
 
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`)
+  if (!response.ok) {
+    const problem = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
+  }
+  return response.json() as Promise<T>
+}
+
+async function post<T>(path: string): Promise<T> {
+  const response = await fetch(`/api${path}`, { method: 'POST' })
   if (!response.ok) {
     const problem = await response.json().catch(() => null) as { detail?: string } | null
     throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
@@ -52,4 +77,6 @@ export const api = {
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
   fileDiff: (project: string, repository: string, id: number, path: string) =>
     get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}`),
+  generateSummary: (project: string, repository: string, id: number) =>
+    post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
 }

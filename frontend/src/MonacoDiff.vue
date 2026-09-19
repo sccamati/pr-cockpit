@@ -46,10 +46,13 @@ onMounted(() => {
     originalEditable: false,
     renderSideBySide: true,
     useInlineViewWhenSpaceIsLimited: true,
-    renderSideBySideInlineBreakpoint: 700,
+    renderSideBySideInlineBreakpoint: 1050,
+    diffWordWrap: 'on',
     scrollBeyondLastLine: false,
     minimap: { enabled: false },
-    fontSize: 13,
+    fontSize: 14,
+    lineHeight: 22,
+    lineNumbersMinChars: 3,
   })
   editor.setModel({ original: originalModel, modified: modifiedModel })
   resizeObserver = new ResizeObserver(() => editor?.layout())

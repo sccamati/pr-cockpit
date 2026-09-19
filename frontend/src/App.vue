@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, shallowRef, type Component } from 'vue'
-import { api, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary } from './api'
+import { api, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -14,6 +14,9 @@ const selectedFilePath = ref('')
 const fileDiff = ref<FileDiff | null>(null)
 const diffLoading = ref(false)
 const diffError = ref('')
+const summary = ref<SummaryResponse | null>(null)
+const summaryLoading = ref(false)
+const summaryError = ref('')
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
 const reviewedFiles = ref<Record<string, string[]>>({})
@@ -21,6 +24,7 @@ const diffPanel = ref<HTMLElement | null>(null)
 const monacoComponent = shallowRef<Component | null>(null)
 let requestId = 0
 let diffRequestId = 0
+let summaryRequestId = 0
 
 const currentPrKey = computed(() => details.value
   ? `${projectId.value}\u0000${repositoryId.value}\u0000${details.value.id}`
@@ -76,6 +80,13 @@ function resetDiff() {
   onlyUnreviewed.value = false
 }
 
+function resetSummary() {
+  ++summaryRequestId
+  summary.value = null
+  summaryLoading.value = false
+  summaryError.value = ''
+}
+
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Wystąpił nieoczekiwany błąd.'
 }
@@ -102,6 +113,7 @@ async function loadProjects() {
 async function loadRepositories() {
   const current = ++requestId
   resetDiff()
+  resetSummary()
   repositories.value = []
   repositoryId.value = ''
   pullRequests.value = []
@@ -126,6 +138,7 @@ async function loadRepositories() {
 async function loadPullRequests() {
   const current = ++requestId
   resetDiff()
+  resetSummary()
   pullRequests.value = []
   details.value = null
   error.value = ''
@@ -144,6 +157,7 @@ async function loadPullRequests() {
 async function openPullRequest(id: number) {
   const current = ++requestId
   resetDiff()
+  resetSummary()
   details.value = null
   error.value = ''
   loading.value = true
@@ -154,6 +168,23 @@ async function openPullRequest(id: number) {
     if (current === requestId) error.value = message(cause)
   } finally {
     if (current === requestId) loading.value = false
+  }
+}
+
+async function generateSummary() {
+  if (!details.value || summaryLoading.value) return
+  const current = ++summaryRequestId
+  const id = details.value.id
+  summary.value = null
+  summaryError.value = ''
+  summaryLoading.value = true
+  try {
+    const result = await api.generateSummary(projectId.value, repositoryId.value, id)
+    if (current === summaryRequestId) summary.value = result
+  } catch (cause) {
+    if (current === summaryRequestId) summaryError.value = message(cause)
+  } finally {
+    if (current === summaryRequestId) summaryLoading.value = false
   }
 }
 
@@ -190,6 +221,7 @@ async function openFile(path: string) {
 function backToList() {
   ++requestId
   resetDiff()
+  resetSummary()
   details.value = null
   error.value = ''
   loading.value = false
@@ -201,6 +233,14 @@ function formatDate(value: string): string {
 
 function commitTitle(message: string): string {
   return message.split(/\r?\n/, 1)[0]?.trim() || 'Bez opisu'
+}
+
+function fileName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1)
+}
+
+function fileDirectory(path: string): string {
+  return path.slice(0, path.lastIndexOf('/') + 1)
 }
 
 function reviewerVote(vote: number): string {
@@ -220,17 +260,28 @@ function changeLabel(changeType: string): string {
   return changeLabels[changeType.toLowerCase()] ?? changeType
 }
 
+const omissionLabels: Record<string, string> = {
+  lockFile: 'plik zależności', snapshot: 'snapshot', generated: 'plik wygenerowany',
+  minified: 'plik zminifikowany', buildOutput: 'wynik budowania', binary: 'plik binarny',
+  sourceTooLarge: 'limit istniejącego diffu', fileCharacterLimit: 'limit na plik',
+  pullRequestCharacterLimit: 'limit na PR',
+}
+
+function omissionLabel(reason: string): string {
+  return omissionLabels[reason] ?? reason
+}
+
 onMounted(loadProjects)
 </script>
 
 <template>
   <div class="shell">
-    <header class="topbar">
+    <header class="topbar" :class="{ 'topbar--details': details }">
       <div class="brand"><span class="brand-mark">PR</span><span>Cockpit</span></div>
       <span class="topbar-caption">Azure DevOps / Pull Requests</span>
     </header>
 
-    <main>
+    <main :class="{ 'main--details': details }">
       <div class="intro">
         <div>
           <p class="eyebrow">PULL REQUESTS</p>
@@ -276,6 +327,21 @@ onMounted(loadProjects)
           <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
         </div>
         <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
+        <div class="details-section summary-section">
+          <div class="summary-heading"><div><h3>Summary</h3><p class="muted">Analiza korzysta z ograniczonego kontekstu PR i uruchamia się tylko po kliknięciu.</p></div>
+            <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>
+          </div>
+          <p v-if="summaryLoading" class="notice" role="status">Generowanie Summary…</p>
+          <p v-if="summaryError" class="notice error" role="alert">{{ summaryError }}</p>
+          <template v-if="summary">
+            <p class="summary-text">{{ summary.summary }}</p>
+            <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem · {{ summary.contextReport.includedDiffCharacters }} znaków diffu<span v-if="summary.headCommitSha"> · commit {{ summary.headCommitSha.slice(0, 8) }}</span></p>
+            <details v-if="summary.contextReport.wasLimited" class="summary-omissions">
+              <summary>Pominięto treść {{ summary.contextReport.omittedFiles.length }} plików</summary>
+              <ul><li v-for="file in summary.contextReport.omittedFiles" :key="file.path"><code>{{ file.path }}</code> — {{ omissionLabel(file.reason) }}</li></ul>
+            </details>
+          </template>
+        </div>
         <div class="details-section"><h3>Commity ({{ details.commitsCount }})</h3>
           <p v-if="details.commits.length === 0" class="muted">Brak commitów.</p>
           <ul v-else class="commit-list">
@@ -304,7 +370,7 @@ onMounted(loadProjects)
                 <li v-for="(file, index) in filteredFiles" :key="`${file.path}-${index}`">
                   <button class="file-button" :class="{ selected: selectedFilePath === file.path }" type="button"
                     :aria-current="selectedFilePath === file.path ? 'true' : undefined" @click="openFile(file.path)">
-                    <span class="file-path">{{ file.path }}</span>
+                    <span class="file-path" :title="file.path"><strong class="file-name">{{ fileName(file.path) }}</strong><span class="file-directory">{{ fileDirectory(file.path) }}</span></span>
                     <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
                     <span class="file-badges"><span class="change-type">{{ changeLabel(file.changeType) }}</span><span v-if="isReviewed(file.path)" class="reviewed-badge">✓ Obejrzane</span></span>
                   </button>
@@ -314,7 +380,7 @@ onMounted(loadProjects)
             <div ref="diffPanel" class="diff-panel">
               <template v-if="selectedFilePath">
                 <div class="diff-toolbar">
-                  <h4>Diff: {{ selectedFilePath }}</h4>
+                  <div class="diff-toolbar-title" :title="selectedFilePath"><h4>{{ fileName(selectedFilePath) }}</h4><span>{{ fileDirectory(selectedFilePath) }}</span></div>
                   <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
                 </div>
                 <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>

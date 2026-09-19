@@ -1,3 +1,4 @@
+using PRCockpit.Api.Analysis;
 using PRCockpit.Api.AzureDevOps;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -6,6 +7,7 @@ builder.Services.AddHttpClient<AzureDevOpsClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
 });
+builder.Services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
 
 var app = builder.Build();
 
@@ -41,6 +43,18 @@ api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullR
             ContextBudget.Default, ct);
     }));
 
+api.MapPost("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/summary", async (
+    string project, string repositoryId, int pullRequestId, AzureDevOpsClient client,
+    IAiSummaryAnalyzer analyzer, CancellationToken ct) =>
+    await Execute(async () =>
+    {
+        var details = await client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct);
+        var context = await PrContextBuilder.BuildAsync(details,
+            (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
+            ContextBudget.Default, ct);
+        return await SummaryRunner.RunAsync(context, analyzer, ct);
+    }));
+
 app.Run();
 
 static async Task<IResult> Execute<T>(Func<Task<T>> action)
@@ -50,6 +64,10 @@ static async Task<IResult> Execute<T>(Func<Task<T>> action)
         return Results.Ok(await action());
     }
     catch (AzureDevOpsException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: ex.StatusCode);
+    }
+    catch (SummaryAnalysisException ex)
     {
         return Results.Problem(ex.Message, statusCode: ex.StatusCode);
     }
