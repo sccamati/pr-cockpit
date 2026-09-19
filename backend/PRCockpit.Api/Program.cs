@@ -31,6 +31,16 @@ api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullR
     string project, string repositoryId, int pullRequestId, string path, AzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)));
 
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/context", async (
+    string project, string repositoryId, int pullRequestId, AzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(async () =>
+    {
+        var details = await client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct);
+        return await PrContextBuilder.BuildAsync(details,
+            (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
+            ContextBudget.Default, ct);
+    }));
+
 app.Run();
 
 static async Task<IResult> Execute<T>(Func<Task<T>> action)

@@ -31,7 +31,9 @@ public record PullRequestDetails(
     IReadOnlyList<ChangedFile> ChangedFiles,
     int CommitsCount,
     IReadOnlyList<Commit> Commits,
-    IReadOnlyList<WorkItem> WorkItems);
+    IReadOnlyList<WorkItem> WorkItems,
+    string? BaseCommitSha = null,
+    string? HeadCommitSha = null);
 
 public sealed class AzureDevOpsException(string message, int statusCode) : Exception(message)
 {

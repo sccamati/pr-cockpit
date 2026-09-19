@@ -171,6 +171,52 @@ public sealed class AzureDevOpsClientTests
     }
 
     [Fact]
+    public async Task ContextReusesTheFetchedIterationAndChangeListForAllDiffs()
+    {
+        var visited = new List<string>();
+        var head = new string('b', 40);
+        var blob = new string('c', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            visited.Add(path);
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?")) return Json("""
+                {"changeEntries":[
+                  {"item":{"path":"/a.txt"},"changeType":"add"},
+                  {"item":{"path":"/b.txt"},"changeType":"add"}
+                ],"nextSkip":0}
+                """);
+            if (path.Contains("/commits?") || path.Contains("/workitems?")) return Json("""{"value":[]}""");
+            if (path.Contains("/items?"))
+            {
+                Assert.Contains($"versionDescriptor.version={head}", path);
+                return Json("""{"objectId":"BLOB"}""".Replace("BLOB", blob));
+            }
+            if (path.Contains("/blobs/")) return Bytes("text");
+            if (path.EndsWith("/123?api-version=7.1")) return Json("""
+                {"pullRequestId":123,"title":"Change","status":"active","creationDate":"2026-09-01T12:00:00Z",
+                 "createdBy":{"displayName":"Anna"},"repository":{"name":"Repo"},
+                 "sourceRefName":"refs/heads/feature","targetRefName":"refs/heads/main"}
+                """);
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+        var client = Client(http);
+
+        var details = await client.GetPullRequestAsync("project", "repo", 123, CancellationToken.None);
+        var context = await PrContextBuilder.BuildAsync(details,
+            (path, ct) => client.GetFileDiffAsync("project", "repo", details, path, ct),
+            ContextBudget.Default, CancellationToken.None);
+
+        Assert.Equal(new string('a', 40), context.PullRequest.BaseCommitSha);
+        Assert.Equal(head, context.PullRequest.HeadCommitSha);
+        Assert.Equal(2, context.ChangedFiles.Count);
+        Assert.All(context.ChangedFiles, file => Assert.Equal("text", file.ModifiedText));
+        Assert.Single(visited, path => path.Contains("/iterations?"));
+        Assert.Single(visited, path => path.Contains("/changes?"));
+    }
+
+    [Fact]
     public async Task DiffUsesCommonAndSourceCommitsAndOriginalPathForRename()
     {
         var requestedItems = new List<string>();

@@ -60,18 +60,30 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         {
             var (iterations, _) = await GetAsync($"{path}/iterations?{ApiVersion}", ct);
             int lastId;
+            string? baseCommit = null;
+            string? sourceCommit = null;
             using (iterations)
             {
-                lastId = Values(iterations.RootElement).EnumerateArray()
-                    .Select(item => item.GetProperty("id").GetInt32())
-                    .DefaultIfEmpty(0).Max();
+                var latest = Values(iterations.RootElement).EnumerateArray()
+                    .OrderByDescending(item => item.GetProperty("id").GetInt32()).FirstOrDefault();
+                lastId = latest.ValueKind == JsonValueKind.Undefined ? 0 : latest.GetProperty("id").GetInt32();
+                if (latest.ValueKind != JsonValueKind.Undefined &&
+                    latest.TryGetProperty("commonRefCommit", out _))
+                    baseCommit = CommitId(latest, "commonRefCommit");
+                if (latest.ValueKind != JsonValueKind.Undefined &&
+                    latest.TryGetProperty("sourceRefCommit", out _))
+                    sourceCommit = CommitId(latest, "sourceRefCommit");
             }
             var changedFiles = lastId == 0
                 ? []
                 : await GetChangedFilesAsync(path, lastId, ct);
             var commits = await GetCommitsAsync(path, ct);
             var workItems = await GetWorkItemsAsync(path, ct);
-            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commits, workItems);
+            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commits, workItems) with
+            {
+                BaseCommitSha = baseCommit,
+                HeadCommitSha = sourceCommit
+            };
         }
     }
 
@@ -102,6 +114,24 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             .FirstOrDefault(item => item.Path == filePath);
         if (file is null) throw new AzureDevOpsException("File is no longer in this pull request.", 404);
 
+        return await GetFileDiffAtCommitsAsync(project, repositoryId, file, baseCommit, sourceCommit, ct);
+    }
+
+    public Task<FileDiff> GetFileDiffAsync(
+        string project, string repositoryId, PullRequestDetails details, string filePath, CancellationToken ct)
+    {
+        var file = details.ChangedFiles.FirstOrDefault(item => item.Path == filePath);
+        if (file is null) throw new AzureDevOpsException("File is no longer in this pull request.", 404);
+        if (details.BaseCommitSha is null || details.HeadCommitSha is null)
+            throw new AzureDevOpsException("Azure DevOps did not provide the pull request commit IDs.", 502);
+        return GetFileDiffAtCommitsAsync(project, repositoryId, file,
+            details.BaseCommitSha, details.HeadCommitSha, ct);
+    }
+
+    private async Task<FileDiff> GetFileDiffAtCommitsAsync(
+        string project, string repositoryId, ChangedFile file,
+        string baseCommit, string sourceCommit, CancellationToken ct)
+    {
         var changes = file.ChangeType.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var isAdded = changes.Contains("add", StringComparer.OrdinalIgnoreCase);
         var isDeleted = changes.Contains("delete", StringComparer.OrdinalIgnoreCase);

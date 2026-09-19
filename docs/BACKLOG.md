@@ -44,18 +44,27 @@ Status: zaimplementowane. Stronicowanie i pusta lista są pokryte testami HTTP, 
 - **Niesprawdzone w tej sesji:** B-02 i B-03 na rzeczywistym PR oraz wygląd przy około 768 px i 375 px. Środowisko nie ma konfiguracji Azure DevOps (organizacji i PAT), a przeglądarka aplikacji jest niedostępna. Testy z atrapą i przegląd kodu CSS nie potwierdzają wyglądu ani zgodności commitów z prawdziwym PR. Nie ma też potwierdzenia paginacji commitów na realnym PR przekraczającym jedną stronę.
 - Do zamknięcia B-02/B-03: otworzyć rzeczywisty PR, porównać listę commitów z Azure DevOps, sprawdzić wyszukiwanie i filtr po ręcznym oznaczeniu, przejść przez ostatni plik, a następnie obejrzeć panel przy 768 px i 375 px. Dla B-03 sprawdzić PR z więcej niż 1000 commitów, jeżeli taki jest dostępny; w przeciwnym razie pozostawić ten przypadek jako niepotwierdzony na żywo.
 
-## Proponowany kolejny mały etap — do decyzji
+## Wdrożone — fundament AI Summary
 
-### B-04 — Ręczna ścieżka kluczowych plików
+### B-04 — Ograniczony pakiet kontekstu PR
 
-**Dlaczego:** samo odznaczenie przeczytanych plików mówi o postępie review, ale nie tworzy krótkiej ścieżki prowadzącej przez kod. Wybór kluczowych plików pozwoli sprawdzić użyteczność tej części „Understand PR” przed decyzją o automatycznej analizie.
+Status: zaimplementowane w backendzie. Wymaga potwierdzenia na rzeczywistym PR.
 
-**Zakres:** w widoku PR użytkownik może wskazać z listy zmian maksymalnie 10 kluczowych plików i ułożyć je w kolejności czytania. Osobny, krótki panel pokazuje wybrane ścieżki z możliwością otwarcia diffu i usunięcia pozycji. Wybór jest ręczny i istnieje tylko w pamięci karty, podobnie jak stan „Obejrzałem”. Nie proponujemy automatycznego rankingu, podsumowania ani głównego flow w tym etapie.
+**Zakres:** endpoint `/context` zwraca metadane PR (w tym SHA bazy i głowy z ostatniej iteracji), tytuły commitów i wszystkie zmienione pliki. Dla plików tekstowych dołącza obie strony istniejącego diffu. Limit wynosi 20 000 znaków na plik i 100 000 znaków łącznie dla tekstów diffów. Bez obcinania treści: pominięty plik zachowuje ścieżkę, typ zmiany i powód. Pomijane są lockfile, snapshoty, wygenerowane pliki, zminifikowane zasoby, build output oraz pliki binarne lub przekraczające istniejący limit diffu. Pobieranie diffów korzysta z jednorazowo pobranej iteracji i listy zmian PR.
 
-**Gotowe, gdy:** można zbudować i zmienić kolejność listy 1–10 plików, każdy link otwiera właściwy diff, usunięty lub już nieobecny w PR plik nie zostaje na liście, a zwykły znacznik „Obejrzałem” działa niezależnie. Panel jest czytelny na wąskim ekranie; test interakcji obejmuje dodanie, zmianę kolejności, usunięcie i ponowne otwarcie pliku. Przed rozpoczęciem tego etapu wracamy do nierozstrzygniętych sprawdzeń B-02/B-03 na realnym PR i małym ekranie.
+**Weryfikacja:** testy bez Azure DevOps obejmują limity na plik i PR, granicę limitu, zachowanie metadanych pominiętych plików, typy pominięć, binarny i zbyt duży diff oraz ponowne użycie listy zmian przy wielu diffach.
+
+## Proponowany kolejny mały etap
+
+### B-05 — Summary na żądanie przez wymienny adapter AI
+
+**Zakres:** dodać interfejs adaptera AI przyjmujący przygotowany `PrContext` i zwracający ustrukturyzowany wynik `Summary` ze zdefiniowaną wersją schematu. Uruchomienie następuje tylko po świadomej akcji użytkownika dla aktualnego PR. Nie uruchamiać analizy przy otwarciu listy lub szczegółów PR. Adapter i model wybierane są w konfiguracji backendu, bez nazw dostawców w modelu domenowym. Treści PR i kodu traktować jako dane, nie instrukcje dla modelu.
+
+**Gotowe, gdy:** użytkownik może uruchomić Summary dla wybranego PR i zobaczyć 2–5 zdań albo czytelny błąd; wynik jest walidowany przed pokazaniem, a ograniczenia pakietu kontekstu są widoczne obok wyniku. Testy z fake adapterem potwierdzają uruchomienie wyłącznie na żądanie, przekazanie dokładnie przygotowanego pakietu, obsługę błędnej odpowiedzi i brak ponownego pobierania kontekstu w samym adapterze. Nie wymaga to jeszcze lokalnego repozytorium ani persistence.
 
 ## Później — do osobnej decyzji
 
-- **Understand PR:** podsumowanie, główny flow i ważne pliki. Przed implementacją wybrać źródło kontekstu i sposób uruchamiania analizy.
+- **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
+- **Ręczna ścieżka kluczowych plików:** możliwość wskazania i ułożenia do 10 plików do czytania, niezależna od znacznika „Obejrzałem”.
 - **Quality, Architecture i checklisty:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
-- **Lokalne repozytorium, AI i trwały zapis:** nie są częścią zadań B-01–B-03; wymagają osobnego ustalenia zakresu.
+- **Lokalne repozytorium i trwały zapis:** osobne etapy po Summary.
