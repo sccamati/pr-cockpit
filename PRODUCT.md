@@ -572,7 +572,7 @@ Ready
 
 Pierwsza wersja musi obsługiwać tylko:
 
-Stan: ukończony jest pierwszy vertical slice (Azure DevOps → PR → lista zmienionych plików), a nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu i listy plików na rzeczywistej organizacji Azure DevOps; pozostałe ścieżki integracji są sprawdzane lokalnie lub testami z atrapą HTTP.
+Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików → diff w Monaco), ale nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu i listy plików na rzeczywistej organizacji Azure DevOps; diff jest dotąd sprawdzony lokalnie i testami z atrapą HTTP.
 
 ### Azure DevOps
 
@@ -640,6 +640,8 @@ Najpierw potwierdzamy, że podstawowy workflow daje wartość.
 ---
 
 # 18. Backlog implementacyjny
+
+Kolejność najbliższych, małych zadań i warunki ich zakończenia są w [docs/BACKLOG.md](docs/BACKLOG.md). Poniższe epiki opisują szerszy plan produktu.
 
 ## EPIC 1 — Foundation
 

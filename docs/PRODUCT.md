@@ -12,4 +12,4 @@ Docelowe obszary:
 - **Architecture:** wykrywanie wpływu zmian i akceptacja wiedzy przez developera.
 - **Project Memory:** trwała, zaakceptowana wiedza o komponentach, przepływach i historii decyzji.
 
-Pierwszy vertical slice obejmuje jedynie wybór projektu i repozytorium Azure DevOps, listę aktywnych PR-ów oraz ich szczegóły. AI, checklista i trwały zapis danych są kolejnymi etapami. Rozwinięty pierwotny opis produktu pozostaje w [PRODUCT.md](../PRODUCT.md).
+Obecny zakres obejmuje wybór projektu i repozytorium Azure DevOps, listę aktywnych PR-ów, ich szczegóły i diff plików w Monaco. AI, checklista i trwały zapis danych są późniejszymi etapami. Rozwinięty opis produktu pozostaje w [PRODUCT.md](../PRODUCT.md), a najbliższe zadania w [BACKLOG.md](BACKLOG.md).

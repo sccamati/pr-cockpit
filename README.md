@@ -1,6 +1,6 @@
 # PR Cockpit
 
-PR Cockpit helps developers understand changes in pull requests. This first slice lets you select an Azure DevOps project and repository, browse active pull requests, and open their details. See [docs/PRODUCT.md](docs/PRODUCT.md) for more product context (currently in Polish).
+PR Cockpit helps developers understand changes in pull requests. The current slice lets you select an Azure DevOps project and repository, browse active pull requests, and review file diffs. See [PRODUCT.md](PRODUCT.md) for product context and [docs/BACKLOG.md](docs/BACKLOG.md) for the next tasks (both in Polish).
 
 ## Requirements
 
