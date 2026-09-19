@@ -14,7 +14,7 @@ public record SummaryContextReport(
     bool WasLimited, IReadOnlyList<OmittedContextFile> OmittedFiles);
 public record SummaryResponse(
     int SchemaVersion, string Summary, string? BaseCommitSha, string? HeadCommitSha,
-    SummaryContextReport ContextReport);
+    SummaryContextReport ContextReport, IReadOnlyList<string> Sentences);
 
 public sealed class SummaryAnalysisException(string message, int statusCode) : Exception(message)
 {
@@ -37,7 +37,8 @@ public static class SummaryRunner
         var report = new SummaryContextReport(context.ChangedFiles.Count,
             context.ChangedFiles.Count - omitted.Length, context.IncludedDiffCharacters,
             context.WasLimited, omitted);
-        return new SummaryResponse(1, string.Join(" ", draft.Sentences.Select(sentence => sentence.Trim())),
-            context.PullRequest.BaseCommitSha, context.PullRequest.HeadCommitSha, report);
+        var sentences = draft.Sentences.Select(sentence => sentence.Trim()).ToArray();
+        return new SummaryResponse(1, string.Join(" ", sentences),
+            context.PullRequest.BaseCommitSha, context.PullRequest.HeadCommitSha, report, sentences);
     }
 }

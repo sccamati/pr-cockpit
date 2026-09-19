@@ -75,7 +75,14 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .summary-heading .muted { margin-bottom: 0; font-size: 13px; }
 .summary-button { flex: none; min-height: 40px; padding: 0 16px; border: 0; border-radius: 7px; background: #087f77; color: white; font-weight: 700; }
 .summary-button:hover:not(:disabled) { background: #096a64; }
-.summary-text { margin: 18px 0 10px; line-height: 1.65; white-space: pre-wrap; }
+.summary-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 18px; font-size: 12px; }
+.summary-saved { color: #647386; }
+.summary-current { color: #147351; font-weight: 700; }
+.summary-stale { max-width: 80ch; margin: 12px 0 0; border-color: #ead6a4; background: #fff9e9; color: #705522; }
+.summary-text { max-width: 80ch; margin: 14px 0 12px; padding: 3px 20px; border-left: 3px solid #087f77; border-radius: 0 8px 8px 0; background: #f4f9f9; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.summary-text p { margin: 0; padding: 13px 0; }
+.summary-text p + p { border-top: 1px solid #dce9e9; }
+.summary-text .summary-lead { color: #183d46; font-weight: 650; }
 .summary-report { margin: 0; color: #647386; font-size: 12px; }
 .summary-omissions { margin-top: 12px; color: #455569; font-size: 13px; }
 .summary-omissions summary { cursor: pointer; font-weight: 700; }

@@ -55,6 +55,7 @@ export interface PullRequestDetails extends PullRequestSummary {
 export interface SummaryResponse {
   schemaVersion: number
   summary: string
+  sentences: string[]
   baseCommitSha: string | null
   headCommitSha: string | null
   contextReport: {
@@ -65,6 +66,7 @@ export interface SummaryResponse {
     omittedFiles: { path: string; reason: string }[]
   }
 }
+export interface StoredSummary { result: SummaryResponse; savedAt: string }
 
 export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
 export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null }
@@ -124,6 +126,9 @@ export const api = {
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
+  savedSummary: (project: string, repository: string, id: number) =>
+    get<{ stored: StoredSummary | null }>(`${location(project, repository)}/pull-requests/${id}/summary`)
+      .then(response => response.stored),
   checklist: (project: string, repository: string, id: number) =>
     get<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist`),
   setChecklistItem: (project: string, repository: string, id: number, item: ChecklistItem, completed: boolean) =>

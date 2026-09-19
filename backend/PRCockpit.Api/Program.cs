@@ -11,6 +11,7 @@ builder.Services.AddHttpClient<AzureDevOpsClient>(client =>
 });
 builder.Services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
 builder.Services.AddSingleton<ChecklistStore>();
+builder.Services.AddSingleton<SummaryStore>();
 
 var app = builder.Build();
 
@@ -53,16 +54,22 @@ api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullR
             ContextBudget.Default, ct);
     }));
 
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/summary", async (
+    string project, string repositoryId, int pullRequestId, SummaryStore store, CancellationToken ct) =>
+    await Execute(async () => new { stored = await store.GetAsync(project, repositoryId, pullRequestId, ct) }));
+
 api.MapPost("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/summary", async (
     string project, string repositoryId, int pullRequestId, AzureDevOpsClient client,
-    IAiSummaryAnalyzer analyzer, CancellationToken ct) =>
+    IAiSummaryAnalyzer analyzer, SummaryStore store, CancellationToken ct) =>
     await Execute(async () =>
     {
         var details = await client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct);
         var context = await PrContextBuilder.BuildAsync(details,
             (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
             ContextBudget.Default, ct);
-        return await SummaryRunner.RunAsync(context, analyzer, ct);
+        var result = await SummaryRunner.RunAsync(context, analyzer, ct);
+        await store.SaveAsync(project, repositoryId, pullRequestId, result, ct);
+        return result;
     }));
 
 api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/checklist", async (
@@ -96,15 +103,15 @@ static async Task<IResult> Execute<T>(Func<Task<T>> action)
     }
     catch (SqliteException)
     {
-        return Results.Problem("Local checklist storage is unavailable.", statusCode: 503);
+        return Results.Problem("Local storage is unavailable.", statusCode: 503);
     }
     catch (IOException)
     {
-        return Results.Problem("Local checklist storage is unavailable.", statusCode: 503);
+        return Results.Problem("Local storage is unavailable.", statusCode: 503);
     }
     catch (UnauthorizedAccessException)
     {
-        return Results.Problem("Local checklist storage is unavailable.", statusCode: 503);
+        return Results.Problem("Local storage is unavailable.", statusCode: 503);
     }
     catch (HttpRequestException)
     {

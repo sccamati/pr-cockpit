@@ -7,9 +7,12 @@ const api = vi.hoisted(() => ({
   projects: vi.fn(),
   repositories: vi.fn(),
   pullRequests: vi.fn(),
+  checklistProgress: vi.fn(),
   pullRequest: vi.fn(),
   fileDiff: vi.fn(),
   generateSummary: vi.fn(),
+  savedSummary: vi.fn(),
+  checklist: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -47,7 +50,13 @@ beforeEach(() => {
   api.projects.mockResolvedValue([{ id: 'project', name: 'Project' }])
   api.repositories.mockResolvedValue([{ id: 'repo-a', name: 'Repo A' }])
   api.pullRequests.mockResolvedValue([details])
+  api.checklistProgress.mockResolvedValue([])
   api.pullRequest.mockResolvedValue(details)
+  api.savedSummary.mockResolvedValue(null)
+  api.checklist.mockResolvedValue({
+    aiReview: false, quality: false, understand: false,
+    architecture: false, debug: false, ready: false, updatedAt: null,
+  })
   api.fileDiff.mockImplementation(async (_project, _repository, _id, path) => ({
     kind: 'text', path, originalPath: null, originalText: 'old', modifiedText: 'new',
   }))

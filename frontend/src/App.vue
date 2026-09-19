@@ -17,6 +17,9 @@ const diffError = ref('')
 const summary = ref<SummaryResponse | null>(null)
 const summaryLoading = ref(false)
 const summaryError = ref('')
+const summaryReadLoading = ref(false)
+const summaryReadError = ref('')
+const summarySavedAt = ref<string | null>(null)
 const checklist = ref<ChecklistState | null>(null)
 const checklistLoading = ref(false)
 const checklistSaving = ref<ChecklistItem | null>(null)
@@ -46,6 +49,12 @@ const checklistItems: { key: ChecklistItem; label: string }[] = [
 const checklistCompleted = computed(() => checklist.value
   ? checklistItems.filter(item => checklist.value![item.key]).length
   : 0)
+const summaryFreshness = computed(() => {
+  const savedSha = summary.value?.headCommitSha
+  const currentSha = details.value?.headCommitSha
+  if (!savedSha || !currentSha) return 'unknown'
+  return savedSha.toLowerCase() === currentSha.toLowerCase() ? 'current' : 'stale'
+})
 
 const currentPrKey = computed(() => details.value
   ? `${projectId.value}\u0000${repositoryId.value}\u0000${details.value.id}`
@@ -141,6 +150,26 @@ function resetSummary() {
   summary.value = null
   summaryLoading.value = false
   summaryError.value = ''
+  summaryReadLoading.value = false
+  summaryReadError.value = ''
+  summarySavedAt.value = null
+}
+
+async function loadSavedSummary(project: string, repository: string, id: number) {
+  const current = ++summaryRequestId
+  summaryReadLoading.value = true
+  summaryReadError.value = ''
+  try {
+    const stored = await api.savedSummary(project, repository, id)
+    if (current === summaryRequestId && stored) {
+      summary.value = stored.result
+      summarySavedAt.value = stored.savedAt
+    }
+  } catch (cause) {
+    if (current === summaryRequestId) summaryReadError.value = message(cause)
+  } finally {
+    if (current === summaryRequestId) summaryReadLoading.value = false
+  }
 }
 
 function resetChecklist() {
@@ -297,6 +326,7 @@ async function openPullRequest(id: number) {
     if (current === requestId) {
       details.value = result
       void loadChecklist(projectId.value, repositoryId.value, id)
+      void loadSavedSummary(projectId.value, repositoryId.value, id)
       criticalFiles.value[currentPrKey.value] = criticalPaths.value
     }
   } catch (cause) {
@@ -310,12 +340,18 @@ async function generateSummary() {
   if (!details.value || summaryLoading.value) return
   const current = ++summaryRequestId
   const id = details.value.id
-  summary.value = null
+  const project = projectId.value
+  const repository = repositoryId.value
   summaryError.value = ''
+  summaryReadError.value = ''
+  summaryReadLoading.value = false
   summaryLoading.value = true
   try {
-    const result = await api.generateSummary(projectId.value, repositoryId.value, id)
-    if (current === summaryRequestId) summary.value = result
+    const result = await api.generateSummary(project, repository, id)
+    if (current === summaryRequestId) {
+      summary.value = result
+      summarySavedAt.value = null
+    }
   } catch (cause) {
     if (current === summaryRequestId) summaryError.value = message(cause)
   } finally {
@@ -482,10 +518,16 @@ onMounted(loadProjects)
           <div class="summary-heading"><div><h3>Summary</h3><p class="muted">Analiza korzysta z ograniczonego kontekstu PR i uruchamia się tylko po kliknięciu.</p></div>
             <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>
           </div>
+          <p v-if="summaryReadLoading" class="notice" role="status">Wczytywanie zapisanego Summary…</p>
+          <div v-if="summaryReadError" class="notice error" role="alert">Nie udało się wczytać zapisanego Summary: {{ summaryReadError }} <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="loadSavedSummary(projectId, repositoryId, details.id)">Spróbuj ponownie</button></div>
           <p v-if="summaryLoading" class="notice" role="status">Generowanie Summary…</p>
           <p v-if="summaryError" class="notice error" role="alert">{{ summaryError }}</p>
           <template v-if="summary">
-            <p class="summary-text">{{ summary.summary }}</p>
+            <div class="summary-meta"><span class="summary-saved">Zapisano lokalnie<template v-if="summarySavedAt"> · {{ formatDate(summarySavedAt) }}</template></span><span v-if="summaryFreshness === 'current'" class="summary-current">Aktualne dla tego PR</span></div>
+            <p v-if="summaryFreshness === 'stale'" class="notice summary-stale" role="status">PR zmienił się od zapisania tego Summary. Wygeneruj je ponownie, aby uwzględnić aktualny commit.</p>
+            <p v-else-if="summaryFreshness === 'unknown'" class="notice summary-stale" role="status">Nie można potwierdzić aktualności Summary, ponieważ brakuje SHA commita.</p>
+            <div v-if="summary.sentences?.length" class="summary-text" aria-label="Podsumowanie PR"><p v-for="(sentence, index) in summary.sentences" :key="index" :class="{ 'summary-lead': index === 0 }">{{ sentence }}</p></div>
+            <p v-else class="summary-text">{{ summary.summary }}</p>
             <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem · {{ summary.contextReport.includedDiffCharacters }} znaków diffu<span v-if="summary.headCommitSha"> · commit {{ summary.headCommitSha.slice(0, 8) }}</span></p>
             <details v-if="summary.contextReport.wasLimited" class="summary-omissions">
               <summary>Pominięto treść {{ summary.contextReport.omittedFiles.length }} plików</summary>

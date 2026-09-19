@@ -611,8 +611,8 @@ Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików →
 ### Persistence
 
 * [x] zapis checklist w lokalnym SQLite
-* [ ] zapis analizy
-* [ ] ponowne otwarcie wcześniej przeanalizowanego PR
+* [ ] zapis analizy (Summary jest zapisywane; pozostałe wyniki jeszcze nie)
+* [ ] ponowne otwarcie wcześniej przeanalizowanego PR (zapisane Summary jest wczytywane)
 
 ---
 

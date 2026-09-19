@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using PRCockpit.Api.Persistence;
 
 namespace PRCockpit.Api.Checklists;
 
@@ -128,23 +129,9 @@ public sealed class ChecklistStore(IConfiguration configuration)
 
     private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
     {
-        var path = configuration["Checklist:DatabasePath"];
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrEmpty(localData)) localData = AppContext.BaseDirectory;
-            path = Path.Combine(localData, "PRCockpit", "checklist.db");
-        }
-        path = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = path,
-            Mode = SqliteOpenMode.ReadWriteCreate
-        }.ToString());
+        var connection = await LocalDatabase.OpenAsync(configuration, ct);
         try
         {
-            await connection.OpenAsync(ct);
             await using var command = connection.CreateCommand();
             command.CommandText = Schema;
             await command.ExecuteNonQueryAsync(ct);
