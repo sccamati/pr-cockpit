@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { api, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary } from './api'
 
 const projects = ref<Project[]>([])
@@ -14,8 +14,29 @@ const selectedFilePath = ref('')
 const fileDiff = ref<FileDiff | null>(null)
 const diffLoading = ref(false)
 const diffError = ref('')
+const fileSearch = ref('')
+const openedFiles = ref<Record<string, string[]>>({})
+const diffPanel = ref<HTMLElement | null>(null)
 let requestId = 0
 let diffRequestId = 0
+
+const currentPrKey = computed(() => details.value
+  ? `${projectId.value}\u0000${repositoryId.value}\u0000${details.value.id}`
+  : '')
+const openedPaths = computed(() => {
+  const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
+  return (openedFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
+})
+const filteredFiles = computed(() => {
+  const search = fileSearch.value.trim().toLocaleLowerCase()
+  return details.value?.changedFiles.filter(file =>
+    !search || file.path.toLocaleLowerCase().includes(search) ||
+    file.originalPath?.toLocaleLowerCase().includes(search)) ?? []
+})
+
+function wasOpened(path: string): boolean {
+  return openedPaths.value.includes(path)
+}
 
 function resetDiff() {
   ++diffRequestId
@@ -23,6 +44,7 @@ function resetDiff() {
   fileDiff.value = null
   diffLoading.value = false
   diffError.value = ''
+  fileSearch.value = ''
 }
 
 function message(cause: unknown): string {
@@ -112,9 +134,19 @@ async function openFile(path: string) {
   fileDiff.value = null
   diffError.value = ''
   diffLoading.value = true
+  await nextTick()
+  if (current !== diffRequestId) return
+  if (window.matchMedia('(max-width: 900px)').matches) {
+    diffPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   try {
     const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path)
-    if (current === diffRequestId) fileDiff.value = result
+    if (current === diffRequestId) {
+      fileDiff.value = result
+      if (!wasOpened(path)) {
+        openedFiles.value[currentPrKey.value] = [...openedPaths.value, path]
+      }
+    }
   } catch (cause) {
     if (current === diffRequestId) diffError.value = message(cause)
   } finally {
@@ -207,33 +239,43 @@ onMounted(loadProjects)
           <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
         </div>
         <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
-        <div class="details-section"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3>
+        <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ openedPaths.length }} otworzonych w tej sesji</span></div>
           <p v-if="details.changedFiles.length === 0" class="muted">Brak zmienionych plików.</p>
-          <ul v-else class="changed-files">
-            <li v-for="(file, index) in details.changedFiles" :key="index">
-              <button class="file-button" :class="{ selected: selectedFilePath === file.path }" type="button"
-                :aria-pressed="selectedFilePath === file.path" @click="openFile(file.path)">
-                <span class="file-path">{{ file.path }}</span>
-                <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
-                <span class="change-type">{{ changeLabel(file.changeType) }}</span>
-              </button>
-            </li>
-          </ul>
-          <div v-if="selectedFilePath" class="diff-panel" aria-live="polite">
-            <h4>Diff: {{ selectedFilePath }}</h4>
-            <p v-if="diffLoading" class="muted" role="status">Pobieranie diffu…</p>
-            <p v-else-if="diffError" class="notice error" role="alert">{{ diffError }}</p>
-            <p v-else-if="fileDiff?.kind === 'binary'" class="muted">Plik binarny — diff tekstowy jest niedostępny.</p>
-            <p v-else-if="fileDiff?.kind === 'tooLarge'" class="muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
-            <p v-else-if="fileDiff?.lines.length === 0" class="muted">Brak zmian w treści pliku.</p>
-            <div v-else-if="fileDiff" class="diff-scroll" role="region" aria-label="Zmiany w pliku" tabindex="0">
-              <div v-for="(line, index) in fileDiff.lines" :key="index" class="diff-line" :class="`diff-${line.kind}`">
-                <span class="line-number">{{ line.oldLine ?? '' }}</span>
-                <span class="line-number">{{ line.newLine ?? '' }}</span>
-                <span class="line-sign">{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' ' }}</span>
-                <span class="line-text">{{ line.text }}</span>
-                <span v-if="!line.hasNewline" class="no-newline">brak końcowego znaku nowej linii</span>
-              </div>
+          <div v-else class="file-review">
+            <div class="file-list-pane">
+              <label class="file-search-label" for="file-search">Szukaj pliku</label>
+              <input id="file-search" v-model="fileSearch" class="file-search" type="search" placeholder="Nazwa lub ścieżka" autocomplete="off">
+              <p v-if="filteredFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
+              <ul v-else class="changed-files" aria-label="Zmienione pliki">
+                <li v-for="(file, index) in filteredFiles" :key="`${file.path}-${index}`">
+                  <button class="file-button" :class="{ selected: selectedFilePath === file.path }" type="button"
+                    :aria-current="selectedFilePath === file.path ? 'true' : undefined" @click="openFile(file.path)">
+                    <span class="file-path">{{ file.path }}</span>
+                    <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
+                    <span class="file-badges"><span class="change-type">{{ changeLabel(file.changeType) }}</span><span v-if="wasOpened(file.path)" class="opened-badge">✓ Otworzono</span></span>
+                  </button>
+                </li>
+              </ul>
+            </div>
+            <div ref="diffPanel" class="diff-panel">
+              <template v-if="selectedFilePath">
+                <h4>Diff: {{ selectedFilePath }}</h4>
+                <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
+                <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
+                <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
+                <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
+                <p v-else-if="fileDiff?.lines.length === 0" class="diff-message muted">Brak zmian w treści pliku.</p>
+                <div v-else-if="fileDiff" class="diff-scroll" role="region" aria-label="Zmiany w pliku" tabindex="0">
+                  <div v-for="(line, index) in fileDiff.lines" :key="index" class="diff-line" :class="`diff-${line.kind}`">
+                    <span class="line-number">{{ line.oldLine ?? '' }}</span>
+                    <span class="line-number">{{ line.newLine ?? '' }}</span>
+                    <span class="line-sign">{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' ' }}</span>
+                    <span class="line-text">{{ line.text }}</span>
+                    <span v-if="!line.hasNewline" class="no-newline">brak końcowego znaku nowej linii</span>
+                  </div>
+                </div>
+              </template>
+              <p v-else class="diff-placeholder">Wybierz plik z listy, aby zobaczyć jego diff.</p>
             </div>
           </div>
         </div>

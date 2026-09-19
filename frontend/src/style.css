@@ -59,17 +59,32 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .details-section:last-child { padding-bottom: 0; }
 .description { white-space: pre-wrap; line-height: 1.65; color: #455569; margin-bottom: 0; }
 .plain-list { margin: 0; padding-left: 20px; line-height: 1.9; }
-.changed-files { margin: 0; padding: 0; list-style: none; border: 1px solid #e9eef2; border-radius: 8px; overflow: hidden; }
-.changed-files li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 12px 14px; border-bottom: 1px solid #e9eef2; }
+.file-review-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.file-review-heading span { color: #087f77; font-size: 13px; font-weight: 700; }
+.file-review { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 16px; height: min(70vh, 760px); min-height: 380px; }
+.file-list-pane, .diff-panel { min-width: 0; min-height: 0; border: 1px solid #dce5ec; border-radius: 8px; overflow: hidden; }
+.file-list-pane { display: flex; flex-direction: column; padding: 12px 0 0; }
+.file-search-label { padding: 0 12px 6px; color: #4a5b6d; font-size: 12px; font-weight: 700; }
+.file-search { height: 38px; margin: 0 12px 12px; padding: 0 10px; border: 1px solid #ced7df; border-radius: 6px; font: inherit; }
+.file-search:focus-visible { outline: 3px solid #80d6cf; outline-offset: 2px; }
+.file-list-empty { padding: 12px; color: #647386; }
+.changed-files { flex: 1; min-height: 0; margin: 0; padding: 0; list-style: none; overflow-y: auto; border-top: 1px solid #e9eef2; }
+.changed-files li { border-bottom: 1px solid #e9eef2; }
 .changed-files li:last-child { border-bottom: 0; }
-.file-button { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
-.file-button:hover .file-path, .file-button.selected .file-path { color: #087f77; text-decoration: underline; }
-.file-path { flex: 1; min-width: 180px; overflow-wrap: anywhere; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
+.file-button { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; width: 100%; padding: 11px 12px; border: 0; background: transparent; color: inherit; text-align: left; }
+.file-button:hover { background: #f6fbfa; }
+.file-button.selected { background: #e8f6f3; box-shadow: inset 3px 0 #087f77; }
+.file-button:hover .file-path, .file-button.selected .file-path { color: #087f77; }
+.file-path { width: 100%; overflow-wrap: anywhere; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
 .previous-path { color: #647386; overflow-wrap: anywhere; font-size: 12px; }
+.file-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .change-type { padding: 4px 8px; border-radius: 6px; background: #eef3f7; color: #4a5b6d; font-size: 12px; white-space: nowrap; }
-.diff-panel { margin-top: 18px; }
-.diff-panel h4 { margin: 0 0 12px; overflow-wrap: anywhere; font-size: 14px; }
-.diff-scroll { max-height: 620px; overflow: auto; border: 1px solid #dce5ec; border-radius: 8px; background: #f8fafc; font: 12px/1.5 Consolas, 'Courier New', monospace; }
+.opened-badge { padding: 4px 8px; border-radius: 6px; background: #e7f6f0; color: #147351; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.diff-panel { display: flex; flex-direction: column; scroll-margin-top: 16px; background: #f8fafc; }
+.diff-panel h4 { flex: none; margin: 0; padding: 12px 14px; border-bottom: 1px solid #dce5ec; overflow-wrap: anywhere; background: white; font-size: 14px; }
+.diff-placeholder { margin: auto; padding: 20px; color: #647386; text-align: center; }
+.diff-message { margin: 16px; }
+.diff-scroll { flex: 1; min-height: 0; overflow: auto; font: 12px/1.5 Consolas, 'Courier New', monospace; }
 .diff-line { display: flex; min-width: max-content; }
 .diff-add { background: #e6f5eb; }
 .diff-remove { background: #fcebea; }
@@ -78,6 +93,11 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .line-text { padding-right: 20px; white-space: pre; }
 .no-newline { padding: 0 12px; color: #647386; font-family: Inter, 'Segoe UI', Arial, sans-serif; font-style: italic; }
 .details-section .muted { margin-bottom: 0; }
+@media (max-width: 900px) {
+  .file-review { display: flex; flex-direction: column; height: auto; }
+  .file-list-pane { height: 260px; flex: none; }
+  .diff-panel { height: min(70vh, 680px); min-height: 300px; }
+}
 @media (max-width: 720px) {
   .topbar-caption { display: none; }
   main { padding: 28px 16px 50px; }
