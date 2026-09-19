@@ -572,7 +572,7 @@ Ready
 
 Pierwsza wersja musi obsługiwać tylko:
 
-Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików → diff w Monaco), ale nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu i listy plików na rzeczywistej organizacji Azure DevOps; diff jest dotąd sprawdzony lokalnie i testami z atrapą HTTP.
+Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików → diff w Monaco), ale nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu, listy plików i diffu na rzeczywistej organizacji Azure DevOps. Lista commitów i nowe sterowanie review są zaimplementowane, lecz czekają na potwierdzenie w aplikacji.
 
 ### Azure DevOps
 
@@ -582,7 +582,7 @@ Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików →
 * [x] lista aktywnych PR
 * [x] szczegóły PR
 * [x] changed files (lista ścieżek i typów zmian)
-* [x] diff jednego wybranego pliku tekstowego na żądanie w Monaco Diff Editor, tylko do odczytu, z kolorowaniem składni (pliki binarne i zbyt duże pokazują komunikat; integracja nie jest jeszcze potwierdzona na prawdziwym Azure DevOps)
+* [x] diff jednego wybranego pliku tekstowego na żądanie w Monaco Diff Editor, tylko do odczytu, z kolorowaniem składni (pliki binarne i zbyt duże pokazują komunikat; użytkownik potwierdził działanie diffu na prawdziwym Azure DevOps)
 
 ### Local repository
 
@@ -661,7 +661,8 @@ Kolejność najbliższych, małych zadań i warunki ich zakończenia są w [docs
 * [x] Pobieranie aktywnych PR
 * [x] Pobieranie szczegółów PR
 * [x] Pobieranie changed files
-* [x] Pobieranie diffu jednego pliku na żądanie (bez walidacji na prawdziwym Azure DevOps)
+* [x] Pobieranie diffu jednego pliku na żądanie (użytkownik potwierdził podstawowe działanie na prawdziwym Azure DevOps)
+* [x] Pobieranie listy commitów PR z podstawowymi metadanymi i stronicowaniem
 * [x] Pobieranie linked Work Item (powiązanie i ID; bez pełnych danych Work Item)
 
 ### Wynik

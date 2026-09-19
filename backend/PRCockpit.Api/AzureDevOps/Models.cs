@@ -5,6 +5,7 @@ public record Repository(string Id, string Name);
 public record Reviewer(string Name, int Vote);
 public record WorkItem(string Id, string Url);
 public record ChangedFile(string Path, string ChangeType, string? OriginalPath);
+public record Commit(string Id, string Message, string Author, DateTimeOffset? AuthoredAt);
 public record FileDiff(string Path, string? OriginalPath, string Kind, string? OriginalText, string? ModifiedText);
 
 public record PullRequestSummary(
@@ -29,6 +30,7 @@ public record PullRequestDetails(
     int ChangedFilesCount,
     IReadOnlyList<ChangedFile> ChangedFiles,
     int CommitsCount,
+    IReadOnlyList<Commit> Commits,
     IReadOnlyList<WorkItem> WorkItems);
 
 public sealed class AzureDevOpsException(string message, int statusCode) : Exception(message)

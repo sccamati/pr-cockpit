@@ -19,7 +19,7 @@ public static class AzureDevOpsMapper
         RequiredDate(value, "creationDate"));
 
     public static PullRequestDetails Details(
-        JsonElement value, IReadOnlyList<ChangedFile> changedFiles, int commitsCount,
+        JsonElement value, IReadOnlyList<ChangedFile> changedFiles, IReadOnlyList<Commit> commits,
         IReadOnlyList<WorkItem> workItems)
     {
         var reviewers = value.TryGetProperty("reviewers", out var array)
@@ -40,7 +40,8 @@ public static class AzureDevOpsMapper
             reviewers,
             changedFiles.Count,
             changedFiles,
-            commitsCount,
+            commits.Count,
+            commits,
             workItems);
     }
 
@@ -51,6 +52,17 @@ public static class AzureDevOpsMapper
 
     public static WorkItem WorkItem(JsonElement value) => new(
         RequiredString(value, "id"), RequiredString(value, "url"));
+
+    public static Commit Commit(JsonElement value)
+    {
+        var author = value.GetProperty("author");
+        return new Commit(
+            RequiredString(value, "commitId"),
+            RequiredString(value, "comment"),
+            RequiredString(author, "name"),
+            author.TryGetProperty("date", out var date) && date.ValueKind == JsonValueKind.String
+                ? date.GetDateTimeOffset() : null);
+    }
 
     private static string Branch(string value) => value.StartsWith("refs/heads/", StringComparison.Ordinal)
         ? value["refs/heads/".Length..]

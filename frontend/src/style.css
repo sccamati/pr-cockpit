@@ -59,15 +59,30 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .details-section:last-child { padding-bottom: 0; }
 .description { white-space: pre-wrap; line-height: 1.65; color: #455569; margin-bottom: 0; }
 .plain-list { margin: 0; padding-left: 20px; line-height: 1.9; }
+.commit-list { max-height: 280px; margin: 0; padding: 0; list-style: none; overflow-y: auto; border: 1px solid #e9eef2; border-radius: 8px; }
+.commit-list li { display: flex; align-items: baseline; gap: 14px; padding: 10px 12px; border-bottom: 1px solid #e9eef2; }
+.commit-list li:last-child { border-bottom: 0; }
+.commit-id { flex: none; color: #087f77; font-size: 12px; }
+.commit-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.commit-info strong { font-size: 13px; font-weight: 600; }
+.commit-info small { color: #647386; }
 .file-review-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .file-review-heading span { color: #087f77; font-size: 13px; font-weight: 700; }
+.file-progress { display: block; width: 100%; height: 7px; margin: 0 0 14px; accent-color: #087f77; }
+.review-complete { margin: 0 0 14px; color: #147351; font-size: 13px; font-weight: 700; }
 .file-review { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 16px; height: min(70vh, 760px); min-height: 380px; }
 .file-list-pane, .diff-panel { min-width: 0; min-height: 0; border: 1px solid #dce5ec; border-radius: 8px; overflow: hidden; }
 .file-list-pane { display: flex; flex-direction: column; padding: 12px 0 0; }
 .file-search-label { padding: 0 12px 6px; color: #4a5b6d; font-size: 12px; font-weight: 700; }
 .file-search { height: 38px; margin: 0 12px 12px; padding: 0 10px; border: 1px solid #ced7df; border-radius: 6px; font: inherit; }
 .file-search:focus-visible { outline: 3px solid #80d6cf; outline-offset: 2px; }
-.file-list-empty { padding: 12px; color: #647386; }
+.file-filter { display: flex; margin: 0 12px 10px; border: 1px solid #ced7df; border-radius: 6px; overflow: hidden; }
+.file-filter button { flex: 1; min-width: 0; padding: 7px 4px; border: 0; background: white; color: #455569; font-size: 12px; }
+.file-filter button + button { border-left: 1px solid #ced7df; }
+.file-filter button.active { background: #e8f6f3; color: #087f77; font-weight: 700; }
+.next-file-button { margin: 0 12px 10px; padding: 8px; border: 1px solid #b7c7d2; border-radius: 6px; background: white; color: #21415a; font-size: 12px; font-weight: 700; }
+.file-list-hint { margin: 0 12px 10px; color: #647386; font-size: 12px; }
+.file-list-empty { margin: 0; padding: 12px; color: #647386; }
 .changed-files { flex: 1; min-height: 0; margin: 0; padding: 0; list-style: none; overflow-y: auto; border-top: 1px solid #e9eef2; }
 .changed-files li { border-bottom: 1px solid #e9eef2; }
 .changed-files li:last-child { border-bottom: 0; }
@@ -92,10 +107,12 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .details-section .muted { margin-bottom: 0; }
 @media (max-width: 900px) {
   .file-review { display: flex; flex-direction: column; height: auto; }
-  .file-list-pane { height: 260px; flex: none; }
+  .file-list-pane { height: 340px; flex: none; }
   .diff-panel { height: min(70vh, 680px); min-height: 300px; }
 }
 @media (max-width: 720px) {
+  .file-review-heading { align-items: flex-start; flex-direction: column; }
+  .commit-list li { flex-direction: column; gap: 4px; }
   .diff-toolbar { align-items: flex-start; flex-direction: column; }
   .topbar-caption { display: none; }
   main { padding: 28px 16px 50px; }

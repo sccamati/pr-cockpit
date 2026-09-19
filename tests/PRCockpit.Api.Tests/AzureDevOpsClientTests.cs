@@ -28,7 +28,8 @@ public sealed class AzureDevOpsClientTests
 
         var summary = AzureDevOpsMapper.Summary(json.RootElement);
         var details = AzureDevOpsMapper.Details(json.RootElement,
-            [new ChangedFile("/src/invoices.cs", "edit", null)], 2,
+            [new ChangedFile("/src/invoices.cs", "edit", null)],
+            [new Commit("a", "Add invoice dispatch", "Anna", null), new Commit("b", "Add tests", "Jan", null)],
             [new WorkItem("45", "https://example.test/45")]);
 
         Assert.Equal(123, summary.Id);
@@ -39,6 +40,7 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal(1, details.ChangedFilesCount);
         Assert.Equal("/src/invoices.cs", Assert.Single(details.ChangedFiles).Path);
         Assert.Equal(2, details.CommitsCount);
+        Assert.Equal("Add invoice dispatch", details.Commits[0].Message);
         Assert.Equal(10, Assert.Single(details.Reviewers).Vote);
         Assert.Equal("45", Assert.Single(details.WorkItems).Id);
     }
@@ -70,7 +72,7 @@ public sealed class AzureDevOpsClientTests
                 var p when p.Contains("/iterations?") =>
                     """{"value":[{"id":1},{"id":2}]}""",
                 var p when p.Contains("/commits?") =>
-                    """{"value":[{"commitId":"a"},{"commitId":"b"}]}""",
+                    """{"value":[{"commitId":"a","comment":"First change","author":{"name":"Anna"}},{"commitId":"b","comment":"Second change","author":{"name":"Jan"}}]}""",
                 var p when p.Contains("/workitems?") =>
                     """{"value":[{"id":"78","url":"https://example.test/78"}]}""",
                 _ => """
@@ -101,9 +103,71 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal("/src/old.cs", details.ChangedFiles[1].OriginalPath);
         Assert.Equal("delete", details.ChangedFiles[2].ChangeType);
         Assert.Equal(2, details.CommitsCount);
+        Assert.Equal(["First change", "Second change"], details.Commits.Select(commit => commit.Message));
         Assert.Equal("78", Assert.Single(details.WorkItems).Id);
         Assert.Contains(visited, path => path.Contains("Project%20A"));
         Assert.Equal(6, visited.Count);
+    }
+
+    [Fact]
+    public async Task LoadsPullRequestCommitsAcrossContinuationPages()
+    {
+        var commitRequests = new List<string>();
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Json("""{"value":[]}""");
+            if (path.Contains("/workitems?")) return Json("""{"value":[]}""");
+            if (path.Contains("/commits?"))
+            {
+                commitRequests.Add(path);
+                if (commitRequests.Count == 1)
+                {
+                    var page = Json("""{"value":[{"commitId":"a","comment":"First\nDetails","author":{"name":"Anna","date":"2026-09-01T12:00:00Z"}}]}""");
+                    page.Headers.TryAddWithoutValidation("x-ms-continuationtoken", "next+/page");
+                    return page;
+                }
+                Assert.Contains("continuationToken=next%2B%2Fpage", path);
+                return Json("""{"value":[{"commitId":"b","comment":"Second","author":{"name":"Jan"}}]}""");
+            }
+            if (path.EndsWith("/123?api-version=7.1")) return Json("""
+                {"pullRequestId":123,"title":"Change","status":"active","creationDate":"2026-09-01T12:00:00Z",
+                 "createdBy":{"displayName":"Anna"},"repository":{"name":"Repo"},
+                 "sourceRefName":"refs/heads/feature","targetRefName":"refs/heads/main"}
+                """);
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var details = await Client(http).GetPullRequestAsync("project", "repo", 123, CancellationToken.None);
+
+        Assert.Equal(2, commitRequests.Count);
+        Assert.Equal(2, details.CommitsCount);
+        Assert.Equal(["a", "b"], details.Commits.Select(commit => commit.Id));
+        Assert.Equal("First\nDetails", details.Commits[0].Message);
+        Assert.Equal("Anna", details.Commits[0].Author);
+        Assert.Equal(new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero), details.Commits[0].AuthoredAt);
+        Assert.Null(details.Commits[1].AuthoredAt);
+    }
+
+    [Fact]
+    public async Task ReturnsEmptyCommitListWhenPullRequestHasNoCommits()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Json("""{"value":[]}""");
+            if (path.Contains("/commits?") || path.Contains("/workitems?")) return Json("""{"value":[]}""");
+            return Json("""
+                {"pullRequestId":123,"title":"Change","status":"active","creationDate":"2026-09-01T12:00:00Z",
+                 "createdBy":{"displayName":"Anna"},"repository":{"name":"Repo"},
+                 "sourceRefName":"refs/heads/feature","targetRefName":"refs/heads/main"}
+                """);
+        }));
+
+        var details = await Client(http).GetPullRequestAsync("project", "repo", 123, CancellationToken.None);
+
+        Assert.Empty(details.Commits);
+        Assert.Equal(0, details.CommitsCount);
     }
 
     [Fact]

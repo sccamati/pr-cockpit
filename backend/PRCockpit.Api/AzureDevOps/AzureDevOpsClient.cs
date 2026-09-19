@@ -69,9 +69,9 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             var changedFiles = lastId == 0
                 ? []
                 : await GetChangedFilesAsync(path, lastId, ct);
-            var commitsCount = await CountCommitsAsync(path, ct);
+            var commits = await GetCommitsAsync(path, ct);
             var workItems = await GetWorkItemsAsync(path, ct);
-            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commitsCount, workItems);
+            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commits, workItems);
         }
     }
 
@@ -205,19 +205,19 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         }
     }
 
-    private async Task<int> CountCommitsAsync(string path, CancellationToken ct)
+    private async Task<IReadOnlyList<Commit>> GetCommitsAsync(string path, CancellationToken ct)
     {
-        var count = 0;
+        var commits = new List<Commit>();
         string? continuation = null;
         do
         {
             var url = $"{path}/commits?$top=1000&{ApiVersion}";
             if (continuation is not null) url += "&continuationToken=" + Uri.EscapeDataString(continuation);
             var (json, next) = await GetAsync(url, ct);
-            using (json) count += Values(json.RootElement).GetArrayLength();
+            using (json) commits.AddRange(Values(json.RootElement).EnumerateArray().Select(AzureDevOpsMapper.Commit));
             continuation = next;
         } while (continuation is not null);
-        return count;
+        return commits;
     }
 
     private async Task<IReadOnlyList<WorkItem>> GetWorkItemsAsync(string path, CancellationToken ct)

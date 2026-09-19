@@ -15,6 +15,7 @@ const fileDiff = ref<FileDiff | null>(null)
 const diffLoading = ref(false)
 const diffError = ref('')
 const fileSearch = ref('')
+const onlyUnreviewed = ref(false)
 const reviewedFiles = ref<Record<string, string[]>>({})
 const diffPanel = ref<HTMLElement | null>(null)
 const monacoComponent = shallowRef<Component | null>(null)
@@ -28,15 +29,32 @@ const reviewedPaths = computed(() => {
   const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
   return (reviewedFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
 })
-const filteredFiles = computed(() => {
+const reviewedPathSet = computed(() => new Set(reviewedPaths.value))
+const matchingFiles = computed(() => {
   const search = fileSearch.value.trim().toLocaleLowerCase()
   return details.value?.changedFiles.filter(file =>
     !search || file.path.toLocaleLowerCase().includes(search) ||
     file.originalPath?.toLocaleLowerCase().includes(search)) ?? []
 })
+const filteredFiles = computed(() => onlyUnreviewed.value
+  ? matchingFiles.value.filter(file => !isReviewed(file.path))
+  : matchingFiles.value)
+const remainingCount = computed(() => (details.value?.changedFiles.length ?? 0) - reviewedPaths.value.length)
+const unreviewedMatches = computed(() => matchingFiles.value.filter(file => !isReviewed(file.path)))
+const nextUnreviewedPath = computed(() => {
+  const files = matchingFiles.value
+  const selectedIndex = files.findIndex(file => file.path === selectedFilePath.value)
+  const afterSelected = files.slice(selectedIndex + 1).find(file => !isReviewed(file.path))
+  const beforeSelected = files.slice(0, Math.max(selectedIndex, 0)).find(file => !isReviewed(file.path))
+  return afterSelected?.path ?? beforeSelected?.path ?? null
+})
 
 function isReviewed(path: string): boolean {
-  return reviewedPaths.value.includes(path)
+  return reviewedPathSet.value.has(path)
+}
+
+function openNextUnreviewed() {
+  if (nextUnreviewedPath.value) void openFile(nextUnreviewedPath.value)
 }
 
 function toggleReviewed() {
@@ -55,6 +73,7 @@ function resetDiff() {
   diffLoading.value = false
   diffError.value = ''
   fileSearch.value = ''
+  onlyUnreviewed.value = false
 }
 
 function message(cause: unknown): string {
@@ -178,6 +197,10 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
+function commitTitle(message: string): string {
+  return message.split(/\r?\n/, 1)[0]?.trim() || 'Bez opisu'
+}
+
 function reviewerVote(vote: number): string {
   if (vote >= 5) return 'Zatwierdzono'
   if (vote < 0) return 'Zmiany wymagane'
@@ -251,14 +274,31 @@ onMounted(loadProjects)
           <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
         </div>
         <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
-        <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ reviewedPaths.length }} obejrzanych w tej sesji</span></div>
+        <div class="details-section"><h3>Commity ({{ details.commitsCount }})</h3>
+          <p v-if="details.commits.length === 0" class="muted">Brak commitów.</p>
+          <ul v-else class="commit-list">
+            <li v-for="commit in details.commits" :key="commit.id">
+              <code class="commit-id" :title="commit.id">{{ commit.id.slice(0, 8) }}</code>
+              <span class="commit-info"><strong>{{ commitTitle(commit.message) }}</strong><small>{{ commit.author }}<template v-if="commit.authoredAt"> · {{ formatDate(commit.authoredAt) }}</template></small></span>
+            </li>
+          </ul>
+        </div>
+        <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ reviewedPaths.length }} / {{ details.changedFiles.length }} obejrzanych w tej sesji</span></div>
+          <progress v-if="details.changedFiles.length" class="file-progress" :value="reviewedPaths.length" :max="details.changedFiles.length" aria-label="Postęp przeglądania plików" />
+          <p v-if="details.changedFiles.length && remainingCount === 0" class="review-complete" role="status">Wszystkie pliki obejrzane.</p>
           <p v-if="details.changedFiles.length === 0" class="muted">Brak zmienionych plików.</p>
           <div v-else class="file-review">
             <div class="file-list-pane">
               <label class="file-search-label" for="file-search">Szukaj pliku</label>
               <input id="file-search" v-model="fileSearch" class="file-search" type="search" placeholder="Nazwa lub ścieżka" autocomplete="off">
-              <p v-if="filteredFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
-              <ul v-else class="changed-files" aria-label="Zmienione pliki">
+              <div class="file-filter" role="group" aria-label="Filtr plików">
+                <button type="button" :aria-pressed="!onlyUnreviewed" :class="{ active: !onlyUnreviewed }" @click="onlyUnreviewed = false">Wszystkie</button>
+                <button type="button" :aria-pressed="onlyUnreviewed" :class="{ active: onlyUnreviewed }" @click="onlyUnreviewed = true">Nieobejrzane</button>
+              </div>
+              <button class="next-file-button" type="button" :disabled="!nextUnreviewedPath" @click="openNextUnreviewed">Następny nieobejrzany →</button>
+              <p v-if="matchingFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
+              <p v-else-if="!nextUnreviewedPath && remainingCount > 0" class="file-list-hint">{{ unreviewedMatches.length === 0 ? 'Brak nieobejrzanych plików w wynikach wyszukiwania.' : 'To ostatni nieobejrzany plik. Oznacz go po przejrzeniu.' }}</p>
+              <ul v-if="filteredFiles.length > 0" class="changed-files" aria-label="Zmienione pliki">
                 <li v-for="(file, index) in filteredFiles" :key="`${file.path}-${index}`">
                   <button class="file-button" :class="{ selected: selectedFilePath === file.path }" type="button"
                     :aria-current="selectedFilePath === file.path ? 'true' : undefined" @click="openFile(file.path)">

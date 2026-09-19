@@ -3,6 +3,7 @@ export interface Repository { id: string; name: string }
 export interface Reviewer { name: string; vote: number }
 export interface WorkItem { id: string; url: string }
 export interface ChangedFile { path: string; changeType: string; originalPath: string | null }
+export interface Commit { id: string; message: string; author: string; authoredAt: string | null }
 interface FileDiffBase { path: string; originalPath: string | null }
 export type FileDiff = FileDiffBase & (
   { kind: 'text'; originalText: string; modifiedText: string } |
@@ -26,6 +27,7 @@ export interface PullRequestDetails extends PullRequestSummary {
   changedFilesCount: number
   changedFiles: ChangedFile[]
   commitsCount: number
+  commits: Commit[]
   workItems: WorkItem[]
 }
 
