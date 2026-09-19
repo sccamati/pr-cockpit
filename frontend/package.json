@@ -17,5 +17,8 @@
   "dependencies": {
     "monaco-editor": "^0.56.0",
     "vue": "^3.5.43"
+  },
+  "overrides": {
+    "dompurify": "3.4.15"
   }
 }
