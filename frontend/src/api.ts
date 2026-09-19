@@ -3,6 +3,8 @@ export interface Repository { id: string; name: string }
 export interface Reviewer { name: string; vote: number }
 export interface WorkItem { id: string; url: string }
 export interface ChangedFile { path: string; changeType: string; originalPath: string | null }
+export interface DiffLine { kind: 'context' | 'add' | 'remove'; oldLine: number | null; newLine: number | null; text: string; hasNewline: boolean }
+export interface FileDiff { path: string; originalPath: string | null; kind: 'text' | 'binary' | 'tooLarge'; lines: DiffLine[] }
 
 export interface PullRequestSummary {
   id: number
@@ -43,4 +45,6 @@ export const api = {
     get<PullRequestSummary[]>(`${location(project, repository)}/pull-requests`),
   pullRequest: (project: string, repository: string, id: number) =>
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
+  fileDiff: (project: string, repository: string, id: number, path: string) =>
+    get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}`),
 }

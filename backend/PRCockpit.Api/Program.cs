@@ -27,6 +27,10 @@ api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullR
     string project, string repositoryId, int pullRequestId, AzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct)));
 
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/diff", async (
+    string project, string repositoryId, int pullRequestId, string path, AzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)));
+
 app.Run();
 
 static async Task<IResult> Execute<T>(Func<Task<T>> action)

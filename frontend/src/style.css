@@ -62,9 +62,21 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .changed-files { margin: 0; padding: 0; list-style: none; border: 1px solid #e9eef2; border-radius: 8px; overflow: hidden; }
 .changed-files li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 12px 14px; border-bottom: 1px solid #e9eef2; }
 .changed-files li:last-child { border-bottom: 0; }
+.file-button { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.file-button:hover .file-path, .file-button.selected .file-path { color: #087f77; text-decoration: underline; }
 .file-path { flex: 1; min-width: 180px; overflow-wrap: anywhere; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
 .previous-path { color: #647386; overflow-wrap: anywhere; font-size: 12px; }
 .change-type { padding: 4px 8px; border-radius: 6px; background: #eef3f7; color: #4a5b6d; font-size: 12px; white-space: nowrap; }
+.diff-panel { margin-top: 18px; }
+.diff-panel h4 { margin: 0 0 12px; overflow-wrap: anywhere; font-size: 14px; }
+.diff-scroll { max-height: 620px; overflow: auto; border: 1px solid #dce5ec; border-radius: 8px; background: #f8fafc; font: 12px/1.5 Consolas, 'Courier New', monospace; }
+.diff-line { display: flex; min-width: max-content; }
+.diff-add { background: #e6f5eb; }
+.diff-remove { background: #fcebea; }
+.line-number { flex: none; width: 42px; padding: 0 6px; color: #789; text-align: right; user-select: none; }
+.line-sign { flex: none; width: 20px; text-align: center; user-select: none; }
+.line-text { padding-right: 20px; white-space: pre; }
+.no-newline { padding: 0 12px; color: #647386; font-family: Inter, 'Segoe UI', Arial, sans-serif; font-style: italic; }
 .details-section .muted { margin-bottom: 0; }
 @media (max-width: 720px) {
   .topbar-caption { display: none; }

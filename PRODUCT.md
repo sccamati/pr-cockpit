@@ -582,7 +582,7 @@ Stan: ukończony jest pierwszy vertical slice (Azure DevOps → PR → lista zmi
 * [x] lista aktywnych PR
 * [x] szczegóły PR
 * [x] changed files (lista ścieżek i typów zmian)
-* [ ] diff
+* [x] diff jednego wybranego pliku tekstowego na żądanie (pliki binarne i zbyt duże pokazują komunikat; integracja nie jest jeszcze potwierdzona na prawdziwym Azure DevOps)
 
 ### Local repository
 
@@ -659,7 +659,7 @@ Najpierw potwierdzamy, że podstawowy workflow daje wartość.
 * [x] Pobieranie aktywnych PR
 * [x] Pobieranie szczegółów PR
 * [x] Pobieranie changed files
-* [ ] Pobieranie diffu
+* [x] Pobieranie diffu jednego pliku na żądanie (bez walidacji na prawdziwym Azure DevOps)
 * [x] Pobieranie linked Work Item (powiązanie i ID; bez pełnych danych Work Item)
 
 ### Wynik

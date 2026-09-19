@@ -106,6 +106,198 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal(6, visited.Count);
     }
 
+    [Fact]
+    public async Task DiffUsesCommonAndSourceCommitsAndOriginalPathForRename()
+    {
+        var requestedItems = new List<string>();
+        var baseCommit = new string('a', 40);
+        var sourceCommit = new string('b', 40);
+        var oldBlob = new string('c', 40);
+        var newBlob = new string('d', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            Assert.Equal("Basic", request.Headers.Authorization?.Scheme);
+            var url = request.RequestUri!;
+            var path = url.PathAndQuery;
+            if (path.Contains("/iterations?"))
+                return Json("""{"value":[{"id":1},{"id":2,"commonRefCommit":{"commitId":"BASE"},"sourceRefCommit":{"commitId":"SOURCE"}}]}"""
+                    .Replace("BASE", baseCommit).Replace("SOURCE", sourceCommit));
+            if (path.Contains("/iterations/2/changes"))
+            {
+                Assert.Contains("$compareTo=0", path);
+                return Json("""{"changeEntries":[{"item":{"path":"/new name.cs"},"originalPath":"/old name.cs","changeType":"rename"}],"nextSkip":0}""");
+            }
+            if (path.Contains("/items?"))
+            {
+                requestedItems.Add(Uri.UnescapeDataString(path));
+                return Json("""{"objectId":"BLOB","contentMetadata":{"isBinary":false}}"""
+                    .Replace("BLOB", requestedItems.Count == 1 ? oldBlob : newBlob));
+            }
+            if (path.Contains($"/blobs/{oldBlob}")) return Bytes("same\nold\n");
+            if (path.Contains($"/blobs/{newBlob}")) return Bytes("same\nnew\n");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("Project A", "repo", 123, "/new name.cs", CancellationToken.None);
+
+        Assert.Equal("text", diff.Kind);
+        Assert.Equal("/old name.cs", diff.OriginalPath);
+        Assert.Equal(["context", "remove", "add"], diff.Lines.Select(line => line.Kind));
+        Assert.Equal([1, 2, null], diff.Lines.Select(line => line.OldLine));
+        Assert.Equal([1, null, 2], diff.Lines.Select(line => line.NewLine));
+        Assert.Contains($"path=/old name.cs&versionDescriptor.version={baseCommit}", requestedItems[0]);
+        Assert.Contains($"path=/new name.cs&versionDescriptor.version={sourceCommit}", requestedItems[1]);
+    }
+
+    [Theory]
+    [InlineData("add", "add", 0, 1)]
+    [InlineData("delete", "remove", 1, 0)]
+    public async Task DiffTreatsAddedAndDeletedFilesAsEmptyOnMissingSide(
+        string changeType, string expectedKind, int expectedOldRequests, int expectedNewRequests)
+    {
+        var itemRequests = 0;
+        var blob = new string('c', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/file.txt"},"changeType":"TYPE"}],"nextSkip":0}"""
+                    .Replace("TYPE", changeType));
+            if (path.Contains("/items?"))
+            {
+                itemRequests++;
+                return Json("""{"objectId":"BLOB","contentMetadata":{"isBinary":false}}""".Replace("BLOB", blob));
+            }
+            if (path.Contains("/blobs/")) return Bytes("line\n");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.txt", CancellationToken.None);
+
+        Assert.Equal("text", diff.Kind);
+        Assert.Equal(expectedKind, Assert.Single(diff.Lines).Kind);
+        Assert.Equal(expectedOldRequests + expectedNewRequests, itemRequests);
+    }
+
+    [Theory]
+    [InlineData("binary", true, 1)]
+    [InlineData("binary", false, 1)]
+    [InlineData("tooLarge", false, 262145)]
+    public async Task DiffReportsBinaryAndOversizedFiles(string expectedKind, bool isBinary, int bytes)
+    {
+        var blob = new string('c', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/file.dat"},"changeType":"add"}],"nextSkip":0}""");
+            if (path.Contains("/items?"))
+                return Json("""{"objectId":"BLOB","contentMetadata":{"isBinary":BINARY}}"""
+                    .Replace("BLOB", blob).Replace("BINARY", isBinary ? "true" : "false"));
+            if (path.Contains("/blobs/")) return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(new byte[bytes])
+            };
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.dat", CancellationToken.None);
+
+        Assert.Equal(expectedKind, diff.Kind);
+        Assert.Empty(diff.Lines);
+    }
+
+    [Fact]
+    public async Task DiffRejectsFilesOutsideCurrentChangeList()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?")) return Json("""{"changeEntries":[],"nextSkip":0}""");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var exception = await Assert.ThrowsAsync<AzureDevOpsException>(() =>
+            Client(http).GetFileDiffAsync("project", "repo", 123, "/secret.txt", CancellationToken.None));
+
+        Assert.Equal(404, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task DiffLimitsLineCountEvenWhenFileIsSmallInBytes()
+    {
+        var blob = new string('c', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/many.txt"},"changeType":"add"}],"nextSkip":0}""");
+            if (path.Contains("/items?"))
+                return Json("""{"objectId":"BLOB","contentMetadata":{"isBinary":false}}""".Replace("BLOB", blob));
+            if (path.Contains("/blobs/")) return Bytes(string.Concat(Enumerable.Repeat("x\n", 4001)));
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/many.txt", CancellationToken.None);
+
+        Assert.Equal("tooLarge", diff.Kind);
+        Assert.Empty(diff.Lines);
+    }
+
+    [Fact]
+    public async Task DiffShowsMissingFinalNewline()
+    {
+        var oldBlob = new string('c', 40);
+        var newBlob = new string('d', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/file.txt"},"changeType":"edit"}],"nextSkip":0}""");
+            if (path.Contains("/items?"))
+                return Json("""{"objectId":"BLOB"}""".Replace("BLOB",
+                    path.Contains(new string('a', 40)) ? oldBlob : newBlob));
+            if (path.Contains($"/blobs/{oldBlob}")) return Bytes("line\n");
+            if (path.Contains($"/blobs/{newBlob}")) return Bytes("line");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.txt", CancellationToken.None);
+
+        Assert.Equal(["remove", "add"], diff.Lines.Select(line => line.Kind));
+        Assert.True(diff.Lines[0].HasNewline);
+        Assert.False(diff.Lines[1].HasNewline);
+    }
+
+    private static AzureDevOpsClient Client(HttpClient http)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["AzureDevOps:Organization"] = "example",
+            ["AzureDevOps:Pat"] = "test-pat"
+        }).Build();
+        return new AzureDevOpsClient(http, config);
+    }
+
+    private static HttpResponseMessage Iteration() => Json("""
+        {"value":[{"id":1,"commonRefCommit":{"commitId":"BASE"},"sourceRefCommit":{"commitId":"SOURCE"}}]}
+        """.Replace("BASE", new string('a', 40)).Replace("SOURCE", new string('b', 40)));
+
+    private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(body, Encoding.UTF8, "application/json")
+    };
+
+    private static HttpResponseMessage Bytes(string body) => new(HttpStatusCode.OK)
+    {
+        Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body))
+    };
+
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

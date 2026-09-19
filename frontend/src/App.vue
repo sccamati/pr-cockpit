@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { api, type Project, type Repository, type PullRequestDetails, type PullRequestSummary } from './api'
+import { api, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -10,7 +10,20 @@ const projectId = ref('')
 const repositoryId = ref('')
 const loading = ref(false)
 const error = ref('')
+const selectedFilePath = ref('')
+const fileDiff = ref<FileDiff | null>(null)
+const diffLoading = ref(false)
+const diffError = ref('')
 let requestId = 0
+let diffRequestId = 0
+
+function resetDiff() {
+  ++diffRequestId
+  selectedFilePath.value = ''
+  fileDiff.value = null
+  diffLoading.value = false
+  diffError.value = ''
+}
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Wystąpił nieoczekiwany błąd.'
@@ -36,6 +49,7 @@ async function loadProjects() {
 
 async function loadRepositories() {
   const current = ++requestId
+  resetDiff()
   repositories.value = []
   repositoryId.value = ''
   pullRequests.value = []
@@ -59,6 +73,7 @@ async function loadRepositories() {
 
 async function loadPullRequests() {
   const current = ++requestId
+  resetDiff()
   pullRequests.value = []
   details.value = null
   error.value = ''
@@ -75,6 +90,7 @@ async function loadPullRequests() {
 
 async function openPullRequest(id: number) {
   const current = ++requestId
+  resetDiff()
   details.value = null
   error.value = ''
   loading.value = true
@@ -88,8 +104,27 @@ async function openPullRequest(id: number) {
   }
 }
 
+async function openFile(path: string) {
+  if (!details.value) return
+  const current = ++diffRequestId
+  const pullRequestId = details.value.id
+  selectedFilePath.value = path
+  fileDiff.value = null
+  diffError.value = ''
+  diffLoading.value = true
+  try {
+    const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path)
+    if (current === diffRequestId) fileDiff.value = result
+  } catch (cause) {
+    if (current === diffRequestId) diffError.value = message(cause)
+  } finally {
+    if (current === diffRequestId) diffLoading.value = false
+  }
+}
+
 function backToList() {
   ++requestId
+  resetDiff()
   details.value = null
   error.value = ''
   loading.value = false
@@ -176,11 +211,31 @@ onMounted(loadProjects)
           <p v-if="details.changedFiles.length === 0" class="muted">Brak zmienionych plików.</p>
           <ul v-else class="changed-files">
             <li v-for="(file, index) in details.changedFiles" :key="index">
-              <span class="file-path">{{ file.path }}</span>
-              <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
-              <span class="change-type">{{ changeLabel(file.changeType) }}</span>
+              <button class="file-button" :class="{ selected: selectedFilePath === file.path }" type="button"
+                :aria-pressed="selectedFilePath === file.path" @click="openFile(file.path)">
+                <span class="file-path">{{ file.path }}</span>
+                <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
+                <span class="change-type">{{ changeLabel(file.changeType) }}</span>
+              </button>
             </li>
           </ul>
+          <div v-if="selectedFilePath" class="diff-panel" aria-live="polite">
+            <h4>Diff: {{ selectedFilePath }}</h4>
+            <p v-if="diffLoading" class="muted" role="status">Pobieranie diffu…</p>
+            <p v-else-if="diffError" class="notice error" role="alert">{{ diffError }}</p>
+            <p v-else-if="fileDiff?.kind === 'binary'" class="muted">Plik binarny — diff tekstowy jest niedostępny.</p>
+            <p v-else-if="fileDiff?.kind === 'tooLarge'" class="muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
+            <p v-else-if="fileDiff?.lines.length === 0" class="muted">Brak zmian w treści pliku.</p>
+            <div v-else-if="fileDiff" class="diff-scroll" role="region" aria-label="Zmiany w pliku" tabindex="0">
+              <div v-for="(line, index) in fileDiff.lines" :key="index" class="diff-line" :class="`diff-${line.kind}`">
+                <span class="line-number">{{ line.oldLine ?? '' }}</span>
+                <span class="line-number">{{ line.newLine ?? '' }}</span>
+                <span class="line-sign">{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' ' }}</span>
+                <span class="line-text">{{ line.text }}</span>
+                <span v-if="!line.hasNewline" class="no-newline">brak końcowego znaku nowej linii</span>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="details-section"><h3>Reviewerzy</h3>
           <p v-if="details.reviewers.length === 0" class="muted">Brak reviewerów.</p>
