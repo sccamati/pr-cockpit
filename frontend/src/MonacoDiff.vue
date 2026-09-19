@@ -44,9 +44,7 @@ onMounted(() => {
   editor = monaco.editor.createDiffEditor(container.value, {
     readOnly: true,
     originalEditable: false,
-    renderSideBySide: true,
-    useInlineViewWhenSpaceIsLimited: true,
-    renderSideBySideInlineBreakpoint: 1050,
+    renderSideBySide: false,
     diffWordWrap: 'on',
     scrollBeyondLastLine: false,
     minimap: { enabled: false },
