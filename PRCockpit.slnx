@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/backend/">
+    <Project Path="backend/PRCockpit.Api/PRCockpit.Api.csproj" />
+  </Folder>
+</Solution>
