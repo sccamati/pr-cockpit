@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, shallowRef, type Component } from 'vue'
-import { api, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { api, type ChecklistItem, type ChecklistState, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -17,6 +17,10 @@ const diffError = ref('')
 const summary = ref<SummaryResponse | null>(null)
 const summaryLoading = ref(false)
 const summaryError = ref('')
+const checklist = ref<ChecklistState | null>(null)
+const checklistLoading = ref(false)
+const checklistSaving = ref<ChecklistItem | null>(null)
+const checklistError = ref('')
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
 const reviewedFiles = ref<Record<string, string[]>>({})
@@ -26,6 +30,19 @@ const monacoComponent = shallowRef<Component | null>(null)
 let requestId = 0
 let diffRequestId = 0
 let summaryRequestId = 0
+let checklistRequestId = 0
+
+const checklistItems: { key: ChecklistItem; label: string }[] = [
+  { key: 'aiReview', label: 'AI Review' },
+  { key: 'quality', label: 'Quality' },
+  { key: 'understand', label: 'Understand' },
+  { key: 'architecture', label: 'Architecture' },
+  { key: 'debug', label: 'Debug' },
+  { key: 'ready', label: 'Ready' },
+]
+const checklistCompleted = computed(() => checklist.value
+  ? checklistItems.filter(item => checklist.value![item.key]).length
+  : 0)
 
 const currentPrKey = computed(() => details.value
   ? `${projectId.value}\u0000${repositoryId.value}\u0000${details.value.id}`
@@ -123,6 +140,51 @@ function resetSummary() {
   summaryError.value = ''
 }
 
+function resetChecklist() {
+  ++checklistRequestId
+  checklist.value = null
+  checklistLoading.value = false
+  checklistSaving.value = null
+  checklistError.value = ''
+}
+
+async function loadChecklist(project: string, repository: string, id: number) {
+  const current = ++checklistRequestId
+  checklistLoading.value = true
+  checklistError.value = ''
+  try {
+    const result = await api.checklist(project, repository, id)
+    if (current === checklistRequestId) checklist.value = result
+  } catch (cause) {
+    if (current === checklistRequestId) checklistError.value = message(cause)
+  } finally {
+    if (current === checklistRequestId) checklistLoading.value = false
+  }
+}
+
+async function setChecklistItem(item: ChecklistItem, completed: boolean) {
+  if (!details.value || !checklist.value || checklistSaving.value) return
+  const current = checklistRequestId
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  const previous = checklist.value
+  checklist.value = { ...previous, [item]: completed }
+  checklistSaving.value = item
+  checklistError.value = ''
+  try {
+    const result = await api.setChecklistItem(project, repository, id, item, completed)
+    if (current === checklistRequestId) checklist.value = result
+  } catch (cause) {
+    if (current === checklistRequestId) {
+      checklist.value = previous
+      checklistError.value = message(cause)
+    }
+  } finally {
+    if (current === checklistRequestId) checklistSaving.value = null
+  }
+}
+
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Wystąpił nieoczekiwany błąd.'
 }
@@ -150,6 +212,7 @@ async function loadRepositories() {
   const current = ++requestId
   resetDiff()
   resetSummary()
+  resetChecklist()
   repositories.value = []
   repositoryId.value = ''
   pullRequests.value = []
@@ -175,6 +238,7 @@ async function loadPullRequests() {
   const current = ++requestId
   resetDiff()
   resetSummary()
+  resetChecklist()
   pullRequests.value = []
   details.value = null
   error.value = ''
@@ -194,6 +258,7 @@ async function openPullRequest(id: number) {
   const current = ++requestId
   resetDiff()
   resetSummary()
+  resetChecklist()
   details.value = null
   error.value = ''
   loading.value = true
@@ -201,6 +266,7 @@ async function openPullRequest(id: number) {
     const result = await api.pullRequest(projectId.value, repositoryId.value, id)
     if (current === requestId) {
       details.value = result
+      void loadChecklist(projectId.value, repositoryId.value, id)
       criticalFiles.value[currentPrKey.value] = criticalPaths.value
     }
   } catch (cause) {
@@ -261,6 +327,7 @@ function backToList() {
   ++requestId
   resetDiff()
   resetSummary()
+  resetChecklist()
   details.value = null
   error.value = ''
   loading.value = false
@@ -366,6 +433,18 @@ onMounted(loadProjects)
           <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
         </div>
         <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
+        <div class="details-section checklist-section">
+          <div class="checklist-heading"><div><h3>Checklista PR</h3><p class="muted">Zaznaczaj ręcznie po wykonaniu każdego kroku. Stan zapisuje się lokalnie.</p></div><strong v-if="checklist">{{ checklistCompleted }} / 6</strong></div>
+          <p v-if="checklistLoading" class="notice" role="status">Wczytywanie checklisty…</p>
+          <p v-if="checklistError" class="notice error" role="alert">{{ checklistError }}</p>
+          <div v-if="checklist" class="checklist-items">
+            <label v-for="item in checklistItems" :key="item.key" class="checklist-item" :class="{ 'checklist-item--done': checklist[item.key] }">
+              <input type="checkbox" :checked="checklist[item.key]" :disabled="checklistSaving !== null" @change="setChecklistItem(item.key, ($event.target as HTMLInputElement).checked)">
+              <span>{{ item.label }}</span>
+            </label>
+          </div>
+          <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
+        </div>
         <div class="details-section summary-section">
           <div class="summary-heading"><div><h3>Summary</h3><p class="muted">Analiza korzysta z ograniczonego kontekstu PR i uruchamia się tylko po kliknięciu.</p></div>
             <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>

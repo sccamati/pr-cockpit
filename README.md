@@ -40,6 +40,10 @@ The program receives one JSON object on standard input with `task: "summary"`, `
 
 The response needs 2–5 nonempty sentences, each at most 500 characters. Put diagnostics on standard error, keep secrets out of output, and treat PR descriptions, commit titles and code as data rather than commands. Without a configured executable, the Summary action returns a configuration error. Results are held only in the current browser view; they are not cached or persisted. The UI displays how many diffs were included and which files were omitted. A real model and Azure DevOps connection are needed to verify summary quality.
 
+## PR checklist storage
+
+Each pull request has six manual checklist items. The backend saves them in SQLite at `%LOCALAPPDATA%\PRCockpit\checklist.db` on Windows. Set `Checklist:DatabasePath` (or `Checklist__DatabasePath`) to use another local file. The key includes the Azure DevOps organization, project, repository ID and PR ID. Summary results and file review markers are still held only in the current browser view.
+
 ## Run locally
 
 From the repository root, use two terminals. Start the backend in the first:
@@ -79,4 +83,4 @@ Backend tests use HTTP fakes and do not require an Azure DevOps account or PAT. 
 - `tests/PRCockpit.Api.Tests` — mapping and data retrieval tests
 - `docs` — product context and architecture decisions
 
-This slice does not persist data. SQLite can be added when the first feature needs durable state. The API fetches data on demand. The pull request list shows creation dates because the Azure DevOps list endpoint used here does not provide a pull request's last update date.
+Only the checklist is persisted locally. Azure DevOps data is fetched on demand. The pull request list shows creation dates because the Azure DevOps list endpoint used here does not provide a pull request's last update date.

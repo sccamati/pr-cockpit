@@ -47,6 +47,9 @@ export interface SummaryResponse {
   }
 }
 
+export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
+export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null }
+
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`)
   if (!response.ok) {
@@ -58,6 +61,19 @@ async function get<T>(path: string): Promise<T> {
 
 async function post<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`, { method: 'POST' })
+  if (!response.ok) {
+    const problem = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
+  }
+  return response.json() as Promise<T>
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
   if (!response.ok) {
     const problem = await response.json().catch(() => null) as { detail?: string } | null
     throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
@@ -79,4 +95,8 @@ export const api = {
     get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}`),
   generateSummary: (project: string, repository: string, id: number) =>
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
+  checklist: (project: string, repository: string, id: number) =>
+    get<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist`),
+  setChecklistItem: (project: string, repository: string, id: number, item: ChecklistItem, completed: boolean) =>
+    put<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist/${item === 'aiReview' ? 'ai-review' : item}`, { completed }),
 }

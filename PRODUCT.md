@@ -606,11 +606,11 @@ Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików →
 * [ ] PR Overview (podstawowe szczegóły są; brak affected areas i risk z sekcji 5)
 * [ ] Understand
 * [ ] Quality
-* [ ] Checklist
+* [x] Checklist — sześć ręcznych pól w widoku PR
 
 ### Persistence
 
-* [ ] zapis checklist
+* [x] zapis checklist w lokalnym SQLite
 * [ ] zapis analizy
 * [ ] ponowne otwarcie wcześniej przeanalizowanego PR
 
@@ -647,7 +647,7 @@ Kolejność najbliższych, małych zadań i warunki ich zakończenia są w [docs
 
 * [x] Utworzyć solution .NET
 * [x] Utworzyć Vue frontend
-* [ ] Dodać SQLite
+* [x] Dodać SQLite dla checklisty
 * [x] Przygotować podstawowy layout
 * [x] Przygotować konfigurację aplikacji
 
@@ -752,13 +752,13 @@ Aplikacja wskazuje istotne techniczne niuanse poza podstawowym code review.
 
 ## EPIC 7 — Checklist
 
-* [ ] AI Review
-* [ ] Quality
-* [ ] Understand
-* [ ] Architecture
-* [ ] Debug
-* [ ] Ready
-* [ ] zapis statusu
+* [x] AI Review — ręczne oznaczenie
+* [x] Quality — ręczne oznaczenie
+* [x] Understand — ręczne oznaczenie
+* [x] Architecture — ręczne oznaczenie
+* [x] Debug — ręczne oznaczenie
+* [x] Ready — ręczne oznaczenie
+* [x] zapis statusu
 
 ### Wynik
 
@@ -833,7 +833,7 @@ MVP jest gotowe, jeżeli mogę:
 7. [ ] zobaczyć główny flow,
 8. [ ] dostać listę najważniejszych plików,
 9. [ ] dostać sensowne Quality Findings,
-10. [ ] odklikać checklistę,
+10. [x] odklikać checklistę,
 11. [ ] wrócić później i nadal widzieć wynik.
 
 ---

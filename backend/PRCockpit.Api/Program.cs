@@ -1,5 +1,7 @@
+using Microsoft.Data.Sqlite;
 using PRCockpit.Api.Analysis;
 using PRCockpit.Api.AzureDevOps;
+using PRCockpit.Api.Checklists;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,6 +10,7 @@ builder.Services.AddHttpClient<AzureDevOpsClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 builder.Services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
+builder.Services.AddSingleton<ChecklistStore>();
 
 var app = builder.Build();
 
@@ -55,6 +58,15 @@ api.MapPost("/projects/{project}/repositories/{repositoryId}/pull-requests/{pull
         return await SummaryRunner.RunAsync(context, analyzer, ct);
     }));
 
+api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/checklist", async (
+    string project, string repositoryId, int pullRequestId, ChecklistStore store, CancellationToken ct) =>
+    await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
+
+api.MapPut("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/checklist/{item}", async (
+    string project, string repositoryId, int pullRequestId, string item, ChecklistUpdate update,
+    ChecklistStore store, CancellationToken ct) =>
+    await Execute(() => store.SetAsync(project, repositoryId, pullRequestId, item, update.Completed, ct)));
+
 app.Run();
 
 static async Task<IResult> Execute<T>(Func<Task<T>> action)
@@ -70,6 +82,22 @@ static async Task<IResult> Execute<T>(Func<Task<T>> action)
     catch (SummaryAnalysisException ex)
     {
         return Results.Problem(ex.Message, statusCode: ex.StatusCode);
+    }
+    catch (ChecklistException ex)
+    {
+        return Results.Problem(ex.Message, statusCode: ex.StatusCode);
+    }
+    catch (SqliteException)
+    {
+        return Results.Problem("Local checklist storage is unavailable.", statusCode: 503);
+    }
+    catch (IOException)
+    {
+        return Results.Problem("Local checklist storage is unavailable.", statusCode: 503);
+    }
+    catch (UnauthorizedAccessException)
+    {
+        return Results.Problem("Local checklist storage is unavailable.", statusCode: 503);
     }
     catch (HttpRequestException)
     {
