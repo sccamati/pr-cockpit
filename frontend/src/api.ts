@@ -3,8 +3,11 @@ export interface Repository { id: string; name: string }
 export interface Reviewer { name: string; vote: number }
 export interface WorkItem { id: string; url: string }
 export interface ChangedFile { path: string; changeType: string; originalPath: string | null }
-export interface DiffLine { kind: 'context' | 'add' | 'remove'; oldLine: number | null; newLine: number | null; text: string; hasNewline: boolean }
-export interface FileDiff { path: string; originalPath: string | null; kind: 'text' | 'binary' | 'tooLarge'; lines: DiffLine[] }
+interface FileDiffBase { path: string; originalPath: string | null }
+export type FileDiff = FileDiffBase & (
+  { kind: 'text'; originalText: string; modifiedText: string } |
+  { kind: 'binary' | 'tooLarge'; originalText: null; modifiedText: null }
+)
 
 export interface PullRequestSummary {
   id: number

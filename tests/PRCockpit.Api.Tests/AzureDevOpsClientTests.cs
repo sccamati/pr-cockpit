@@ -142,18 +142,17 @@ public sealed class AzureDevOpsClientTests
 
         Assert.Equal("text", diff.Kind);
         Assert.Equal("/old name.cs", diff.OriginalPath);
-        Assert.Equal(["context", "remove", "add"], diff.Lines.Select(line => line.Kind));
-        Assert.Equal([1, 2, null], diff.Lines.Select(line => line.OldLine));
-        Assert.Equal([1, null, 2], diff.Lines.Select(line => line.NewLine));
+        Assert.Equal("same\nold\n", diff.OriginalText);
+        Assert.Equal("same\nnew\n", diff.ModifiedText);
         Assert.Contains($"path=/old name.cs&versionDescriptor.version={baseCommit}", requestedItems[0]);
         Assert.Contains($"path=/new name.cs&versionDescriptor.version={sourceCommit}", requestedItems[1]);
     }
 
     [Theory]
-    [InlineData("add", "add", 0, 1)]
-    [InlineData("delete", "remove", 1, 0)]
+    [InlineData("add", "", "line\n", 0, 1)]
+    [InlineData("delete", "line\n", "", 1, 0)]
     public async Task DiffTreatsAddedAndDeletedFilesAsEmptyOnMissingSide(
-        string changeType, string expectedKind, int expectedOldRequests, int expectedNewRequests)
+        string changeType, string expectedOriginal, string expectedModified, int expectedOldRequests, int expectedNewRequests)
     {
         var itemRequests = 0;
         var blob = new string('c', 40);
@@ -176,7 +175,8 @@ public sealed class AzureDevOpsClientTests
         var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.txt", CancellationToken.None);
 
         Assert.Equal("text", diff.Kind);
-        Assert.Equal(expectedKind, Assert.Single(diff.Lines).Kind);
+        Assert.Equal(expectedOriginal, diff.OriginalText);
+        Assert.Equal(expectedModified, diff.ModifiedText);
         Assert.Equal(expectedOldRequests + expectedNewRequests, itemRequests);
     }
 
@@ -206,7 +206,8 @@ public sealed class AzureDevOpsClientTests
         var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.dat", CancellationToken.None);
 
         Assert.Equal(expectedKind, diff.Kind);
-        Assert.Empty(diff.Lines);
+        Assert.Null(diff.OriginalText);
+        Assert.Null(diff.ModifiedText);
     }
 
     [Fact]
@@ -245,7 +246,64 @@ public sealed class AzureDevOpsClientTests
         var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/many.txt", CancellationToken.None);
 
         Assert.Equal("tooLarge", diff.Kind);
-        Assert.Empty(diff.Lines);
+        Assert.Null(diff.OriginalText);
+        Assert.Null(diff.ModifiedText);
+    }
+
+    [Theory]
+    [InlineData(2000, "text")]
+    [InlineData(2001, "tooLarge")]
+    public async Task DiffAppliesCombinedLineLimitToBothVersions(int modifiedLines, string expectedKind)
+    {
+        var oldBlob = new string('c', 40);
+        var newBlob = new string('d', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/file.txt"},"changeType":"edit"}],"nextSkip":0}""");
+            if (path.Contains("/items?"))
+                return Json("""{"objectId":"BLOB"}""".Replace("BLOB",
+                    path.Contains(new string('a', 40)) ? oldBlob : newBlob));
+            if (path.Contains($"/blobs/{oldBlob}")) return Bytes(string.Concat(Enumerable.Repeat("old\r\n", 2000)));
+            if (path.Contains($"/blobs/{newBlob}")) return Bytes(string.Concat(Enumerable.Repeat("new\r\n", modifiedLines)));
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.txt", CancellationToken.None);
+
+        Assert.Equal(expectedKind, diff.Kind);
+        Assert.Equal(expectedKind == "text" ? string.Concat(Enumerable.Repeat("old\r\n", 2000)) : null,
+            diff.OriginalText);
+        Assert.Equal(expectedKind == "text" ? string.Concat(Enumerable.Repeat("new\r\n", modifiedLines)) : null,
+            diff.ModifiedText);
+    }
+
+    [Fact]
+    public async Task DiffDoesNotReturnOriginalTextWhenModifiedVersionIsBinary()
+    {
+        var oldBlob = new string('c', 40);
+        var newBlob = new string('d', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/file.dat"},"changeType":"edit"}],"nextSkip":0}""");
+            if (path.Contains("/items?"))
+                return Json("""{"objectId":"BLOB","contentMetadata":{"isBinary":BINARY}}"""
+                    .Replace("BLOB", path.Contains(new string('a', 40)) ? oldBlob : newBlob)
+                    .Replace("BINARY", path.Contains(new string('a', 40)) ? "false" : "true"));
+            if (path.Contains($"/blobs/{oldBlob}")) return Bytes("private old text");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.dat", CancellationToken.None);
+
+        Assert.Equal("binary", diff.Kind);
+        Assert.Null(diff.OriginalText);
+        Assert.Null(diff.ModifiedText);
     }
 
     [Fact]
@@ -269,9 +327,8 @@ public sealed class AzureDevOpsClientTests
 
         var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.txt", CancellationToken.None);
 
-        Assert.Equal(["remove", "add"], diff.Lines.Select(line => line.Kind));
-        Assert.True(diff.Lines[0].HasNewline);
-        Assert.False(diff.Lines[1].HasNewline);
+        Assert.Equal("line\n", diff.OriginalText);
+        Assert.Equal("line", diff.ModifiedText);
     }
 
     private static AzureDevOpsClient Client(HttpClient http)

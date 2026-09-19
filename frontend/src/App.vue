@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef, type Component } from 'vue'
 import { api, type FileDiff, type Project, type Repository, type PullRequestDetails, type PullRequestSummary } from './api'
 
 const projects = ref<Project[]>([])
@@ -17,6 +17,7 @@ const diffError = ref('')
 const fileSearch = ref('')
 const reviewedFiles = ref<Record<string, string[]>>({})
 const diffPanel = ref<HTMLElement | null>(null)
+const monacoComponent = shallowRef<Component | null>(null)
 let requestId = 0
 let diffRequestId = 0
 
@@ -50,6 +51,7 @@ function resetDiff() {
   ++diffRequestId
   selectedFilePath.value = ''
   fileDiff.value = null
+  monacoComponent.value = null
   diffLoading.value = false
   diffError.value = ''
   fileSearch.value = ''
@@ -140,6 +142,7 @@ async function openFile(path: string) {
   const pullRequestId = details.value.id
   selectedFilePath.value = path
   fileDiff.value = null
+  monacoComponent.value = null
   diffError.value = ''
   diffLoading.value = true
   await nextTick()
@@ -149,7 +152,13 @@ async function openFile(path: string) {
   }
   try {
     const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path)
-    if (current === diffRequestId) fileDiff.value = result
+    if (current !== diffRequestId) return
+    if (result.kind === 'text') {
+      const component = await import('./MonacoDiff.vue')
+      if (current !== diffRequestId) return
+      monacoComponent.value = component.default
+    }
+    fileDiff.value = result
   } catch (cause) {
     if (current === diffRequestId) diffError.value = message(cause)
   } finally {
@@ -270,16 +279,8 @@ onMounted(loadProjects)
                 <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
                 <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
                 <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
-                <p v-else-if="fileDiff?.lines.length === 0" class="diff-message muted">Brak zmian w treści pliku.</p>
-                <div v-else-if="fileDiff" class="diff-scroll" role="region" aria-label="Zmiany w pliku" tabindex="0">
-                  <div v-for="(line, index) in fileDiff.lines" :key="index" class="diff-line" :class="`diff-${line.kind}`">
-                    <span class="line-number">{{ line.oldLine ?? '' }}</span>
-                    <span class="line-number">{{ line.newLine ?? '' }}</span>
-                    <span class="line-sign">{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' ' }}</span>
-                    <span class="line-text">{{ line.text }}</span>
-                    <span v-if="!line.hasNewline" class="no-newline">brak końcowego znaku nowej linii</span>
-                  </div>
-                </div>
+                <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" :path="fileDiff.path"
+                  :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText" />
               </template>
               <p v-else class="diff-placeholder">Wybierz plik z listy, aby zobaczyć jego diff.</p>
             </div>

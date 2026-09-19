@@ -88,14 +88,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .review-check input { width: 16px; height: 16px; margin: 0; accent-color: #087f77; }
 .diff-placeholder { margin: auto; padding: 20px; color: #647386; text-align: center; }
 .diff-message { margin: 16px; }
-.diff-scroll { flex: 1; min-height: 0; overflow: auto; font: 12px/1.5 Consolas, 'Courier New', monospace; }
-.diff-line { display: flex; min-width: max-content; }
-.diff-add { background: #e6f5eb; }
-.diff-remove { background: #fcebea; }
-.line-number { flex: none; width: 42px; padding: 0 6px; color: #789; text-align: right; user-select: none; }
-.line-sign { flex: none; width: 20px; text-align: center; user-select: none; }
-.line-text { padding-right: 20px; white-space: pre; }
-.no-newline { padding: 0 12px; color: #647386; font-family: Inter, 'Segoe UI', Arial, sans-serif; font-style: italic; }
+.monaco-diff { flex: 1; min-width: 0; min-height: 0; }
 .details-section .muted { margin-bottom: 0; }
 @media (max-width: 900px) {
   .file-review { display: flex; flex-direction: column; height: auto; }

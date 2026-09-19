@@ -109,13 +109,14 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         var oldPath = file.OriginalPath ?? file.Path;
         var oldFile = isAdded ? new FileContent("text", "") :
             await GetFileContentAsync(repositoryPath, oldPath, baseCommit, ct);
-        if (oldFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, oldFile.Kind, []);
+        if (oldFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, oldFile.Kind, null, null);
         var newFile = isDeleted ? new FileContent("text", "") :
             await GetFileContentAsync(repositoryPath, file.Path, sourceCommit, ct);
-        if (newFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, newFile.Kind, []);
+        if (newFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, newFile.Kind, null, null);
 
-        var lines = LineDiff.Compare(oldFile.Text, newFile.Text);
-        return new FileDiff(file.Path, file.OriginalPath, lines is null ? "tooLarge" : "text", lines ?? []);
+        if (TextLineLimit.Exceeded(oldFile.Text, newFile.Text))
+            return new FileDiff(file.Path, file.OriginalPath, "tooLarge", null, null);
+        return new FileDiff(file.Path, file.OriginalPath, "text", oldFile.Text, newFile.Text);
     }
 
     private static string CommitId(JsonElement iteration, string property)

@@ -582,7 +582,7 @@ Stan: ukończony jest pierwszy vertical slice (Azure DevOps → PR → lista zmi
 * [x] lista aktywnych PR
 * [x] szczegóły PR
 * [x] changed files (lista ścieżek i typów zmian)
-* [x] diff jednego wybranego pliku tekstowego na żądanie (pliki binarne i zbyt duże pokazują komunikat; integracja nie jest jeszcze potwierdzona na prawdziwym Azure DevOps)
+* [x] diff jednego wybranego pliku tekstowego na żądanie w Monaco Diff Editor, tylko do odczytu, z kolorowaniem składni (pliki binarne i zbyt duże pokazują komunikat; integracja nie jest jeszcze potwierdzona na prawdziwym Azure DevOps)
 
 ### Local repository
 

@@ -5,8 +5,7 @@ public record Repository(string Id, string Name);
 public record Reviewer(string Name, int Vote);
 public record WorkItem(string Id, string Url);
 public record ChangedFile(string Path, string ChangeType, string? OriginalPath);
-public record DiffLine(string Kind, int? OldLine, int? NewLine, string Text, bool HasNewline);
-public record FileDiff(string Path, string? OriginalPath, string Kind, IReadOnlyList<DiffLine> Lines);
+public record FileDiff(string Path, string? OriginalPath, string Kind, string? OriginalText, string? ModifiedText);
 
 public record PullRequestSummary(
     int Id,
