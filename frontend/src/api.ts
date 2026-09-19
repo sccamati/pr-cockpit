@@ -2,6 +2,7 @@ export interface Project { id: string; name: string }
 export interface Repository { id: string; name: string }
 export interface Reviewer { name: string; vote: number }
 export interface WorkItem { id: string; url: string }
+export interface ChangedFile { path: string; changeType: string; originalPath: string | null }
 
 export interface PullRequestSummary {
   id: number
@@ -18,6 +19,7 @@ export interface PullRequestDetails extends PullRequestSummary {
   targetBranch: string
   reviewers: Reviewer[]
   changedFilesCount: number
+  changedFiles: ChangedFile[]
   commitsCount: number
   workItems: WorkItem[]
 }

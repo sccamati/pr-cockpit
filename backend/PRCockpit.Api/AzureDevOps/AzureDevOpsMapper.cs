@@ -19,7 +19,8 @@ public static class AzureDevOpsMapper
         RequiredDate(value, "creationDate"));
 
     public static PullRequestDetails Details(
-        JsonElement value, int changedFilesCount, int commitsCount, IReadOnlyList<WorkItem> workItems)
+        JsonElement value, IReadOnlyList<ChangedFile> changedFiles, int commitsCount,
+        IReadOnlyList<WorkItem> workItems)
     {
         var reviewers = value.TryGetProperty("reviewers", out var array)
             ? array.EnumerateArray().Select(item => new Reviewer(
@@ -37,10 +38,16 @@ public static class AzureDevOpsMapper
             RequiredString(value, "status"),
             RequiredDate(value, "creationDate"),
             reviewers,
-            changedFilesCount,
+            changedFiles.Count,
+            changedFiles,
             commitsCount,
             workItems);
     }
+
+    public static ChangedFile ChangedFile(JsonElement value) => new(
+        RequiredString(value.GetProperty("item"), "path"),
+        RequiredString(value, "changeType"),
+        value.TryGetProperty("originalPath", out var originalPath) ? originalPath.GetString() : null);
 
     public static WorkItem WorkItem(JsonElement value) => new(
         RequiredString(value, "id"), RequiredString(value, "url"));

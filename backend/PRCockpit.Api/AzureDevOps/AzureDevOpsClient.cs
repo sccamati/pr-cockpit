@@ -58,33 +58,42 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         using (pr)
         {
             var (iterations, _) = await GetAsync($"{path}/iterations?{ApiVersion}", ct);
-            int changedFiles;
+            int lastId;
             using (iterations)
             {
-                var lastId = Values(iterations.RootElement).EnumerateArray()
+                lastId = Values(iterations.RootElement).EnumerateArray()
                     .Select(item => item.GetProperty("id").GetInt32())
                     .DefaultIfEmpty(0).Max();
-                changedFiles = lastId == 0 ? 0 : await CountChangedFilesAsync(path, lastId, ct);
             }
+            var changedFiles = lastId == 0
+                ? []
+                : await GetChangedFilesAsync(path, lastId, ct);
             var commitsCount = await CountCommitsAsync(path, ct);
             var workItems = await GetWorkItemsAsync(path, ct);
             return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commitsCount, workItems);
         }
     }
 
-    private async Task<int> CountChangedFilesAsync(string path, int iterationId, CancellationToken ct)
+    private async Task<IReadOnlyList<ChangedFile>> GetChangedFilesAsync(
+        string path, int iterationId, CancellationToken ct)
     {
-        var count = 0;
+        var files = new List<ChangedFile>();
         var skip = 0;
         while (true)
         {
             var (json, _) = await GetAsync($"{path}/iterations/{iterationId}/changes?$top=2000&$skip={skip}&$compareTo=0&{ApiVersion}", ct);
             using (json)
             {
-                count += json.RootElement.GetProperty("changeEntries").GetArrayLength();
+                foreach (var entry in json.RootElement.GetProperty("changeEntries").EnumerateArray())
+                {
+                    var item = entry.GetProperty("item");
+                    if (item.TryGetProperty("isFolder", out var isFolder) && isFolder.GetBoolean())
+                        continue;
+                    files.Add(AzureDevOpsMapper.ChangedFile(entry));
+                }
                 var nextSkip = json.RootElement.TryGetProperty("nextSkip", out var next)
                     ? next.GetInt32() : 0;
-                if (nextSkip <= skip) return count;
+                if (nextSkip <= skip) return files;
                 skip = nextSkip;
             }
         }

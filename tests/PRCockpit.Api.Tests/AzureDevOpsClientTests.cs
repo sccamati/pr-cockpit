@@ -27,7 +27,8 @@ public sealed class AzureDevOpsClientTests
             """);
 
         var summary = AzureDevOpsMapper.Summary(json.RootElement);
-        var details = AzureDevOpsMapper.Details(json.RootElement, 7, 2,
+        var details = AzureDevOpsMapper.Details(json.RootElement,
+            [new ChangedFile("/src/invoices.cs", "edit", null)], 2,
             [new WorkItem("45", "https://example.test/45")]);
 
         Assert.Equal(123, summary.Id);
@@ -35,14 +36,15 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal("Billing", summary.Repository);
         Assert.Equal("feature/invoices", details.SourceBranch);
         Assert.Equal("main", details.TargetBranch);
-        Assert.Equal(7, details.ChangedFilesCount);
+        Assert.Equal(1, details.ChangedFilesCount);
+        Assert.Equal("/src/invoices.cs", Assert.Single(details.ChangedFiles).Path);
         Assert.Equal(2, details.CommitsCount);
         Assert.Equal(10, Assert.Single(details.Reviewers).Vote);
         Assert.Equal("45", Assert.Single(details.WorkItems).Id);
     }
 
     [Fact]
-    public async Task LoadsDetailsAndCountsFilesAcrossChangePages()
+    public async Task LoadsChangedFilesAcrossChangePages()
     {
         var visited = new List<string>();
         using var http = new HttpClient(new StubHandler(request =>
@@ -56,9 +58,15 @@ public sealed class AzureDevOpsClientTests
             var body = path switch
             {
                 var p when p.Contains("/iterations/2/changes") && p.Contains("$skip=0") =>
-                    """{"changeEntries":[{},{}],"nextSkip":2}""",
-                var p when p.Contains("/iterations/2/changes") && p.Contains("$skip=2") =>
-                    """{"changeEntries":[{}],"nextSkip":0}""",
+                    """
+                    {"changeEntries":[
+                      {"item":{"path":"/src/new.cs"},"changeType":"add"},
+                      {"item":{"path":"/src/renamed.cs"},"originalPath":"/src/old.cs","changeType":"rename"},
+                      {"item":{"path":"/src","isFolder":true},"changeType":"edit"}
+                    ],"nextSkip":3}
+                    """,
+                var p when p.Contains("/iterations/2/changes") && p.Contains("$skip=3") =>
+                    """{"changeEntries":[{"item":{"path":"/src/obsolete.cs"},"changeType":"delete"}],"nextSkip":0}""",
                 var p when p.Contains("/iterations?") =>
                     """{"value":[{"id":1},{"id":2}]}""",
                 var p when p.Contains("/commits?") =>
@@ -87,6 +95,11 @@ public sealed class AzureDevOpsClientTests
             .GetPullRequestAsync("Project A", "repository-id", 123, CancellationToken.None);
 
         Assert.Equal(3, details.ChangedFilesCount);
+        Assert.Equal(["/src/new.cs", "/src/renamed.cs", "/src/obsolete.cs"],
+            details.ChangedFiles.Select(file => file.Path));
+        Assert.Equal("add", details.ChangedFiles[0].ChangeType);
+        Assert.Equal("/src/old.cs", details.ChangedFiles[1].OriginalPath);
+        Assert.Equal("delete", details.ChangedFiles[2].ChangeType);
         Assert.Equal(2, details.CommitsCount);
         Assert.Equal("78", Assert.Single(details.WorkItems).Id);
         Assert.Contains(visited, path => path.Contains("Project%20A"));

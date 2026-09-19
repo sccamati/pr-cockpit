@@ -4,6 +4,7 @@ public record Project(string Id, string Name);
 public record Repository(string Id, string Name);
 public record Reviewer(string Name, int Vote);
 public record WorkItem(string Id, string Url);
+public record ChangedFile(string Path, string ChangeType, string? OriginalPath);
 
 public record PullRequestSummary(
     int Id,
@@ -25,6 +26,7 @@ public record PullRequestDetails(
     DateTimeOffset CreatedAt,
     IReadOnlyList<Reviewer> Reviewers,
     int ChangedFilesCount,
+    IReadOnlyList<ChangedFile> ChangedFiles,
     int CommitsCount,
     IReadOnlyList<WorkItem> WorkItems);
 

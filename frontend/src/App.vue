@@ -105,6 +105,17 @@ function reviewerVote(vote: number): string {
   return 'Bez decyzji'
 }
 
+const changeLabels: Record<string, string> = {
+  add: 'Dodano',
+  edit: 'Zmieniono',
+  delete: 'Usunięto',
+  rename: 'Przeniesiono',
+}
+
+function changeLabel(changeType: string): string {
+  return changeLabels[changeType.toLowerCase()] ?? changeType
+}
+
 onMounted(loadProjects)
 </script>
 
@@ -161,6 +172,16 @@ onMounted(loadProjects)
           <div><span>Commity</span><strong>{{ details.commitsCount }}</strong></div>
         </div>
         <div class="details-section"><h3>Opis</h3><p class="description">{{ details.description || 'Brak opisu.' }}</p></div>
+        <div class="details-section"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3>
+          <p v-if="details.changedFiles.length === 0" class="muted">Brak zmienionych plików.</p>
+          <ul v-else class="changed-files">
+            <li v-for="(file, index) in details.changedFiles" :key="index">
+              <span class="file-path">{{ file.path }}</span>
+              <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
+              <span class="change-type">{{ changeLabel(file.changeType) }}</span>
+            </li>
+          </ul>
+        </div>
         <div class="details-section"><h3>Reviewerzy</h3>
           <p v-if="details.reviewers.length === 0" class="muted">Brak reviewerów.</p>
           <ul v-else class="plain-list"><li v-for="reviewer in details.reviewers" :key="reviewer.name">{{ reviewer.name }} <span class="muted">· {{ reviewerVote(reviewer.vote) }}</span></li></ul>
