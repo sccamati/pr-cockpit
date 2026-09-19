@@ -572,7 +572,7 @@ Ready
 
 Pierwsza wersja musi obsługiwać tylko:
 
-Stan: ukończony jest pierwszy vertical slice (Azure DevOps → PR → lista zmienionych plików), a nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję sprawdzoną lokalnie lub testami z atrapą HTTP. Integracja nie została jeszcze sprawdzona na rzeczywistej organizacji Azure DevOps.
+Stan: ukończony jest pierwszy vertical slice (Azure DevOps → PR → lista zmienionych plików), a nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu i listy plików na rzeczywistej organizacji Azure DevOps; pozostałe ścieżki integracji są sprawdzane lokalnie lub testami z atrapą HTTP.
 
 ### Azure DevOps
 
@@ -822,9 +822,9 @@ Architecture / Project Memory
 MVP jest gotowe, jeżeli mogę:
 
 1. [x] uruchomić aplikację,
-2. [ ] wybrać swój projekt Azure DevOps (UI istnieje; wymaga testu na prawdziwym koncie),
-3. [ ] zobaczyć aktywne PR-y (implementacja istnieje; wymaga testu na prawdziwym koncie),
-4. [ ] otworzyć PR (implementacja istnieje; wymaga testu na prawdziwym koncie),
+2. [x] wybrać swój projekt Azure DevOps,
+3. [x] zobaczyć aktywne PR-y,
+4. [x] otworzyć PR,
 5. [ ] uruchomić analizę,
 6. [ ] zobaczyć krótkie podsumowanie,
 7. [ ] zobaczyć główny flow,
