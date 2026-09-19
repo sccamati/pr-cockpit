@@ -572,14 +572,17 @@ Ready
 
 Pierwsza wersja musi obsługiwać tylko:
 
+Stan: ukończony jest pierwszy vertical slice (Azure DevOps → PR → lista zmienionych plików), a nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję sprawdzoną lokalnie lub testami z atrapą HTTP. Integracja nie została jeszcze sprawdzona na rzeczywistej organizacji Azure DevOps.
+
 ### Azure DevOps
 
-* [ ] konfiguracja organizacji
-* [ ] wybór projektu
-* [ ] wybór repository
-* [ ] lista aktywnych PR
-* [ ] szczegóły PR
-* [ ] changed files / diff
+* [x] konfiguracja organizacji (User Secrets lub zmienne środowiskowe)
+* [x] wybór projektu
+* [x] wybór repository
+* [x] lista aktywnych PR
+* [x] szczegóły PR
+* [x] changed files (lista ścieżek i typów zmian)
+* [ ] diff
 
 ### Local repository
 
@@ -599,8 +602,8 @@ Pierwsza wersja musi obsługiwać tylko:
 
 ### UI
 
-* [ ] Dashboard PR
-* [ ] PR Overview
+* [ ] Dashboard PR (lista PR działa; brak postępu checklisty pokazanego w sekcji 5)
+* [ ] PR Overview (podstawowe szczegóły są; brak affected areas i risk z sekcji 5)
 * [ ] Understand
 * [ ] Quality
 * [ ] Checklist
@@ -640,24 +643,24 @@ Najpierw potwierdzamy, że podstawowy workflow daje wartość.
 
 ## EPIC 1 — Foundation
 
-* [ ] Utworzyć solution .NET
-* [ ] Utworzyć Vue frontend
+* [x] Utworzyć solution .NET
+* [x] Utworzyć Vue frontend
 * [ ] Dodać SQLite
-* [ ] Przygotować podstawowy layout
-* [ ] Przygotować konfigurację aplikacji
+* [x] Przygotować podstawowy layout
+* [x] Przygotować konfigurację aplikacji
 
 ---
 
 ## EPIC 2 — Azure DevOps
 
-* [ ] Klient Azure DevOps
-* [ ] Pobieranie projektów
-* [ ] Pobieranie repositories
-* [ ] Pobieranie aktywnych PR
-* [ ] Pobieranie szczegółów PR
-* [ ] Pobieranie changed files
+* [x] Klient Azure DevOps
+* [x] Pobieranie projektów
+* [x] Pobieranie repositories
+* [x] Pobieranie aktywnych PR
+* [x] Pobieranie szczegółów PR
+* [x] Pobieranie changed files
 * [ ] Pobieranie diffu
-* [ ] Pobieranie linked Work Item
+* [x] Pobieranie linked Work Item (powiązanie i ID; bez pełnych danych Work Item)
 
 ### Wynik
 
@@ -818,17 +821,17 @@ Architecture / Project Memory
 
 MVP jest gotowe, jeżeli mogę:
 
-1. uruchomić aplikację,
-2. wybrać swój projekt Azure DevOps,
-3. zobaczyć aktywne PR-y,
-4. otworzyć PR,
-5. uruchomić analizę,
-6. zobaczyć krótkie podsumowanie,
-7. zobaczyć główny flow,
-8. dostać listę najważniejszych plików,
-9. dostać sensowne Quality Findings,
-10. odklikać checklistę,
-11. wrócić później i nadal widzieć wynik.
+1. [x] uruchomić aplikację,
+2. [ ] wybrać swój projekt Azure DevOps (UI istnieje; wymaga testu na prawdziwym koncie),
+3. [ ] zobaczyć aktywne PR-y (implementacja istnieje; wymaga testu na prawdziwym koncie),
+4. [ ] otworzyć PR (implementacja istnieje; wymaga testu na prawdziwym koncie),
+5. [ ] uruchomić analizę,
+6. [ ] zobaczyć krótkie podsumowanie,
+7. [ ] zobaczyć główny flow,
+8. [ ] dostać listę najważniejszych plików,
+9. [ ] dostać sensowne Quality Findings,
+10. [ ] odklikać checklistę,
+11. [ ] wrócić później i nadal widzieć wynik.
 
 ---
 
