@@ -572,7 +572,7 @@ Ready
 
 Pierwsza wersja musi obsługiwać tylko:
 
-Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików → diff w Monaco), ale nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu, listy plików i diffu na rzeczywistej organizacji Azure DevOps. Lista commitów i nowe sterowanie review są zaimplementowane, lecz czekają na potwierdzenie w aplikacji.
+Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików → diff w Monaco), ale nie całe MVP z tej sekcji. `[x]` oznacza zaimplementowaną funkcję. Użytkownik potwierdził działanie listy PR, widoku szczegółów, opisu, listy plików i diffu na rzeczywistej organizacji Azure DevOps. Lista commitów i nowe sterowanie review przeszły testy interakcji z atrapą API, lecz czekają na potwierdzenie na rzeczywistym PR i w wąskim układzie; szczegóły są w [docs/BACKLOG.md](docs/BACKLOG.md).
 
 ### Azure DevOps
 

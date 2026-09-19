@@ -85,8 +85,9 @@ async function loadProjects() {
   loading.value = true
   error.value = ''
   try {
-    projects.value = await api.projects()
+    const result = await api.projects()
     if (current !== requestId) return
+    projects.value = result
     if (projects.value.length === 1) {
       projectId.value = projects.value[0]!.id
       await loadRepositories()
@@ -131,7 +132,8 @@ async function loadPullRequests() {
   if (!repositoryId.value) return
   loading.value = true
   try {
-    pullRequests.value = await api.pullRequests(projectId.value, repositoryId.value)
+    const result = await api.pullRequests(projectId.value, repositoryId.value)
+    if (current === requestId) pullRequests.value = result
   } catch (cause) {
     if (current === requestId) error.value = message(cause)
   } finally {

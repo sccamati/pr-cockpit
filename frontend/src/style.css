@@ -50,7 +50,8 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .notice.error { border-color: #eec7c3; background: #fff1ef; color: #9d3429; }
 .details { padding: 30px; }
 .details-heading { padding-bottom: 24px; border-bottom: 1px solid #e9eef2; }
-.details-heading h2 { font-size: 26px; }
+.details-heading > div { min-width: 0; }
+.details-heading h2 { overflow-wrap: anywhere; font-size: 26px; }
 .metadata { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; padding: 28px 0; }
 .metadata div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .metadata span { color: #647386; font-size: 12px; }

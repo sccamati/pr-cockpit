@@ -47,10 +47,11 @@ dotnet build PRCockpit.slnx
 dotnet test PRCockpit.slnx
 cd frontend
 npm ci
+npm test
 npm run build
 ```
 
-Backend tests use HTTP fakes and do not require an Azure DevOps account or PAT.
+Backend tests use HTTP fakes and do not require an Azure DevOps account or PAT. Frontend interaction tests use a simulated DOM and mocked API responses; they do not replace checking a real pull request or the layout in a browser.
 
 ## Project structure
 

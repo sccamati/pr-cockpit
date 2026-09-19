@@ -14,11 +14,11 @@ Status: użytkownik potwierdził działanie diffu na Azure DevOps. Nie przekaza�
 
 **Gotowe, gdy:** obie strony diffu odpowiadają zawartości PR, Monaco działa po zmianie pliku, układ jest czytelny na wąskim ekranie, a wynik weryfikacji jest zapisany tutaj. Przypadki niedostępne w testowanym PR trzeba oznaczyć jako niesprawdzone, nie jako zaliczone.
 
-## Wdrożone — do sprawdzenia w aplikacji
+## Wdrożone — do potwierdzenia na prawdziwym PR
 
 ### B-02 — Nawigacja po plikach do obejrzenia
 
-Status: zaimplementowane. Logika działa z wyszukiwaniem, build frontendu przechodzi; układ na wąskim ekranie wymaga wizualnego potwierdzenia.
+Status: zaimplementowane. Test interakcji frontendu potwierdza współdziałanie filtra z wyszukiwaniem, ręczne oznaczanie, przejście do kolejnego pliku bez automatycznego oznaczenia oraz komunikat po zakończeniu. Układ na wąskim ekranie wymaga wizualnego potwierdzenia.
 
 **Dlaczego:** przy dużym PR licznik „Obejrzałem” pomaga, ale nadal trzeba ręcznie szukać kolejnego nieprzeczytanego pliku.
 
@@ -28,13 +28,31 @@ Status: zaimplementowane. Logika działa z wyszukiwaniem, build frontendu przech
 
 ### B-03 — Kontekst commitów w widoku PR
 
-Status: zaimplementowane. Stronicowanie i pusta lista są pokryte testami HTTP; lista commitów wymaga potwierdzenia na rzeczywistym PR.
+Status: zaimplementowane. Stronicowanie i pusta lista są pokryte testami HTTP, a renderowanie tytułu i autora testem interakcji frontendu. Lista commitów wymaga potwierdzenia na rzeczywistym PR.
 
 **Dlaczego:** widok pokazuje dziś tylko liczbę commitów. Ich tytuły i autorzy pomagają zrozumieć kolejność oraz zamiar zmian bez opuszczania PR Cockpit.
 
 **Zakres:** rozwinąć istniejące pobieranie commitów o podstawowe metadane i pokazać listę w panelu PR. Obsłużyć stronicowanie oraz pustą listę, bez pobierania pełnej zawartości repozytorium.
 
 **Gotowe, gdy:** lista odpowiada commitom bieżącego PR, działa dla więcej niż jednej strony wyników i ma testy klienta HTTP bez połączenia z Azure DevOps.
+
+## Wynik weryfikacji 2026-09-19
+
+- `dotnet test PRCockpit.slnx`: 16 testów zaliczonych. Obejmują między innymi dwie strony commitów, pustą listę oraz przypadki diffu z atrapą Azure DevOps.
+- `npm test`: 2 testy interakcji zaliczone. Obejmują wyświetlenie commitów, filtr nieobejrzanych z wyszukiwaniem, nawigację, ręczne oznaczanie i ochronę przed spóźnioną odpowiedzią po zmianie repozytorium. `npm run build` przechodzi.
+- Poprawiono nadpisywanie listy PR przez spóźnioną odpowiedź ze starego repozytorium i zawijanie długiego tytułu PR w wąskim układzie.
+- **Niesprawdzone w tej sesji:** B-02 i B-03 na rzeczywistym PR oraz wygląd przy około 768 px i 375 px. Środowisko nie ma konfiguracji Azure DevOps (organizacji i PAT), a przeglądarka aplikacji jest niedostępna. Testy z atrapą i przegląd kodu CSS nie potwierdzają wyglądu ani zgodności commitów z prawdziwym PR. Nie ma też potwierdzenia paginacji commitów na realnym PR przekraczającym jedną stronę.
+- Do zamknięcia B-02/B-03: otworzyć rzeczywisty PR, porównać listę commitów z Azure DevOps, sprawdzić wyszukiwanie i filtr po ręcznym oznaczeniu, przejść przez ostatni plik, a następnie obejrzeć panel przy 768 px i 375 px. Dla B-03 sprawdzić PR z więcej niż 1000 commitów, jeżeli taki jest dostępny; w przeciwnym razie pozostawić ten przypadek jako niepotwierdzony na żywo.
+
+## Proponowany kolejny mały etap — do decyzji
+
+### B-04 — Ręczna ścieżka kluczowych plików
+
+**Dlaczego:** samo odznaczenie przeczytanych plików mówi o postępie review, ale nie tworzy krótkiej ścieżki prowadzącej przez kod. Wybór kluczowych plików pozwoli sprawdzić użyteczność tej części „Understand PR” przed decyzją o automatycznej analizie.
+
+**Zakres:** w widoku PR użytkownik może wskazać z listy zmian maksymalnie 10 kluczowych plików i ułożyć je w kolejności czytania. Osobny, krótki panel pokazuje wybrane ścieżki z możliwością otwarcia diffu i usunięcia pozycji. Wybór jest ręczny i istnieje tylko w pamięci karty, podobnie jak stan „Obejrzałem”. Nie proponujemy automatycznego rankingu, podsumowania ani głównego flow w tym etapie.
+
+**Gotowe, gdy:** można zbudować i zmienić kolejność listy 1–10 plików, każdy link otwiera właściwy diff, usunięty lub już nieobecny w PR plik nie zostaje na liście, a zwykły znacznik „Obejrzałem” działa niezależnie. Panel jest czytelny na wąskim ekranie; test interakcji obejmuje dodanie, zmianę kolejności, usunięcie i ponowne otwarcie pliku. Przed rozpoczęciem tego etapu wracamy do nierozstrzygniętych sprawdzeń B-02/B-03 na realnym PR i małym ekranie.
 
 ## Później — do osobnej decyzji
 
