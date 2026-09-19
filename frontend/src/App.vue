@@ -20,6 +20,7 @@ const summaryError = ref('')
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
 const reviewedFiles = ref<Record<string, string[]>>({})
+const criticalFiles = ref<Record<string, string[]>>({})
 const diffPanel = ref<HTMLElement | null>(null)
 const monacoComponent = shallowRef<Component | null>(null)
 let requestId = 0
@@ -34,6 +35,11 @@ const reviewedPaths = computed(() => {
   return (reviewedFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
 })
 const reviewedPathSet = computed(() => new Set(reviewedPaths.value))
+const criticalPaths = computed(() => {
+  const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
+  return (criticalFiles.value[currentPrKey.value] ?? []).filter(path => currentPaths.has(path))
+})
+const criticalPathSet = computed(() => new Set(criticalPaths.value))
 const matchingFiles = computed(() => {
   const search = fileSearch.value.trim().toLocaleLowerCase()
   return details.value?.changedFiles.filter(file =>
@@ -55,6 +61,36 @@ const nextUnreviewedPath = computed(() => {
 
 function isReviewed(path: string): boolean {
   return reviewedPathSet.value.has(path)
+}
+
+function isCritical(path: string): boolean {
+  return criticalPathSet.value.has(path)
+}
+
+function toggleCritical(path: string) {
+  if (!details.value?.changedFiles.some(file => file.path === path)) return
+  const selected = criticalPaths.value
+  if (selected.includes(path)) {
+    criticalFiles.value[currentPrKey.value] = selected.filter(item => item !== path)
+  } else if (selected.length < 10) {
+    criticalFiles.value[currentPrKey.value] = [...selected, path]
+  }
+}
+
+function moveCritical(path: string, offset: -1 | 1) {
+  const selected = [...criticalPaths.value]
+  const index = selected.indexOf(path)
+  const target = index + offset
+  if (index < 0 || target < 0 || target >= selected.length) return
+  const moved = selected[index]!
+  selected[index] = selected[target]!
+  selected[target] = moved
+  criticalFiles.value[currentPrKey.value] = selected
+}
+
+function openCriticalFile(path: string) {
+  void openFile(path)
+  diffPanel.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
 }
 
 function openNextUnreviewed() {
@@ -163,7 +199,10 @@ async function openPullRequest(id: number) {
   loading.value = true
   try {
     const result = await api.pullRequest(projectId.value, repositoryId.value, id)
-    if (current === requestId) details.value = result
+    if (current === requestId) {
+      details.value = result
+      criticalFiles.value[currentPrKey.value] = criticalPaths.value
+    }
   } catch (cause) {
     if (current === requestId) error.value = message(cause)
   } finally {
@@ -351,6 +390,20 @@ onMounted(loadProjects)
             </li>
           </ul>
         </div>
+        <div class="details-section critical-section">
+          <div class="critical-heading"><div><h3>Ścieżka kluczowych plików</h3><p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Wybór zostaje w tej karcie.</p></div><span>{{ criticalPaths.length }} / 10</span></div>
+          <p v-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian poniżej.</p>
+          <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
+            <li v-for="(path, index) in criticalPaths" :key="path">
+              <button class="critical-open" type="button" :title="path" @click="openCriticalFile(path)"><span class="critical-order">{{ index + 1 }}</span><span>{{ path }}</span></button>
+              <div class="critical-actions">
+                <button type="button" :disabled="index === 0" :aria-label="`Przesuń ${path} w górę`" @click="moveCritical(path, -1)">↑</button>
+                <button type="button" :disabled="index === criticalPaths.length - 1" :aria-label="`Przesuń ${path} w dół`" @click="moveCritical(path, 1)">↓</button>
+                <button type="button" :aria-label="`Usuń ${path} ze ścieżki`" @click="toggleCritical(path)">Usuń</button>
+              </div>
+            </li>
+          </ol>
+        </div>
         <div class="details-section"><div class="file-review-heading"><h3>Zmienione pliki ({{ details.changedFilesCount }})</h3><span>{{ reviewedPaths.length }} / {{ details.changedFiles.length }} obejrzanych w tej sesji</span></div>
           <progress v-if="details.changedFiles.length" class="file-progress" :value="reviewedPaths.length" :max="details.changedFiles.length" aria-label="Postęp przeglądania plików" />
           <p v-if="details.changedFiles.length && remainingCount === 0" class="review-complete" role="status">Wszystkie pliki obejrzane.</p>
@@ -374,6 +427,9 @@ onMounted(loadProjects)
                     <span v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</span>
                     <span class="file-badges"><span class="change-type">{{ changeLabel(file.changeType) }}</span><span v-if="isReviewed(file.path)" class="reviewed-badge">✓ Obejrzane</span></span>
                   </button>
+                  <button class="critical-toggle" :class="{ active: isCritical(file.path) }" type="button"
+                    :aria-pressed="isCritical(file.path)" :disabled="!isCritical(file.path) && criticalPaths.length >= 10"
+                    @click="toggleCritical(file.path)">{{ isCritical(file.path) ? '★ W ścieżce' : '+ Dodaj do ścieżki' }}</button>
                 </li>
               </ul>
             </div>

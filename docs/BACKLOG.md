@@ -66,9 +66,14 @@ Status: zaimplementowano endpoint POST, adapter procesu CLI, walidację wyniku i
 
 Do potwierdzenia na żywo: skonfigurować program CLI zgodny z protokołem z README, uruchomić Summary na rzeczywistym PR, porównać wynik z diffem i sprawdzić komunikat przy pominiętych plikach. Gdy CLI nie jest skonfigurowane, UI pokazuje błąd konfiguracji po kliknięciu.
 
+## Wdrożone — ręczna ścieżka czytania
+
+### B-06 — Kluczowe pliki wybrane przez użytkownika
+
+Status: zaimplementowane w widoku PR. Użytkownik może dodać do ścieżki maksymalnie 10 plików z listy zmian, zmienić ich kolejność, otworzyć diff i usunąć pozycję. Ścieżka działa niezależnie od znacznika „Obejrzałem” i pozostaje w pamięci bieżącej karty. Po ponownym pobraniu szczegółów PR z listy znikają pliki, których nie ma już w zmianach. Nie ma automatycznego rankingu ani zapisu w bazie.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
-- **Ręczna ścieżka kluczowych plików:** możliwość wskazania i ułożenia do 10 plików do czytania, niezależna od znacznika „Obejrzałem”.
 - **Quality, Architecture i checklisty:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
 - **Lokalne repozytorium i trwały zapis:** osobne etapy po Summary.
