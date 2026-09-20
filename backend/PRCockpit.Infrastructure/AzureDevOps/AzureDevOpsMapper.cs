@@ -82,8 +82,20 @@ public static class AzureDevOpsMapper
         var isSystem = comments.Length == 0 ||
             comments.All(comment => string.Equals(comment.CommentType, "system", StringComparison.OrdinalIgnoreCase));
 
+        // Azure DevOps nests this one deep, and it is absent on a thread that is not tied
+        // to a diff at all, so every hop is checked.
+        int? iteration = null;
+        if (value.TryGetProperty("pullRequestThreadContext", out var prContext) &&
+            prContext.ValueKind == JsonValueKind.Object &&
+            prContext.TryGetProperty("iterationContext", out var iterationContext) &&
+            iterationContext.ValueKind == JsonValueKind.Object)
+        {
+            iteration = OptionalInt(iterationContext, "secondComparingIteration") ??
+                OptionalInt(iterationContext, "firstComparingIteration");
+        }
+
         return new PrCommentThread(RequiredInt(value, "id"), OptionalString(value, "status"),
-            filePath, rightLine, leftLine, isSystem, comments);
+            filePath, rightLine, leftLine, isSystem, comments, iteration);
     }
 
     private static PrComment Comment(JsonElement value) => new(
@@ -99,6 +111,10 @@ public static class AzureDevOpsMapper
         context.TryGetProperty(name, out var position) && position.ValueKind == JsonValueKind.Object &&
         position.TryGetProperty("line", out var line) && line.ValueKind == JsonValueKind.Number
             ? line.GetInt32() : null;
+
+    private static int? OptionalInt(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.Number
+            ? property.GetInt32() : null;
 
     private static string? OptionalString(JsonElement value, string name) =>
         value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String

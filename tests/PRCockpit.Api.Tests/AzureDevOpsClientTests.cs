@@ -494,12 +494,164 @@ public sealed class AzureDevOpsClientTests
         Assert.False(thread.IsSystem);
     }
 
-    private static AzureDevOpsClient Client(HttpClient http)
+    [Fact]
+    public void ReadsTheIterationAThreadWasLeftOn()
+    {
+        using var json = JsonDocument.Parse("""
+            {"id":4,"status":"active",
+             "threadContext":{"filePath":"/src/a.cs","rightFileStart":{"line":3,"offset":1}},
+             "pullRequestThreadContext":{"iterationContext":{"firstComparingIteration":1,"secondComparingIteration":2}},
+             "comments":[{"id":1,"commentType":"text","content":"Uwaga."}]}
+            """);
+
+        // The second iteration is the one the comment was written against.
+        Assert.Equal(2, AzureDevOpsMapper.CommentThread(json.RootElement).IterationId);
+    }
+
+    [Fact]
+    public void LeavesTheIterationEmptyForAThreadWithNoDiffContext()
+    {
+        using var json = JsonDocument.Parse("""
+            {"id":4,"comments":[{"id":1,"commentType":"text","content":"Ogólna uwaga."}]}
+            """);
+
+        Assert.Null(AzureDevOpsMapper.CommentThread(json.RootElement).IterationId);
+    }
+
+    [Fact]
+    public async Task RefusesToWriteWhileTheSwitchIsOff()
+    {
+        using var http = new HttpClient(new StubHandler(_ =>
+            throw new InvalidOperationException("Nothing may leave the machine with comments switched off.")))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+        var client = Client(http);
+
+        foreach (var write in new Func<Task>[]
+        {
+            () => client.CreateCommentThreadAsync("proj", "repo", 1, new NewCommentThread("Uwaga.", null, null), CancellationToken.None),
+            () => client.ReplyToThreadAsync("proj", "repo", 1, 2, new NewComment("Odpowiedź."), CancellationToken.None),
+            () => client.SetThreadStatusAsync("proj", "repo", 1, 2, "fixed", CancellationToken.None),
+        })
+        {
+            var error = await Assert.ThrowsAsync<AzureDevOpsException>(write);
+            Assert.Equal(503, error.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task PostsANewThreadAnchoredOnTheRightHandSide()
+    {
+        HttpRequestMessage? sent = null;
+        string? body = null;
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            sent = request;
+            body = request.Content!.ReadAsStringAsync().Result;
+            return Json("""
+                {"id":9,"status":"active","threadContext":{"filePath":"/src/invoices.cs","rightFileStart":{"line":42,"offset":1}},
+                 "comments":[{"id":1,"author":{"displayName":"Ja"},"content":"Uwaga.","commentType":"text"}]}
+                """);
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var thread = await Client(http, allowComments: true).CreateCommentThreadAsync(
+            "proj", "repo", 123, new NewCommentThread("  Uwaga.  ", "/src/invoices.cs", 42), CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Post, sent!.Method);
+        Assert.Contains("\"line\":42", body);
+        Assert.Contains("\"offset\":1", body);
+        Assert.DoesNotContain("leftFileStart", body);
+        Assert.Contains("\"content\":\"Uwaga.\"", body);   // trimmed before it is sent
+        Assert.Equal(9, thread.Id);
+        Assert.Equal(42, thread.RightLine);
+    }
+
+    [Fact]
+    public async Task PatchesAThreadStatusAsANumberAndReadsItBackAsAName()
+    {
+        string? body = null;
+        HttpMethod? method = null;
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            method = request.Method;
+            body = request.Content!.ReadAsStringAsync().Result;
+            return Json("""{"id":9,"status":"fixed","comments":[{"id":1,"commentType":"text","content":"Uwaga."}]}""");
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var thread = await Client(http, allowComments: true)
+            .SetThreadStatusAsync("proj", "repo", 123, 9, "fixed", CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Patch, method);
+        Assert.Contains("\"status\":2", body);
+        Assert.Equal("fixed", thread.Status);
+    }
+
+    [Fact]
+    public async Task RejectsAnUnknownStatusAndAnEmptyComment()
+    {
+        using var http = new HttpClient(new StubHandler(_ =>
+            throw new InvalidOperationException("Invalid input must not reach Azure DevOps.")))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+        var client = Client(http, allowComments: true);
+
+        Assert.Equal(400, (await Assert.ThrowsAsync<AzureDevOpsException>(() => client
+            .SetThreadStatusAsync("proj", "repo", 1, 2, "resolved", CancellationToken.None))).StatusCode);
+        Assert.Equal(400, (await Assert.ThrowsAsync<AzureDevOpsException>(() => client
+            .CreateCommentThreadAsync("proj", "repo", 1, new NewCommentThread("   ", null, null), CancellationToken.None))).StatusCode);
+    }
+
+    // A PAT without the threads scope is our configuration fault, not an Azure DevOps
+    // outage, so a write must say so by name instead of returning a generic 502.
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden, 503)]
+    [InlineData(HttpStatusCode.BadRequest, 400)]
+    [InlineData(HttpStatusCode.Conflict, 409)]
+    public async Task MapsWriteFailuresDifferentlyFromReadFailures(HttpStatusCode returned, int expected)
+    {
+        using var http = new HttpClient(new StubHandler(_ => new HttpResponseMessage(returned)))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var error = await Assert.ThrowsAsync<AzureDevOpsException>(() => Client(http, allowComments: true)
+            .CreateCommentThreadAsync("proj", "repo", 1, new NewCommentThread("Uwaga.", null, null), CancellationToken.None));
+
+        Assert.Equal(expected, error.StatusCode);
+        if (expected == 503) Assert.Contains("PR threads (read & write)", error.Message);
+    }
+
+    // The regression guard for stage 4B: unlocking writes must not turn any read into one.
+    [Fact]
+    public async Task EveryReadPathStillSendsGet()
+    {
+        var methods = new List<HttpMethod>();
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            methods.Add(request.Method);
+            Assert.Null(request.Content);
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations") && !path.Contains("/changes")) return Iteration();
+            if (path.Contains("/changes")) return Json("""{"changeEntries":[],"nextSkip":0}""");
+            if (path.Contains("/threads")) return Json("""{"value":[]}""");
+            return Json("""{"value":[]}""");
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+        var client = Client(http);
+
+        await client.GetProjectsAsync(CancellationToken.None);
+        await client.GetRepositoriesAsync("proj", CancellationToken.None);
+        await client.GetCommentThreadsAsync("proj", "repo", 123, CancellationToken.None);
+
+        Assert.NotEmpty(methods);
+        Assert.All(methods, method => Assert.Equal(HttpMethod.Get, method));
+    }
+
+    private static AzureDevOpsClient Client(HttpClient http, bool allowComments = false)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["AzureDevOps:Organization"] = "example",
-            ["AzureDevOps:Pat"] = "test-pat"
+            ["AzureDevOps:Pat"] = "test-pat",
+            ["AzureDevOps:AllowComments"] = allowComments ? "true" : "false"
         }).Build();
         return new AzureDevOpsClient(http, config);
     }

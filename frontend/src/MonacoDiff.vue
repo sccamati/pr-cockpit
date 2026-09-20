@@ -14,7 +14,10 @@ const props = defineProps<{
   originalText: string
   modifiedText: string
   sideBySide?: boolean
+  // Lines of this file that already carry a comment thread, as Azure DevOps numbers them.
+  commentLines?: number[]
 }>()
+const emit = defineEmits<{ openLine: [line: number] }>()
 const container = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneDiffEditor | null = null
 let originalModel: monaco.editor.ITextModel | null = null
@@ -24,6 +27,8 @@ let hoverRegistration: monaco.IDisposable | null = null
 let semanticRegistration: monaco.IDisposable | null = null
 let hoverAbort: AbortController | null = null
 let firstDiffListener: monaco.IDisposable | null = null
+let glyphListener: monaco.IDisposable | null = null
+let glyphs: monaco.editor.IEditorDecorationsCollection | null = null
 
 const semanticTokenTypes = [
   'namespace', 'class', 'interface', 'struct', 'enum', 'delegate', 'typeParameter',
@@ -190,6 +195,7 @@ onMounted(() => {
     renderWhitespace: 'selection',
     // The gutter menu only offers revert/stage, which a read-only viewer cannot do.
     renderGutterMenu: false,
+    glyphMargin: true,
     // ponytail: experimental by name — first thing to drop if moved blocks render oddly.
     experimental: { showMoves: true },
     // Lets the page keep scrolling once the editor reaches its end (stacked layout).
@@ -208,18 +214,47 @@ onMounted(() => {
     firstDiffListener = null
     editor?.revealFirstDiff?.()
   })
+  glyphListener = editor.getModifiedEditor().onMouseDown(event => {
+    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return
+    const line = event.target.position?.lineNumber
+    if (line) emit('openLine', line)
+  })
+  refreshGlyphs()
   if (language === 'csharp' || originalLanguage === 'csharp') void loadCSharpHovers()
 })
+
+watch(() => props.commentLines, refreshGlyphs, { deep: true })
 
 watch(() => props.sideBySide, value => editor?.updateOptions({ renderSideBySide: value ?? false }))
 
 defineExpose({
   goToDiff: (target: 'next' | 'previous') => editor?.goToDiff(target),
   focusEditor: () => editor?.getModifiedEditor().focus(),
+  // Anchoring is always right-hand side, so the cursor line of the modified editor is the
+  // line a new comment gets. The cursor works even though the editor is read-only.
+  cursorLine: () => editor?.getModifiedEditor().getPosition()?.lineNumber ?? null,
 })
+
+// Always the modified editor. With renderSideBySide off, deleted lines are view zones with
+// no addressable position, so the right-hand side is the only side a marker can live on.
+function refreshGlyphs() {
+  if (!editor) return
+  const lines = props.commentLines ?? []
+  glyphs ??= editor.getModifiedEditor().createDecorationsCollection()
+  glyphs.set(lines.map(line => ({
+    range: new monaco.Range(line, 1, line, 1),
+    options: {
+      glyphMarginClassName: 'comment-glyph',
+      glyphMarginHoverMessage: { value: 'Komentarz w tej linii' },
+      stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    },
+  })))
+}
 
 onBeforeUnmount(() => {
   hoverAbort?.abort()
+  glyphListener?.dispose()
+  glyphs?.clear()
   firstDiffListener?.dispose()
   darkQuery?.removeEventListener?.('change', applyTheme)
   hoverRegistration?.dispose()

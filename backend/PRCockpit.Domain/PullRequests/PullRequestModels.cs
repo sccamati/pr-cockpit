@@ -28,9 +28,23 @@ public record PrComment(
 /// threads (votes, merge attempts, reviewer changes) are marked rather than dropped here,
 /// so the filtering decision stays with the caller.
 /// </summary>
+/// <summary>
+/// The write side, v1: start a thread, reply, change a status. No edit and no delete —
+/// a comment in Azure DevOps is visible to the team and cannot be taken back.
+/// </summary>
+public record NewCommentThread(string? Content, string? FilePath, int? Line);
+public record NewComment(string? Content);
+public record ThreadStatusUpdate(string? Status);
+
 public record PrCommentThread(
     int Id, string? Status, string? FilePath, int? RightLine, int? LeftLine,
-    bool IsSystem, IReadOnlyList<PrComment> Comments);
+    bool IsSystem, IReadOnlyList<PrComment> Comments,
+    // The iteration the comment was left on. Comparing it with the pull request's last
+    // iteration is what answers "has the code moved since somebody wrote this?".
+    int? IterationId = null);
+
+/// <summary>One pushed update of a pull request, and the commit it points at.</summary>
+public record PrIteration(int Id, string? SourceCommitSha);
 
 public record PullRequestSummary(
     int Id,
@@ -57,7 +71,8 @@ public record PullRequestDetails(
     IReadOnlyList<Commit> Commits,
     IReadOnlyList<WorkItem> WorkItems,
     string? BaseCommitSha = null,
-    string? HeadCommitSha = null);
+    string? HeadCommitSha = null,
+    IReadOnlyList<PrIteration>? Iterations = null);
 
 public sealed class AzureDevOpsException(string message, int statusCode) : Exception(message)
 {

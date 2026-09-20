@@ -92,7 +92,7 @@ PRODUCT.md §9: jedno pytanie kontrolne po przeczytaniu PR, *„gdyby ten featur
 
 # Etap 4 — Komentarze Azure DevOps
 
-**4A zrobione (B-18).** Przed nami 4B (zapis) i 4C (znaczniki na marginesie).
+**4A, 4B i 4C zrobione (B-18, B-19, B-20), plus widok komentarzy i „co się zmieniło po komentarzu” (B-21).** Całość niesprawdzona na żywym Azure DevOps; wyłącznik `AzureDevOps:AllowComments` jest domyślnie wyłączony.
 
 Trzy podetapy o wyraźnie różnym ryzyku.
 

@@ -48,7 +48,10 @@ export interface PrCommentThread {
   leftLine: number | null
   isSystem: boolean
   comments: PrComment[]
+  // The pull request iteration the comment was written against, when it has one.
+  iterationId: number | null
 }
+export interface PrIteration { id: number; sourceCommitSha: string | null }
 
 export interface PullRequestSummary {
   id: number
@@ -71,6 +74,7 @@ export interface PullRequestDetails extends PullRequestSummary {
   workItems: WorkItem[]
   baseCommitSha?: string | null
   headCommitSha?: string | null
+  iterations?: PrIteration[] | null
 }
 
 export interface CriticalFile { path: string; role: string; why: string }
@@ -156,6 +160,19 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    const problem = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
+  }
+  return response.json() as Promise<T>
+}
+
 const location = (project: string, repository: string) =>
   `/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(repository)}`
 
@@ -168,10 +185,17 @@ export const api = {
     get<ChecklistProgress[]>(`${location(project, repository)}/pull-requests/checklist-progress`),
   pullRequest: (project: string, repository: string, id: number) =>
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
-  fileDiff: (project: string, repository: string, id: number, path: string) =>
-    get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}`),
+  fileDiff: (project: string, repository: string, id: number, path: string, sinceIteration?: number) =>
+    get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}` +
+      (sinceIteration ? `&sinceIteration=${sinceIteration}` : '')),
   commentThreads: (project: string, repository: string, id: number) =>
     get<PrCommentThread[]>(`${location(project, repository)}/pull-requests/${id}/threads`),
+  createThread: (project: string, repository: string, id: number, thread: { content: string; filePath: string | null; line: number | null }) =>
+    post<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads`, thread),
+  replyToThread: (project: string, repository: string, id: number, threadId: number, content: string) =>
+    post<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}/comments`, { content }),
+  setThreadStatus: (project: string, repository: string, id: number, threadId: number, status: string) =>
+    patch<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}`, { status }),
   csharpHovers: (originalText: string, modifiedText: string, signal?: AbortSignal) =>
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>

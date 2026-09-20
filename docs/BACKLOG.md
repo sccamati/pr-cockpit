@@ -240,6 +240,46 @@ Status: zaimplementowane. Etap 4, podetap 4A z [PLAN.md](PLAN.md). **Zakres PAT 
 
 **Niesprawdzone — do potwierdzenia na prawdziwym PR:** semantyka `offset`, czy `pullRequestThreadContext.changeTrackingId` w ogóle przychodzi, `iterationContext` przy diffie względem bazy scalenia oraz czy wykrywanie wątków systemowych po `commentType` wystarcza. Właśnie po to 4A idzie przed 4B — te niewiadome rozstrzygną się przez **czytanie**, zanim cokolwiek zostanie wysłane.
 
+## Wdrożone — pisanie komentarzy i widok komentarzy
+
+### B-19 — Zapis komentarzy do Azure DevOps
+
+Status: zaimplementowane. Etap 4, podetap 4B z [PLAN.md](PLAN.md). **Wymaga rozszerzenia PAT** o pozycję „PR threads (read & write)”; Code zostaje na Read.
+
+**Wyłącznik:** `AzureDevOps:AllowComments`, domyślnie **false**. Sprawdzany w `RequireCommentsEnabled` zanim cokolwiek opuści maszynę — fail closed, bo komentarz widzi cały zespół i nie da się go cofnąć.
+
+**Jedna ścieżka wysyłki:** `SendAsync` dostał opcjonalne `method` i `body` plus `method ?? HttpMethod.Get`. Bloku walidacji organizacji i PAT **nie** zduplikowano. Mapowanie błędów dla zapisu różni się w trzech miejscach: 401/403 → **503** z komunikatem nazywającym brakujący zakres, 400 → **400**, 409 → **409**.
+
+**Zakres v1:** założenie wątku (z kotwicą na plik i linię albo bez), odpowiedź, zmiana statusu. Bez edycji i bez kasowania. Kotwica zawsze po prawej stronie, `offset: 1` — tak jak w przykładzie z dokumentacji Azure DevOps. Statusy wysyłamy liczbą (`active 1, fixed 2, wontFix 3, closed 4`), wracają napisem.
+
+**Żadnego zapisu optymistycznego.** Przycisk się blokuje, żądanie leci, wątki są pobierane ponownie. Szkic i potwierdzenie to zawsze dwa kroki, Enter nie wysyła, a pod przyciskiem stoi zdanie „Wysłanego komentarza nie da się cofnąć”.
+
+**Zweryfikowane:** 95 testów backendu. Doszły m.in.: przy wyłączniku off żadne z trzech żądań nie opuszcza maszyny, nowy wątek jedzie z `rightFileStart` i bez `leftFileStart`, status leci liczbą i wraca nazwą, nieznany status i pusta treść kończą się 400 bez kontaktu z Azure DevOps, mapowanie 403/400/409 na 503/400/409, oraz **test antyregresyjny: każda ścieżka odczytu nadal wysyła `GET` i nie ma treści**.
+
+### B-20 — Widok komentarzy i znaczniki w diffie
+
+Status: zaimplementowane. Podetap 4C plus widok, o który poprosił użytkownik.
+
+**Widok komentarzy** (skrót `c`) zajmuje środkowy panel obok diffu i opisu PR. Jest w nim wyszukiwarka po treści, autorze i ścieżce, filtr „Aktywne / Wszystkie”, licznik „N aktywnych z M” i grupowanie **po pliku w kolejności drzewa plików** — czyli w tej, w której czyta się PR — a w grupie po numerze linii. Stamtąd się odpowiada, zmienia status i zakłada nowy wątek. Szyna kontekstu została podsumowaniem: jedna linia na wątek plus wejście do widoku.
+
+**Znaczniki na marginesie:** `glyphMargin: true` i `createDecorationsCollection` na edytorze **zmodyfikowanym** — przy `renderSideBySide: false` linie usunięte są strefami widoku bez adresowalnej pozycji, więc prawa strona jest jedyną, na której znacznik może stać. Kliknięcie w margines otwiera rozmowę dla tej linii, a linia bez wątku otwiera szkic zakotwiczony w niej. Przycisk „Skomentuj linię” bierze linię z kursora (`getPosition()` działa mimo `readOnly`). Nasłuch i kolekcja dekoracji dołączyły do istniejącego bloku zwalniania w `onBeforeUnmount`.
+
+**Widoku view zones świadomie nie budujemy** — PLAN.md §4.5 wariant C konkurowałby ze strefami, których diff w linii już używa na linie usunięte.
+
+### B-21 — „Co się zmieniło po tym komentarzu”
+
+Status: zaimplementowane. Prośba użytkownika: żeby po poprawce łatwo było zobaczyć, co się przy komentarzu zmieniło.
+
+**Jak to działa:** wątek niesie iterację, na której go napisano (`pullRequestThreadContext.iterationContext.secondComparingIteration`, z odwrotem na `first…`). `PullRequestDetails` niesie teraz listę iteracji z ich commitami. Jeśli iteracja wątku jest starsza niż ostatnia, wątek dostaje etykietę „Kod zmienił się po tym komentarzu (iteracja N → M)”, a w szynie kropkę. Przycisk „Zobacz, co się zmieniło” otwiera diff pliku **między commitem tamtej iteracji a głową** — to samo, co w Azure DevOps robi widok „update N”. Nad diffem stoi pasek mówiący wprost, że to nie jest pełna zmiana, z powrotem do pełnego diffu.
+
+**SHA nie wychodzą do przeglądarki jako parametr.** Frontend podaje `sinceIteration=N`, a backend sam rozwiązuje commit z listy iteracji tego PR — inaczej byłaby to dowolna para commitów podana przez klienta.
+
+**Świadome uproszczenie:** przy takim porównaniu plik dostaje `ChangeType = "edit"`. Plik dodany po tamtej iteracji pokazałby wtedy pustą stronę źródłową zamiast zostać oznaczony jako dodany; odwrotnie byłoby gorzej, bo „add” ukryłoby starą wersję, czyli dokładnie to, po co się tu przychodzi.
+
+**Zweryfikowane:** 95 testów backendu (odczyt iteracji wątku i jej brak przy wątku bez kontekstu diffu) i 43 testy frontendu (oflagowany jest tylko wątek ze starszej iteracji; „Zobacz, co się zmieniło” woła diff z `sinceIteration`, a powrót bez niego; pisanie komentarza wymaga dwóch kroków i czyta wątki ponownie; szukanie po treści i grupowanie po pliku).
+
+**Niesprawdzone — całe 4B i 4C na żywym PR.** Nic z tego nie było uruchomione przeciwko prawdziwemu Azure DevOps: ani zapis z rozszerzonym PAT, ani semantyka `offset`, ani to, czy 409 w ogóle występuje, ani wygląd znaczników na marginesie. Wyłącznik jest domyślnie wyłączony właśnie dlatego.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

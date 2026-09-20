@@ -61,10 +61,27 @@ api.MapGet($"{PullRequests}/{{pullRequestId:int}}/threads", async (
     string project, string repositoryId, int pullRequestId, IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetCommentThreadsAsync(project, repositoryId, pullRequestId, ct)));
 
-api.MapGet($"{PullRequests}/{{pullRequestId:int}}/diff", async (
-    string project, string repositoryId, int pullRequestId, string path,
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/threads", async (
+    string project, string repositoryId, int pullRequestId, NewCommentThread thread,
     IAzureDevOpsClient client, CancellationToken ct) =>
-    await Execute(() => client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)));
+    await Execute(() => client.CreateCommentThreadAsync(project, repositoryId, pullRequestId, thread, ct)));
+
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}/comments", async (
+    string project, string repositoryId, int pullRequestId, int threadId, NewComment comment,
+    IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.ReplyToThreadAsync(project, repositoryId, pullRequestId, threadId, comment, ct)));
+
+api.MapPatch($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}", async (
+    string project, string repositoryId, int pullRequestId, int threadId, ThreadStatusUpdate update,
+    IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.SetThreadStatusAsync(project, repositoryId, pullRequestId, threadId, update.Status, ct)));
+
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/diff", async (
+    string project, string repositoryId, int pullRequestId, string path, int? sinceIteration,
+    IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => sinceIteration is null
+        ? client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)
+        : client.GetFileDiffSinceIterationAsync(project, repositoryId, pullRequestId, path, sinceIteration.Value, ct)));
 
 api.MapPost("/csharp/hovers", async (CSharpHoverRequest request, ICSharpHoverAnalyzer analyzer) =>
     await Execute(() => Task.FromResult(analyzer.Build(request))));

@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
   goToDiff: vi.fn(),
   revealFirstDiff: vi.fn(),
   onDidUpdateDiff: vi.fn(),
+  onMouseDown: vi.fn(),
+  decorationsSet: vi.fn(),
+  decorationsClear: vi.fn(),
+  disposeGlyphListener: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api: { csharpHovers: mocks.csharpHovers } }))
@@ -34,6 +38,8 @@ vi.mock('monaco-editor', () => ({
       mocks.models.push(model)
       return model
     }),
+    TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
+    MouseTargetType: { GUTTER_GLYPH_MARGIN: 2 },
     createDiffEditor: vi.fn(() => ({
       setModel: vi.fn(), layout: vi.fn(), dispose: vi.fn(),
       updateOptions: mocks.diffUpdateOptions,
@@ -41,7 +47,13 @@ vi.mock('monaco-editor', () => ({
       revealFirstDiff: mocks.revealFirstDiff,
       onDidUpdateDiff: mocks.onDidUpdateDiff,
       getOriginalEditor: () => ({ updateOptions: mocks.originalUpdate }),
-      getModifiedEditor: () => ({ updateOptions: mocks.modifiedUpdate, focus: vi.fn() }),
+      getModifiedEditor: () => ({
+        updateOptions: mocks.modifiedUpdate,
+        focus: vi.fn(),
+        getPosition: () => ({ lineNumber: 12 }),
+        onMouseDown: mocks.onMouseDown,
+        createDecorationsCollection: () => ({ set: mocks.decorationsSet, clear: mocks.decorationsClear }),
+      }),
     })),
   },
   languages: {
@@ -78,6 +90,7 @@ beforeEach(() => {
     return { dispose: mocks.disposeSemanticProvider }
   })
   mocks.onDidUpdateDiff.mockReturnValue({ dispose: vi.fn() })
+  mocks.onMouseDown.mockReturnValue({ dispose: mocks.disposeGlyphListener })
   window.matchMedia = vi.fn().mockReturnValue({
     matches: false,
     addEventListener() {},
@@ -199,5 +212,31 @@ describe('Monaco reading options', () => {
     expect(themes).toContain('pr-cockpit-code-dark')
     expect(vi.mocked(monaco.editor.createDiffEditor).mock.calls[0]![1]!.theme).toBe('pr-cockpit-code')
     wrapper.unmount()
+  })
+
+  it('marks commented lines on the gutter and reports a click on the marker', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: {
+        path: '/src/a.ts', originalPath: null, originalText: 'a', modifiedText: 'b',
+        commentLines: [4, 9],
+      },
+    })
+    await flushPromises()
+
+    const decorations = mocks.decorationsSet.mock.calls[0]![0] as { range: { startLineNumber: number } }[]
+    expect(decorations.map(entry => entry.range.startLineNumber)).toEqual([4, 9])
+
+    // Only the glyph margin counts: a click in the code itself must not open a comment.
+    const handler = mocks.onMouseDown.mock.calls[0]![0] as (event: unknown) => void
+    handler({ target: { type: 6, position: { lineNumber: 4 } } })
+    expect(wrapper.emitted('openLine')).toBeUndefined()
+    handler({ target: { type: 2, position: { lineNumber: 4 } } })
+    expect(wrapper.emitted('openLine')).toEqual([[4]])
+
+    // Anchoring is right-hand side only, so the cursor line comes from the modified editor.
+    expect((wrapper.vm as unknown as { cursorLine(): number }).cursorLine()).toBe(12)
+
+    wrapper.unmount()
+    expect(mocks.disposeGlyphListener).toHaveBeenCalled()
   })
 })

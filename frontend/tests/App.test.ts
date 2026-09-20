@@ -20,6 +20,9 @@ const api = vi.hoisted(() => ({
   setDebugNote: vi.fn(),
   fileReviewProgress: vi.fn(),
   commentThreads: vi.fn(),
+  createThread: vi.fn(),
+  replyToThread: vi.fn(),
+  setThreadStatus: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -128,7 +131,7 @@ describe('PR review', () => {
     await flushPromises()
     expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
     expect(wrapper.find('.diff-toolbar-title').attributes('title')).toBe('/src/second.cs')
-    expect(api.fileDiff).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/second.cs')
+    expect(api.fileDiff).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/second.cs', undefined)
 
     await wrapper.find('.review-check input').setValue(true)
     expect(wrapper.find('.next-file-button').attributes('disabled')).toBeDefined()
@@ -313,14 +316,116 @@ describe('PR review', () => {
 
     const locations = wrapper.findAll('.thread-location')
     expect(locations.map(item => item.text())).toEqual(['second.cs:42', 'Cały PR'])
-    // A deleted comment keeps its place instead of vanishing from the conversation.
-    expect(wrapper.text()).toContain('(komentarz usunięty)')
     // A thread with no file has nothing to jump to.
     expect(locations[1]!.attributes('disabled')).toBeDefined()
 
-    await locations[0]!.trigger('click')
+    // The rail is a summary; the full conversation, including a deleted comment keeping
+    // its place, lives in the comments view.
+    await wrapper.find('.comments-open').trigger('click')
+    expect(wrapper.text()).toContain('(komentarz usunięty)')
+    await wrapper.find('.comments-close').trigger('click')
+
+    await wrapper.findAll('.thread-location')[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    wrapper.unmount()
+  })
+
+  it('writes a comment only on the second step and shows what the server returned', async () => {
+    const thread = {
+      id: 5, status: 'active', filePath: '/src/second.cs', rightLine: 7, leftLine: null, isSystem: false,
+      comments: [{ id: 1, author: 'Jan', content: 'Czy to na pewno tutaj?', commentType: 'text', publishedAt: null }],
+    }
+    api.commentThreads.mockResolvedValue([thread])
+    api.replyToThread.mockResolvedValue(thread)
+
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))
+    await flushPromises()
+
+    expect(wrapper.find('.comments-view').exists()).toBe(true)
+    expect(wrapper.find('.comments-counts').text()).toBe('1 aktywnych z 1')
+
+    // Opening a draft sends nothing, and an empty draft cannot be sent.
+    await wrapper.find('.thread-actions button').trigger('click')
+    expect(api.replyToThread).not.toHaveBeenCalled()
+    expect(wrapper.find('.comment-send').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('.comment-draft textarea').setValue('Sprawdziłem, jest dobrze.')
+    await wrapper.find('.comment-send').trigger('click')
+    await flushPromises()
+
+    expect(api.replyToThread).toHaveBeenCalledWith('project', 'repo-a', 123, 5, 'Sprawdziłem, jest dobrze.')
+    // Nothing optimistic: the list is read back from Azure DevOps after the write.
+    expect(api.commentThreads).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('finds comments by content and groups them by file', async () => {
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/second.cs', rightLine: 7, leftLine: null, isSystem: false,
+        comments: [{ id: 1, author: 'Jan', content: 'Literówka w nazwie.', commentType: 'text', publishedAt: null }] },
+      { id: 2, status: 'fixed', filePath: '/tests/third.cs', rightLine: 3, leftLine: null, isSystem: false,
+        comments: [{ id: 1, author: 'Anna', content: 'Brakuje przypadku granicznego.', commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.thread-group-head').map(head => head.text()))
+      .toEqual(['/src/second.cs', '/tests/third.cs'])
+
+    await wrapper.find('#thread-search').setValue('graniczn')
+    expect(wrapper.findAll('.thread--full')).toHaveLength(1)
+    expect(wrapper.find('.thread-group-head').text()).toBe('/tests/third.cs')
+
+    await wrapper.find('#thread-search').setValue('')
+    await wrapper.findAll('.comments-toolbar .file-filter button')[1]!.trigger('click')
+    expect(wrapper.findAll('.thread--full')).toHaveLength(1)
+    expect(wrapper.find('.thread-group-head').text()).toBe('/src/second.cs')
+    wrapper.unmount()
+  })
+
+  it('flags a thread whose code moved on and shows only what changed since it', async () => {
+    const withIterations = { ...details, iterations: [{ id: 1, sourceCommitSha: 'a'.repeat(40) }, { id: 3, sourceCommitSha: 'b'.repeat(40) }] }
+    api.pullRequests.mockResolvedValue([withIterations])
+    api.pullRequest.mockResolvedValue(withIterations)
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: 1,
+        comments: [{ id: 1, author: 'Jan', content: 'Do poprawy.', commentType: 'text', publishedAt: null }] },
+      { id: 2, status: 'active', filePath: '/src/second.cs', rightLine: 9, leftLine: null, isSystem: false, iterationId: 3,
+        comments: [{ id: 1, author: 'Anna', content: 'Świeża uwaga.', commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    // Only the thread left on an older iteration is flagged.
+    const moved = wrapper.findAll('.thread-moved')
+    expect(moved).toHaveLength(1)
+    expect(moved[0]!.text()).toContain('iteracja 1 → 3')
+
+    await wrapper.find('.thread-since').trigger('click')
+    await flushPromises()
+    expect(api.fileDiff).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/first.cs', 1)
+    expect(wrapper.find('.diff-since').exists()).toBe(true)
+
+    // Going back to the whole change asks for the plain diff again.
+    await wrapper.find('.diff-since button').trigger('click')
+    await flushPromises()
+    expect(api.fileDiff).toHaveBeenLastCalledWith('project', 'repo-a', 123, '/src/first.cs', undefined)
+    expect(wrapper.find('.diff-since').exists()).toBe(false)
     wrapper.unmount()
   })
 

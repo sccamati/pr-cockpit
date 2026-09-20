@@ -312,6 +312,31 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .thread-comment { margin-top: 4px; }
 .thread-author { font-size: 12px; font-weight: 600; }
 .thread-content { margin: 2px 0 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thread-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.comments-open { margin-top: 10px; width: 100%; }
+.comments-view { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; overflow-y: auto; }
+.comments-head { display: flex; align-items: baseline; gap: 10px; }
+.comments-head h3 { margin: 0; }
+.comments-counts { font-size: 12px; color: var(--text-muted); }
+.comments-close { margin-left: auto; }
+.comments-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.thread-search { flex: 1 1 220px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: inherit; }
+.thread-group { display: flex; flex-direction: column; gap: 8px; }
+.thread-group-head { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); font-weight: 600; overflow-wrap: anywhere; }
+.thread--full { border: 1px solid var(--line); border-left-width: 3px; border-radius: 0 6px 6px 0; padding: 8px 10px; }
+.thread-head { display: flex; align-items: baseline; gap: 8px; }
+.thread-actions, .comment-draft { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.comment-draft { flex-direction: column; }
+.comment-send { font-weight: 600; }
+.comment-warning { font-size: 12px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* The gutter marker for a line that already has a thread. */
+.comment-glyph { cursor: pointer; }
+.comment-glyph::before { content: '💬'; display: block; font-size: 11px; line-height: 22px; text-align: center; }
+.diff-since { margin: 0 12px 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.thread-moved { margin: 6px 0 0; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.thread-moved-dot { color: var(--accent); font-size: 10px; margin-left: 6px; }
+.thread-since { font-size: 12px; }
 .noise-summary { padding: 6px 10px; font-size: 13px; color: var(--text-muted); background: var(--surface-muted); border-bottom: 1px solid var(--line); cursor: pointer; }
 .noise-summary:hover { background: var(--surface-hover); }
 .noise-summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }

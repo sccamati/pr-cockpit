@@ -21,6 +21,16 @@ dotnet user-secrets set "AzureDevOps:Pat" "YOUR_PAT" --project backend/PRCockpit
 
 Only the local backend uses the PAT. This setup is for development; sharing the app with other users will require Microsoft Entra sign-in, API authorization, and per-user token handling.
 
+### Writing comments
+
+Reading pull request comment threads needs nothing beyond the scopes above. **Writing** them is off by default and has to be switched on deliberately, because a comment is visible to the whole team and cannot be taken back:
+
+```powershell
+dotnet user-secrets set "AzureDevOps:AllowComments" "true" --project backend/PRCockpit.Api
+```
+
+The PAT also needs the **PR threads (read & write)** scope. Leave **Code** on Read — `vso.code_write` would additionally allow pushing code and deleting refs, which this app never does. With the switch off, or the scope missing, the backend refuses the write before any request leaves the machine and says which of the two is wrong.
+
 ## Summary CLI adapter
 
 `Summary` runs only when you click **Generuj Summary** on a pull request. Configure a trusted CLI program through .NET User Secrets or environment variables:

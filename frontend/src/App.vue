@@ -29,6 +29,14 @@ const summarySavedAt = ref<string | null>(null)
 const checklist = ref<ChecklistState | null>(null)
 const checklistLoading = ref(false)
 const threads = ref<PrCommentThread[]>([])
+const commentsOpen = ref(false)
+const threadSearch = ref('')
+const onlyActiveThreads = ref(false)
+// Two steps, always. Enter never sends: a comment is visible to the whole team and cannot
+// be taken back, so the draft is written first and confirmed second.
+const draft = ref<{ target: string; text: string } | null>(null)
+const commentSaving = ref(false)
+const commentError = ref('')
 const threadsLoading = ref(false)
 const threadsError = ref('')
 let threadsRequestId = 0
@@ -63,7 +71,7 @@ const sideBySide = ref(false)
 const helpDialog = ref<HTMLDialogElement | null>(null)
 // ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
 // dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
-const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void } | null>(null)
+const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null } | null>(null)
 let requestId = 0
 let diffRequestId = 0
 let summaryRequestId = 0
@@ -146,6 +154,134 @@ function threadLocation(thread: PrCommentThread): string {
   const line = thread.rightLine ?? thread.leftLine
   return line ? `${fileName(thread.filePath)}:${line}` : fileName(thread.filePath)
 }
+const lastIteration = computed(() =>
+  (details.value?.iterations ?? []).reduce((highest, item) => Math.max(highest, item.id), 0))
+// "Somebody pushed a fix after this comment" — the honest version of that question is a
+// comparison of iterations, which is exactly what Azure DevOps' own "update N" view does.
+function movedSinceComment(thread: PrCommentThread): boolean {
+  return thread.iterationId !== null && lastIteration.value > thread.iterationId
+}
+
+const activeThreadCount = computed(() =>
+  threads.value.filter(thread => thread.status === 'active' || thread.status === null).length)
+const visibleThreads = computed(() => {
+  const search = threadSearch.value.trim().toLocaleLowerCase()
+  return threads.value.filter(thread => {
+    if (onlyActiveThreads.value && thread.status !== 'active' && thread.status !== null) return false
+    if (!search) return true
+    return thread.filePath?.toLocaleLowerCase().includes(search) ||
+      thread.comments.some(comment =>
+        comment.content?.toLocaleLowerCase().includes(search) ||
+        comment.author?.toLocaleLowerCase().includes(search))
+  })
+})
+// Grouped by file, files in the order the tree shows them, threads by line — the same
+// order you read the pull request in, so a comment is where you expect it to be.
+const threadGroups = computed(() => {
+  const order = new Map(orderedPaths.value.map((path, index) => [path, index]))
+  const groups = new Map<string, PrCommentThread[]>()
+  for (const thread of visibleThreads.value) {
+    const key = thread.filePath ?? ''
+    const group = groups.get(key)
+    if (group) group.push(thread)
+    else groups.set(key, [thread])
+  }
+  return [...groups.entries()]
+    .map(([path, items]) => ({
+      path,
+      label: path ? path : 'Bez pliku — cały PR',
+      threads: items.sort((a, b) => (a.rightLine ?? a.leftLine ?? 0) - (b.rightLine ?? b.leftLine ?? 0)),
+      rank: path ? order.get(path) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER,
+    }))
+    .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label))
+})
+
+function toggleComments() {
+  commentsOpen.value = !commentsOpen.value
+  if (!commentsOpen.value) return
+  draft.value = null
+  commentError.value = ''
+}
+
+function startDraft(target: string) {
+  draft.value = { target, text: '' }
+  commentError.value = ''
+}
+
+// No optimistic write anywhere in here. The button locks, the request goes out, and the
+// threads are read back — a comment cannot be rolled back, so nothing is shown as sent
+// before Azure DevOps says it is.
+async function sendDraft() {
+  const pending = draft.value
+  if (!details.value || !pending || commentSaving.value || !pending.text.trim()) return
+  const current = threadsRequestId
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  commentSaving.value = true
+  commentError.value = ''
+  try {
+    if (pending.target === 'new') {
+      await api.createThread(project, repository, id, { content: pending.text, filePath: null, line: null })
+    } else if (pending.target.startsWith('file:')) {
+      const [, path, line] = pending.target.split(':')
+      await api.createThread(project, repository, id,
+        { content: pending.text, filePath: path!, line: line ? Number(line) : null })
+    } else {
+      await api.replyToThread(project, repository, id, Number(pending.target), pending.text)
+    }
+    if (current !== threadsRequestId) return
+    draft.value = null
+    await loadThreads(project, repository, id)
+  } catch (cause) {
+    if (current === threadsRequestId) commentError.value = message(cause)
+  } finally {
+    if (current === threadsRequestId) commentSaving.value = false
+  }
+}
+
+async function setThreadStatus(threadId: number, status: string) {
+  if (!details.value || commentSaving.value) return
+  const current = threadsRequestId
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  commentSaving.value = true
+  commentError.value = ''
+  try {
+    await api.setThreadStatus(project, repository, id, threadId, status)
+    if (current !== threadsRequestId) return
+    await loadThreads(project, repository, id)
+  } catch (cause) {
+    if (current === threadsRequestId) commentError.value = message(cause)
+  } finally {
+    if (current === threadsRequestId) commentSaving.value = false
+  }
+}
+
+const commentLinesForFile = computed(() => threads.value
+  .filter(thread => thread.filePath === selectedFilePath.value && (thread.rightLine ?? 0) > 0)
+  .map(thread => thread.rightLine!))
+
+// A click on the gutter marker goes to the conversation for that line; a line with no
+// thread yet starts a draft anchored there. Both are two-step — nothing is sent here.
+function openLineComments(line: number) {
+  const existing = threads.value.find(thread =>
+    thread.filePath === selectedFilePath.value && thread.rightLine === line)
+  commentsOpen.value = true
+  commentError.value = ''
+  draft.value = existing
+    ? null
+    : { target: `file:${selectedFilePath.value}:${line}`, text: '' }
+  if (existing) threadSearch.value = ''
+}
+
+function commentOnCursorLine() {
+  const line = diffView.value?.cursorLine?.() ?? null
+  if (!selectedFilePath.value || !line) return
+  openLineComments(line)
+}
+
 function openThread(thread: PrCommentThread) {
   // Read-only for now: jumping to the file is the whole interaction. Anchoring inside the
   // editor is stage 4C, and nothing here writes to Azure DevOps.
@@ -335,6 +471,7 @@ function resetDiff() {
   monacoComponent.value = null
   diffLoading.value = false
   diffError.value = ''
+  diffSinceIteration.value = null
   resetExplanation()
   fileSearch.value = ''
   onlyUnreviewed.value = false
@@ -385,6 +522,12 @@ function resetThreads() {
   threads.value = []
   threadsLoading.value = false
   threadsError.value = ''
+  commentsOpen.value = false
+  threadSearch.value = ''
+  onlyActiveThreads.value = false
+  draft.value = null
+  commentSaving.value = false
+  commentError.value = ''
 }
 
 async function loadThreads(project: string, repository: string, id: number) {
@@ -693,9 +836,20 @@ async function explainFile() {
   }
 }
 
-async function openFile(path: string) {
+// Set while the diff on screen is a since-the-comment comparison rather than the whole
+// change, so the toolbar can say so and offer the way back.
+const diffSinceIteration = ref<number | null>(null)
+
+async function showChangesSinceComment(thread: PrCommentThread) {
+  if (!thread.filePath || thread.iterationId === null) return
+  commentsOpen.value = false
+  await openFile(thread.filePath, thread.iterationId)
+}
+
+async function openFile(path: string, sinceIteration?: number) {
   if (!details.value) return
   const current = ++diffRequestId
+  diffSinceIteration.value = sinceIteration ?? null
   const pullRequestId = details.value.id
   selectedFilePath.value = path
   resetExplanation()
@@ -709,7 +863,7 @@ async function openFile(path: string) {
     diffPanel.value?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
   }
   try {
-    const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path)
+    const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path, sinceIteration)
     if (current !== diffRequestId) return
     if (result.kind === 'text') {
       const component = await import('./MonacoDiff.vue')
@@ -796,6 +950,7 @@ const shortcutHelp = [
   { keys: 'g', label: 'Przejdź kursorem do kodu' },
   { keys: 'o', label: 'Opis PR i powrót do pliku' },
   { keys: 'e', label: 'Wyjaśnij ten plik' },
+  { keys: 'c', label: 'Widok komentarzy' },
   { keys: 'Esc', label: 'Zamknij pomoc albo wróć do listy' },
   { keys: '?', label: 'Ta pomoc' },
 ]
@@ -878,6 +1033,7 @@ const shortcuts: Record<string, () => void> = {
   g: () => diffView.value?.focusEditor(),
   o: toggleBriefing,
   e: explainFile,
+  c: toggleComments,
 }
 
 // Capture phase: Monaco stops propagation of the keys it owns, so a bubble-phase
@@ -1000,7 +1156,71 @@ onMounted(loadProjects)
           </div>
 
           <div ref="diffPanel" class="diff-panel">
-            <template v-if="selectedFilePath">
+            <section v-if="commentsOpen" class="comments-view" aria-label="Komentarze pull requesta">
+              <div class="comments-head">
+                <h3>Komentarze</h3>
+                <span class="comments-counts">{{ activeThreadCount }} aktywnych z {{ threads.length }}</span>
+                <button type="button" class="comments-close" title="Zamknij widok komentarzy (c)" @click="toggleComments">Zamknij</button>
+              </div>
+              <div class="comments-toolbar">
+                <label class="visually-hidden" for="thread-search">Szukaj w komentarzach</label>
+                <input id="thread-search" v-model="threadSearch" class="thread-search" type="search"
+                  placeholder="Szukaj w treści, autorze lub ścieżce" autocomplete="off">
+                <div class="file-filter" role="group" aria-label="Filtr komentarzy">
+                  <button type="button" :aria-pressed="!onlyActiveThreads" :class="{ active: !onlyActiveThreads }" @click="onlyActiveThreads = false">Wszystkie</button>
+                  <button type="button" :aria-pressed="onlyActiveThreads" :class="{ active: onlyActiveThreads }" @click="onlyActiveThreads = true">Aktywne</button>
+                </div>
+                <button type="button" class="thread-new" @click="startDraft('new')">Nowy komentarz do PR</button>
+              </div>
+              <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
+
+              <div v-if="draft?.target === 'new'" class="comment-draft">
+                <label class="debug-label" for="thread-draft">Treść komentarza</label>
+                <!-- Enter inserts a newline; only the button sends. -->
+                <textarea id="thread-draft" v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000"></textarea>
+                <div class="debug-actions">
+                  <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
+                  <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
+                  <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
+                </div>
+              </div>
+
+              <p v-if="threadsLoading" class="muted" role="status">Wczytywanie komentarzy…</p>
+              <p v-else-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
+              <p v-else-if="visibleThreads.length === 0" class="muted">Nic nie pasuje do filtra.</p>
+              <div v-for="group in threadGroups" :key="group.path || 'none'" class="thread-group">
+                <h4 class="thread-group-head" :title="group.path">{{ group.label }}</h4>
+                <article v-for="thread in group.threads" :key="thread.id" class="thread thread--full">
+                  <header class="thread-head">
+                    <button class="thread-location" type="button" :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
+                    <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
+                  </header>
+                  <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
+                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
+                    <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>
+                    <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                  </div>
+                  <p v-if="movedSinceComment(thread)" class="thread-moved">
+                    Kod zmienił się po tym komentarzu (iteracja {{ thread.iterationId }} → {{ lastIteration }}).
+                    <button v-if="thread.filePath" type="button" class="thread-since" @click="showChangesSinceComment(thread)">Zobacz, co się zmieniło</button>
+                  </p>
+                  <div v-if="draft?.target === String(thread.id)" class="comment-draft">
+                    <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" :aria-label="`Odpowiedź w wątku ${thread.id}`"></textarea>
+                    <div class="debug-actions">
+                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                      <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
+                    </div>
+                  </div>
+                  <div v-else class="thread-actions">
+                    <button type="button" @click="startDraft(String(thread.id))">Odpowiedz</button>
+                    <button v-if="thread.status !== 'fixed'" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'fixed')">Naprawione</button>
+                    <button v-if="thread.status !== 'closed'" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'closed')">Zamknij</button>
+                    <button v-if="thread.status && thread.status !== 'active'" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'active')">Otwórz ponownie</button>
+                  </div>
+                </article>
+              </div>
+            </section>
+            <template v-else-if="selectedFilePath">
               <div class="diff-toolbar">
                 <div class="diff-toolbar-title" :title="selectedFilePath"><h4>{{ fileName(selectedFilePath) }}</h4><span>{{ fileDirectory(selectedFilePath) }}</span></div>
                 <span v-if="filePosition" class="diff-position">Plik {{ filePosition }} z {{ details.changedFilesCount }}</span>
@@ -1015,11 +1235,17 @@ onMounted(loadProjects)
                   <button type="button" title="Następna zmiana w pliku (.)" aria-label="Następna zmiana w pliku" @click="goToDiff('next')">›</button>
                   <button type="button" class="diff-layout-toggle" :aria-pressed="sideBySide" @click="sideBySide = !sideBySide">{{ sideBySide ? 'Obok siebie' : 'W linii' }}</button>
                   <button type="button" title="Opis PR (o)" @click="showBriefing">Opis PR</button>
+                  <button type="button" class="comment-line-button" title="Skomentuj linię pod kursorem"
+                    :disabled="!fileDiff || fileDiff.kind !== 'text'" @click="commentOnCursorLine">Skomentuj linię</button>
                   <button type="button" class="explain-button" title="Wyjaśnij ten plik (e)"
                     :disabled="explanationLoading" @click="explainFile">{{ explanationLoading ? 'Wyjaśniam…' : 'Wyjaśnij ten plik' }}</button>
                 </div>
                 <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
               </div>
+              <p v-if="diffSinceIteration" class="notice diff-since" role="status">
+                Pokazuję wyłącznie zmiany od iteracji {{ diffSinceIteration }} — czyli to, co dopisano po komentarzu.
+                <button type="button" class="checklist-retry" @click="openFile(selectedFilePath)">Pokaż cały diff</button>
+              </p>
               <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
               <p v-if="explanationError" class="notice error file-explanation-error" role="alert">{{ explanationError }}</p>
               <div v-if="explanation" class="file-explanation" aria-label="Wyjaśnienie pliku">
@@ -1032,7 +1258,7 @@ onMounted(loadProjects)
               <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
               <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" ref="diffView" :path="fileDiff.path"
                 :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
-                :side-by-side="sideBySide" />
+                :side-by-side="sideBySide" :comment-lines="commentLinesForFile" @open-line="openLineComments" />
             </template>
             <div v-else class="pr-briefing">
               <button v-if="lastFilePath" class="briefing-back" type="button" title="Wróć do pliku (o)"
@@ -1087,21 +1313,21 @@ onMounted(loadProjects)
               <p v-else-if="threadsError" class="notice error" role="alert">{{ threadsError }}
                 <button class="checklist-retry" type="button" @click="loadThreads(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
               </p>
-              <p v-else-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
-              <ul v-else class="thread-list" aria-label="Komentarze PR">
-                <li v-for="thread in threads" :key="thread.id" class="thread">
-                  <button class="thread-location" type="button" :title="thread.filePath ?? 'Cały PR'"
-                    :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
-                  <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
-                  <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
-                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
-                    <!-- Plain text on purpose: this is prose written by other people, and
-                         rendering it as Markdown would be one more thing to sanitise. -->
-                    <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>
-                    <p v-else class="thread-content muted">(komentarz usunięty)</p>
-                  </div>
-                </li>
-              </ul>
+              <template v-else>
+                <p v-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
+                <!-- The rail stays a summary: one line per thread so you can see at a glance
+                     where the conversation is. Reading and writing happen in the full view. -->
+                <ul v-else class="thread-list" aria-label="Komentarze PR">
+                  <li v-for="thread in threads" :key="thread.id" class="thread">
+                    <button class="thread-location" type="button" :title="thread.filePath ?? 'Cały PR'"
+                      :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
+                    <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
+                    <span v-if="movedSinceComment(thread)" class="thread-moved-dot" title="Kod zmienił się po tym komentarzu">●</span>
+                    <p class="thread-content thread-preview">{{ thread.comments[0]?.content ?? '(komentarz usunięty)' }}</p>
+                  </li>
+                </ul>
+                <button type="button" class="comments-open" title="Widok komentarzy (c)" @click="toggleComments">Otwórz widok komentarzy</button>
+              </template>
             </details>
 
             <details class="rail-block debug-check" :open="remainingCount === 0">
