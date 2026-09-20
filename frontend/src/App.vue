@@ -219,11 +219,75 @@ const threadGroups = computed(() => {
     .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label))
 })
 
+// The few lines the comment is actually about. One diff per commented file, fetched once
+// and kept for as long as the pull request is open — a snippet per thread would mean one
+// request per thread on a file that often holds several.
+const snippets = ref<Record<string, { original: string[]; modified: string[] }>>({})
+const snippetsLoading = ref(false)
+const snippetContext = 3
+// Azure DevOps counts lines, not characters, and a repository can hold either ending.
+const splitLines = (text: string) => text.split('\n').map(line => line.replace(/\r$/, ''))
+// ponytail: a flat cap instead of paging the fetch. Twenty commented files is already an
+// unusual pull request; raise it when one shows up.
+const maxSnippetFiles = 20
+
+function threadSnippet(thread: PrCommentThread) {
+  if (!thread.filePath) return null
+  const file = snippets.value[thread.filePath]
+  if (!file) return null
+  // A comment on a deleted line only has a left-hand anchor, and that line exists in the
+  // original text, not in the modified one.
+  const onRight = (thread.rightLine ?? 0) > 0
+  const line = onRight ? thread.rightLine! : thread.leftLine ?? 0
+  const lines = onRight ? file.modified : file.original
+  if (!line || lines.length === 0) return null
+  const from = Math.max(1, line - snippetContext)
+  const to = Math.min(lines.length, line + 1)
+  return {
+    side: onRight ? 'po zmianie' : 'przed zmianą',
+    lines: lines.slice(from - 1, to).map((text, index) => ({
+      number: from + index,
+      text,
+      anchor: from + index === line,
+    })),
+  }
+}
+
+async function loadSnippets() {
+  if (!details.value || snippetsLoading.value) return
+  const current = threadsRequestId
+  const paths = [...new Set(threads.value.map(thread => thread.filePath).filter((path): path is string => !!path))]
+    .filter(path => !snippets.value[path])
+    .slice(0, maxSnippetFiles)
+  if (paths.length === 0) return
+
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  snippetsLoading.value = true
+  try {
+    for (const path of paths) {
+      const diff = await api.fileDiff(project, repository, id, path).catch(() => null)
+      if (current !== threadsRequestId) return
+      // A binary or oversized file simply has no snippet; the thread still lists fine.
+      if (diff?.kind === 'text') {
+        snippets.value = {
+          ...snippets.value,
+          [path]: { original: splitLines(diff.originalText), modified: splitLines(diff.modifiedText) },
+        }
+      }
+    }
+  } finally {
+    if (current === threadsRequestId) snippetsLoading.value = false
+  }
+}
+
 function toggleComments() {
   commentsOpen.value = !commentsOpen.value
   if (!commentsOpen.value) return
   draft.value = null
   commentError.value = ''
+  void loadSnippets()
 }
 
 function startDraft(target: string) {
@@ -586,6 +650,8 @@ function resetThreads() {
   draft.value = null
   commentSaving.value = false
   commentError.value = ''
+  snippets.value = {}
+  snippetsLoading.value = false
 }
 
 async function loadThreads(project: string, repository: string, id: number) {
@@ -594,7 +660,9 @@ async function loadThreads(project: string, repository: string, id: number) {
   threadsError.value = ''
   try {
     const result = await api.commentThreads(project, repository, id)
-    if (current === threadsRequestId) threads.value = result
+    if (current !== threadsRequestId) return
+    threads.value = result
+    if (commentsOpen.value) void loadSnippets()
   } catch (cause) {
     if (current === threadsRequestId) threadsError.value = message(cause)
   } finally {
@@ -1256,6 +1324,13 @@ onMounted(loadProjects)
                     <button class="thread-location" type="button" :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
                     <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
                   </header>
+                  <div v-if="threadSnippet(thread)" class="thread-snippet">
+                    <pre><code><span v-for="row in threadSnippet(thread)!.lines" :key="row.number"
+                      class="snippet-line" :class="{ 'snippet-line--anchor': row.anchor }"><span class="snippet-number">{{ row.number }}</span>{{ row.text }}
+</span></code></pre>
+                    <span class="snippet-side">{{ threadSnippet(thread)!.side }}</span>
+                  </div>
+                  <p v-else-if="thread.filePath && snippetsLoading" class="muted snippet-loading">Wczytywanie kodu…</p>
                   <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
                     <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
                     <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>

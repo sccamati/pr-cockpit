@@ -352,6 +352,14 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .file-thread-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .thread--resolved { opacity: .65; }
 .thread-resolve { font-weight: 600; }
+.thread-snippet { position: relative; margin: 6px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
+.thread-snippet pre { margin: 0; padding: 6px 8px; overflow-x: auto; }
+.thread-snippet code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; line-height: 18px; }
+.snippet-line { display: block; white-space: pre; }
+.snippet-line--anchor { background: var(--accent-soft); font-weight: 600; }
+.snippet-number { display: inline-block; width: 44px; margin-right: 8px; text-align: right; color: var(--text-muted); font-weight: 400; user-select: none; }
+.snippet-side { position: absolute; top: 4px; right: 6px; font-size: 10px; color: var(--text-muted); background: var(--surface); padding: 0 4px; }
+.snippet-loading { font-size: 12px; margin: 4px 0; }
 .noise-summary { padding: 6px 10px; font-size: 13px; color: var(--text-muted); background: var(--surface-muted); border-bottom: 1px solid var(--line); cursor: pointer; }
 .noise-summary:hover { background: var(--surface-hover); }
 .noise-summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }

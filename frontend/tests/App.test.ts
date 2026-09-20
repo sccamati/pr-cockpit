@@ -538,6 +538,37 @@ describe('PR review', () => {
     wrapper.unmount()
   })
 
+  it('shows the code a comment is anchored to, one diff per commented file', async () => {
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 3, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Jan', content: 'Tu.', commentType: 'text', publishedAt: null }] },
+      { id: 2, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Anna', content: 'I tu.', commentType: 'text', publishedAt: null }] },
+    ])
+    api.fileDiff.mockImplementation(async (_project, _repository, _id, path) => ({
+      kind: 'text', path, originalPath: null,
+      originalText: 'stare', modifiedText: 'jeden\r\ndwa\r\ntrzy\r\ncztery\r\npięć',
+    }))
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    const snippets = wrapper.findAll('.thread-snippet')
+    expect(snippets).toHaveLength(2)
+    // Three lines of context plus one after, with CRLF stripped and the anchor marked.
+    expect(snippets[0]!.text()).toContain('trzy')
+    expect(snippets[0]!.find('.snippet-line--anchor').text()).toBe('3trzy')
+    expect(snippets[1]!.find('.snippet-line--anchor').text()).toBe('4cztery')
+
+    // Two threads in one file cost one diff, not two.
+    expect(api.fileDiff).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
   it('ignores a late PR list from the previously selected repository', async () => {
     let resolveOld!: (value: typeof details[]) => void
     const oldResponse = new Promise<typeof details[]>(resolve => { resolveOld = resolve })

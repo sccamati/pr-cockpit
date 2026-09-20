@@ -298,7 +298,11 @@ Status: zaimplementowane. Prośba użytkownika po obejrzeniu B-20.
 
 **Zweryfikowane:** 48 testów frontendu. Doszły cztery: liczenie komentarzy przez poziomy drzewa i nierozwinięty folder trzymany otwarty przez nierozwiązany wątek; odznaka `💬 2` na pliku; podział znaczników na rozwiązane i nie; „Rozwiąż” z bloku nad diffem woła status `fixed` i przeładowuje wątki; „Odpowiedz i rozwiąż” wykonuje odpowiedź **przed** zmianą statusu.
 
-**Niesprawdzone:** jak przy całym etapie 4 — nic z tego nie było uruchomione przeciwko prawdziwemu Azure DevOps.
+**Doszło po informacji zwrotnej:** w widoku komentarzy sama ścieżka i numer linii nic nie mówią, więc każdy wątek pokazuje **kod, którego dotyczy** — trzy linie kontekstu plus linia zakotwiczenia, podświetlona i z numerami. Pobieramy **jeden diff na plik**, nie na wątek, i trzymamy go, dopóki PR jest otwarty; plik binarny albo za duży po prostu nie ma wycinka. Komentarz na linii usuniętej czyta wersję sprzed zmiany, bo tam ta linia istnieje. Limit 20 plików z komentarzami (`ponytail`).
+
+**Odczyt potwierdzony na żywym Azure DevOps (2026-09-20):** PR 1904 w `SmartIT_Monorepo` zwraca 8 wątków z plikami, liniami i iteracjami; wątki systemowe są odfiltrowane. Wcześniejszy brak komentarzy wynikał z tego, że działał proces backendu sprzed etapu 4 — trasa `/threads` zwracała 404.
+
+**Nadal niesprawdzony zapis:** `AzureDevOps:AllowComments` nie jest ustawiony, więc założenie wątku, odpowiedź i zmiana statusu kończą się kontrolowanym 503, nie docierając do Azure DevOps.
 
 ## Później — do osobnej decyzji
 
