@@ -439,6 +439,42 @@ która odpowiada natychmiast.
 Memory i Quality Review nietknięte, żadnego uwierzytelniania ani grywalizacji. Kontrakt
 wyniku AI bez zmian — ranking wystarczył taki, jaki jest.
 
+## Wdrożone — „AI CLI returned invalid JSON" da się teraz zdiagnozować
+
+Status: zaimplementowane, pokryte testami. Zgłoszenie użytkownika 20 wrz 2026.
+
+**Czego nie udało się odtworzyć.** Adapter uruchomiony ręcznie na trzech kontekstach —
+sztucznym jednoplikowym, prawdziwym PR 1906 (44 pliki) i PR 1900 (208 plików) — za każdym
+razem zwrócił poprawny JSON. Dwa równoległe wyjaśnienia plików (to, co wprowadził prefetch
+z US-P5) też przeszły. Błąd jest więc **niedeterministyczny** i przyczyna pozostaje
+nieustalona.
+
+**Dlaczego nie dało się jej ustalić.** Backend wyrzucał wszystkie dowody: stderr adaptera
+był świadomie pomijany (`_ = await errorTask`), a nieparsowalne stdout nie trafiało nigdzie.
+Zostawał 502 bez śladu. To była prawdziwa luka — diagnostyka jednego zgłoszenia kosztowała
+kilkanaście minut i trzy uruchomienia modelu zamiast zajrzenia do logu.
+
+Dwie zmiany:
+
+- **`CliSummaryAnalyzer` mówi, co przyszło.** Przy nieudanym parsowaniu i przy kodzie wyjścia
+  różnym od zera loguje pierwsze 400 znaków stdout i stderr na poziomie Warning. Do klienta
+  nadal nie idzie nic z tej treści — to wyjście cudzego procesu, nie nasze do przekazywania —
+  ale operatorem narzędzia jednoosobowego jest ta sama osoba, która patrzy w konsolę.
+- **Adapter wyjmuje JSON zamiast ufać modelowi.** `scripts/extract-json.mjs` bierze zewnętrzny
+  obiekt `{…}`, licząc klamry poza literałami tekstowymi. Radzi sobie z płotem ```json,
+  zdaniem przed odpowiedzią i po niej oraz z notką CLI na tym samym strumieniu — czyli
+  z najczęstszymi powodami, dla których wyjście modelu w trybie tekstowym nie jest czystym
+  JSON-em. Czego nie rozumie, oddaje bez zmian, żeby log pokazał prawdę, a nie ucięty domysł.
+
+**Zweryfikowane:** 117 testów backendu, 87 frontendu (doszło 10 na `extractJson`,
+uruchamianych tym samym `npm test`). Adapter sprawdzony end-to-end po zmianie — czysty JSON
+przechodzi nietknięty.
+
+**Niesprawdzone:** ponieważ błędu nie udało się odtworzyć, **nie wiadomo, czy to go naprawia**.
+Jeśli wróci, w logu backendu stanie teraz linia Warning z treścią odpowiedzi i to ona
+powie, co się dzieje. Gdyby przyczyną okazały się dwa oddzielne obiekty JSON w jednej
+odpowiedzi albo limit 16 384 znaków wyjścia, `extractJson` tego nie załatwia.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

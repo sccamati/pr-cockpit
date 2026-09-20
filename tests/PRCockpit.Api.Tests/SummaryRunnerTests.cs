@@ -1,3 +1,4 @@
+﻿using Microsoft.Extensions.Logging.Abstractions;
 using PRCockpit.Application.Analysis;
 using PRCockpit.Domain.Analysis;
 using PRCockpit.Infrastructure.Analysis;
@@ -143,7 +144,7 @@ public class SummaryRunnerTests
         var config = new ConfigurationBuilder().Build();
 
         var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
-            new CliSummaryAnalyzer(config).AnalyzeAsync(Context(), CancellationToken.None));
+            new CliSummaryAnalyzer(config, NullLogger<CliSummaryAnalyzer>.Instance).AnalyzeAsync(Context(), CancellationToken.None));
 
         Assert.Equal(503, error.StatusCode);
     }
@@ -158,7 +159,7 @@ public class SummaryRunnerTests
         }).Build();
 
         var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
-            new CliSummaryAnalyzer(config).AnalyzeAsync(Context(), CancellationToken.None));
+            new CliSummaryAnalyzer(config, NullLogger<CliSummaryAnalyzer>.Instance).AnalyzeAsync(Context(), CancellationToken.None));
 
         Assert.Equal(502, error.StatusCode);
         Assert.Equal("AI CLI returned invalid JSON.", error.Message);

@@ -5,12 +5,18 @@ using System.Text;
 using System.Text.Json;
 using PRCockpit.Domain.PullRequests;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using PRCockpit.Domain.Analysis;
 
 namespace PRCockpit.Infrastructure.Analysis;
 
-public sealed class CliSummaryAnalyzer(IConfiguration configuration) : IAiSummaryAnalyzer
+public sealed class CliSummaryAnalyzer(
+    IConfiguration configuration, ILogger<CliSummaryAnalyzer> logger) : IAiSummaryAnalyzer
 {
+    // Enough of the adapter's answer to recognise what went wrong — a markdown fence, a
+    // CLI notice, a login prompt — without dumping a whole pull request into the log.
+    private const int LoggedCharacters = 400;
+
     private const int MaxOutputCharacters = 16_384;
     private const string Instruction = "Write a factual summary of this pull request in 2 to 5 short Polish sentences. " +
         "Then name up to 10 files a reviewer should read first, most important first, as criticalFiles. " +
@@ -87,9 +93,16 @@ public sealed class CliSummaryAnalyzer(IConfiguration configuration) : IAiSummar
             var errorTask = ReadBoundedAsync(process.StandardError, MaxOutputCharacters, timeoutSource.Token);
             await process.WaitForExitAsync(timeoutSource.Token);
             var output = await outputTask;
-            _ = await errorTask; // stderr is deliberately not returned to the client.
+            // Never returned to the client — it is the adapter's own output, not ours to
+            // hand on — but the operator of a one-person local tool is the same person,
+            // and without it a 502 says nothing at all.
+            var error = await errorTask;
             if (process.ExitCode != 0)
+            {
+                logger.LogWarning("AI CLI exited with {ExitCode}. stderr: {Error}",
+                    process.ExitCode, Clip(error));
                 throw new SummaryAnalysisException("AI CLI failed. Check its configuration.", 502);
+            }
 
             try
             {
@@ -99,6 +112,9 @@ public sealed class CliSummaryAnalyzer(IConfiguration configuration) : IAiSummar
             }
             catch (JsonException)
             {
+                logger.LogWarning(
+                    "AI CLI returned {Length} characters that are not one JSON object. stdout: {Output} stderr: {Error}",
+                    output.Length, Clip(output), Clip(error));
                 throw new SummaryAnalysisException("AI CLI returned invalid JSON.", 502);
             }
         }
@@ -121,6 +137,15 @@ public sealed class CliSummaryAnalyzer(IConfiguration configuration) : IAiSummar
                 // The process exited between the check and Kill.
             }
         }
+    }
+
+    private static string Clip(string value)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.Length == 0) return "(puste)";
+        return trimmed.Length <= LoggedCharacters
+            ? trimmed
+            : string.Concat(trimmed.AsSpan(0, LoggedCharacters), $"… (+{trimmed.Length - LoggedCharacters} znaków)");
     }
 
     private static async Task<string> ReadBoundedAsync(StreamReader reader, int limit, CancellationToken ct)

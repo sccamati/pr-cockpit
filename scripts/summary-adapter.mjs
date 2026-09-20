@@ -16,6 +16,7 @@ import { writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { extractJson } from './extract-json.mjs';
 
 async function main() {
   const chunks = [];
@@ -27,7 +28,8 @@ async function main() {
   await writeFile(instructionFile, request.instruction, 'utf8');
   try {
     const output = await runClaude(instructionFile, request.model, JSON.stringify(request.context));
-    process.stdout.write(output);
+    // The model is asked for bare JSON; what it sends is another matter.
+    process.stdout.write(extractJson(output));
   } finally {
     await unlink(instructionFile).catch(() => {});
   }
