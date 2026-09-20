@@ -621,8 +621,17 @@ describe('PR review', () => {
     await wrapper.findAll('.file-thread-chip')[1]!.trigger('click')
     await flushPromises()
     expect(revealed.at(-1)).toBe(56)
-    await wrapper.findAll('.zone-toggle')[1]!.trigger('click')
+    await wrapper.findAll('.zone-head')[1]!.trigger('click')
     expect(wrapper.findAll('.zone-card .thread-content')).toHaveLength(1)
+
+    // Hiding takes every block out of the code, and a chip brings them back.
+    await wrapper.find('.comments-toggle').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.zone-card')).toHaveLength(0)
+    expect(wrapper.find('.comments-toggle').text()).toBe('Pokaż komentarze (2)')
+    await wrapper.findAll('.file-thread-chip')[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.zone-card')).toHaveLength(2)
     wrapper.unmount()
   })
 

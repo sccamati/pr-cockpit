@@ -418,13 +418,20 @@ function toggleComment(threadId: number, commentId: number) {
 // containers it created for us, and the markup is teleported into them.
 const zoneTargets = ref<{ line: number; el: HTMLElement }[]>([])
 const collapsedZones = ref(new Set<number>())
+// Hiding them all is a per-session preference, not per file: you turn comments off to read
+// the code, and turning them back on for every file would defeat that.
+const showComments = ref(true)
 const zoneLines = computed(() => {
-  const lines = threadsInFile.value
-    .filter(thread => (thread.rightLine ?? 0) > 0)
-    .map(thread => thread.rightLine!)
+  const lines = showComments.value
+    ? threadsInFile.value.filter(thread => (thread.rightLine ?? 0) > 0).map(thread => thread.rightLine!)
+    : []
   if (lineDraft.value) lines.push(lineDraft.value)
   return [...new Set(lines)].sort((a, b) => a - b)
 })
+function hideComments() {
+  showComments.value = false
+  inlineThreadId.value = null
+}
 function threadAtLine(line: number): PrCommentThread | null {
   return threadsInFile.value.find(thread => thread.rightLine === line) ?? null
 }
@@ -438,6 +445,7 @@ function toggleZone(line: number) {
 const useZones = computed(() => fileDiff.value?.kind === 'text')
 
 function openThreadInFile(thread: PrCommentThread) {
+  showComments.value = true
   inlineThreadId.value = thread.id
   draft.value = null
   commentError.value = ''
@@ -1455,6 +1463,9 @@ onMounted(loadProjects)
                   <button type="button" title="Następna zmiana w pliku (.)" aria-label="Następna zmiana w pliku" @click="goToDiff('next')">›</button>
                   <button type="button" class="diff-layout-toggle" :aria-pressed="sideBySide" @click="sideBySide = !sideBySide">{{ sideBySide ? 'Obok siebie' : 'W linii' }}</button>
                   <button type="button" title="Opis PR (o)" @click="showBriefing">Opis PR</button>
+                  <button v-if="threadsInFile.length" type="button" class="comments-toggle"
+                    :aria-pressed="showComments" :title="showComments ? 'Ukryj komentarze w kodzie' : 'Pokaż komentarze w kodzie'"
+                    @click="showComments = !showComments">{{ showComments ? 'Ukryj komentarze' : `Pokaż komentarze (${threadsInFile.length})` }}</button>
                   <button type="button" class="comment-line-button" title="Skomentuj linię pod kursorem"
                     :disabled="!fileDiff || fileDiff.kind !== 'text'" @click="commentOnCursorLine">Skomentuj linię</button>
                   <button type="button" class="explain-button" title="Wyjaśnij ten plik (e)"
@@ -1548,13 +1559,15 @@ onMounted(loadProjects)
               <Teleport v-for="zone in zoneTargets" :key="zone.line" :to="zone.el">
                 <div class="zone-card" :class="{ 'zone-card--draft': !threadAtLine(zone.line) }">
                   <template v-if="threadAtLine(zone.line)">
-                    <div class="zone-head">
-                      <button type="button" class="zone-toggle" :aria-expanded="!collapsedZones.has(zone.line)"
-                        @click="toggleZone(zone.line)">{{ collapsedZones.has(zone.line) ? '▸' : '▾' }}</button>
+                    <!-- The whole header folds the block; the caret is a hint, not the only target. -->
+                    <div class="zone-head" role="button" tabindex="0" :aria-expanded="!collapsedZones.has(zone.line)"
+                      @click="toggleZone(zone.line)" @keydown.enter.prevent="toggleZone(zone.line)" @keydown.space.prevent="toggleZone(zone.line)">
+                      <span class="zone-toggle">{{ collapsedZones.has(zone.line) ? '▸' : '▾' }}</span>
                       <span class="thread-author">{{ threadAtLine(zone.line)!.comments[0]?.author ?? 'Nieznany autor' }}</span>
                       <span v-if="threadAtLine(zone.line)!.status && threadStatusLabels[threadAtLine(zone.line)!.status!]" class="thread-status">{{ threadStatusLabels[threadAtLine(zone.line)!.status!] }}</span>
                       <span v-if="threadAtLine(zone.line)!.comments.length > 1" class="thread-status">{{ threadAtLine(zone.line)!.comments.length }} wpisy</span>
                       <span v-if="collapsedZones.has(zone.line)" class="zone-preview">{{ commentPreview(threadAtLine(zone.line)!.comments[0]?.content ?? '') }}</span>
+                      <button type="button" class="zone-hide" @click.stop="hideComments">Ukryj wszystkie</button>
                     </div>
                     <template v-if="!collapsedZones.has(zone.line)">
                       <p v-if="commentError && inlineThreadId === threadAtLine(zone.line)!.id" class="notice error" role="alert">{{ commentError }}</p>
