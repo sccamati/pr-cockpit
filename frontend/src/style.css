@@ -337,8 +337,8 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 /* The gutter marker for a line that already has a thread, and the hover affordance for
    starting one on a line that does not. */
 .comment-glyph, .comment-add-glyph { cursor: pointer; }
-.comment-glyph::before { content: '💬'; display: block; font-size: 11px; line-height: 22px; text-align: center; }
-.comment-add-glyph::before { content: '+'; display: block; font-size: 15px; line-height: 22px; text-align: center; color: var(--accent); font-weight: 700; }
+.comment-glyph::before { content: '💬'; display: block; font-size: 10px; line-height: 22px; text-align: center; }
+.comment-add-glyph::before { content: '+'; display: block; font-size: 14px; line-height: 22px; text-align: center; color: var(--accent); font-weight: 700; }
 .diff-since { margin: 0 12px 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .thread-moved { margin: 6px 0 0; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .thread-moved-dot { color: var(--accent); font-size: 10px; margin-left: 6px; }

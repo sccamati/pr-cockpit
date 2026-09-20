@@ -212,7 +212,11 @@ onMounted(() => {
     renderWhitespace: 'selection',
     // The gutter menu only offers revert/stage, which a read-only viewer cannot do.
     renderGutterMenu: false,
-    glyphMargin: true,
+    // Comment markers ride the line-decorations strip, not the glyph margin: the glyph
+    // margin is ~26px of empty gutter that pushed the code sideways, and an inline diff
+    // already spends two number columns on the left.
+    glyphMargin: false,
+    lineDecorationsWidth: 18,
     // ponytail: experimental by name — first thing to drop if moved blocks render oddly.
     experimental: { showMoves: true },
     // Lets the page keep scrolling once the editor reaches its end (stacked layout).
@@ -238,7 +242,7 @@ onMounted(() => {
   // Both the margin icon and the line number open the conversation, because "click the
   // line" is what a reviewer reaches for and a 12-pixel icon is a poor target.
   glyphListener = modified.onMouseDown(event => {
-    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS &&
         event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) return
     const line = event.target.position?.lineNumber
     if (line) emit('openLine', line)
@@ -292,8 +296,8 @@ function setHoveredLine(line: number | null) {
     ? [{
         range: new monaco.Range(line, 1, line, 1),
         options: {
-          glyphMarginClassName: 'comment-add-glyph',
-          glyphMarginHoverMessage: { value: 'Dodaj komentarz do tej linii' },
+          linesDecorationsClassName: 'comment-add-glyph',
+          linesDecorationsTooltip: 'Dodaj komentarz do tej linii',
         },
       }]
     : [])
@@ -369,8 +373,8 @@ function refreshGlyphs() {
   const marker = (line: number, resolved: boolean) => ({
     range: new monaco.Range(line, 1, line, 1),
     options: {
-      glyphMarginClassName: resolved ? 'comment-glyph comment-glyph--resolved' : 'comment-glyph',
-      glyphMarginHoverMessage: { value: resolved ? 'Rozwiązany komentarz' : 'Komentarz w tej linii' },
+      linesDecorationsClassName: resolved ? 'comment-glyph comment-glyph--resolved' : 'comment-glyph',
+      linesDecorationsTooltip: resolved ? 'Rozwiązany komentarz' : 'Komentarz w tej linii',
       stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
     },
   })

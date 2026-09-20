@@ -48,7 +48,7 @@ vi.mock('monaco-editor', () => ({
       return model
     }),
     TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
-    MouseTargetType: { GUTTER_GLYPH_MARGIN: 2, GUTTER_LINE_NUMBERS: 3 },
+    MouseTargetType: { GUTTER_LINE_DECORATIONS: 2, GUTTER_LINE_NUMBERS: 3 },
     createDiffEditor: vi.fn(() => ({
       setModel: vi.fn(), layout: vi.fn(), dispose: vi.fn(),
       updateOptions: mocks.diffUpdateOptions,
@@ -304,7 +304,7 @@ describe('Monaco reading options', () => {
     wrapper.unmount()
   })
 
-  it('marks commented lines on the gutter and reports a click on the marker', async () => {
+  it('marks commented lines in the decorations strip and reports a click on the marker', async () => {
     const wrapper = mount(MonacoDiff, {
       props: {
         path: '/src/a.ts', originalPath: null, originalText: 'a', modifiedText: 'b',
@@ -316,7 +316,7 @@ describe('Monaco reading options', () => {
     const decorations = mocks.decorationsSet.mock.calls[0]![0] as { range: { startLineNumber: number } }[]
     expect(decorations.map(entry => entry.range.startLineNumber)).toEqual([4, 9])
 
-    // The margin and the line number both open a comment; a click in the code does not.
+    // The decorations strip and the line number both open a comment; the code does not.
     const handler = mocks.onMouseDown.mock.calls[0]![0] as (event: unknown) => void
     handler({ target: { type: 6, position: { lineNumber: 4 } } })
     expect(wrapper.emitted('openLine')).toBeUndefined()
