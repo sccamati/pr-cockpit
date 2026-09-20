@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { renderDescription } from '../src/description'
+import { commentPreview, renderComment, renderDescription } from '../src/description'
 
 function render(text: string, workItems: { id: string; url: string }[] = []) {
   const host = document.createElement('div')
@@ -74,5 +74,34 @@ describe('render opisu PR', () => {
     expect(links[0]!.getAttribute('href')).toBe('https://dev.azure.com/org/_workitems/edit/1234')
     expect(host.querySelector('code')?.textContent).toBe('#1234')
     expect(host.textContent).toContain('#9999')
+  })
+})
+
+describe('komentarze', () => {
+  it('renders a comment as Markdown and drops tooling markers', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderComment('<!--review-swarm-->\n**[security]** MEDIUM\n\n`Program.cs:62`')
+
+    expect(host.textContent).not.toContain('review-swarm')
+    expect(host.querySelector('strong')?.textContent).toBe('[security]')
+    expect(host.querySelector('code')?.textContent).toBe('Program.cs:62')
+  })
+
+  it('sanitises a comment the same way a description is sanitised', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderComment('<img src=x onerror=alert(1)>[klik](javascript:alert(1))')
+
+    // html:false escapes the tag, so "onerror" survives as visible text and never as an
+    // attribute — that is the escaping working, not a leak.
+    expect(host.querySelector('img')).toBeNull()
+    expect(host.querySelector('[onerror]')).toBeNull()
+    expect(host.textContent).toContain('<img src=x onerror=alert(1)>')
+    // markdown-it refuses a javascript: target outright, so no link is produced at all.
+    expect(host.querySelector('a[href^="javascript:"]')).toBeNull()
+  })
+
+  it('strips Markdown punctuation for a one-line preview', () => {
+    expect(commentPreview('<!--x-->**Problem:** `ekobill`\n\n---\n\nnie dostaje parametrow'))
+      .toBe('Problem: ekobill nie dostaje parametrow')
   })
 })

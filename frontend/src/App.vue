@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type Component } from 'vue'
 import FileTree from './FileTree.vue'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
-import { renderDescription } from './description'
+import { commentPreview, renderComment, renderDescription } from './description'
 import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
@@ -71,7 +71,7 @@ const sideBySide = ref(false)
 const helpDialog = ref<HTMLDialogElement | null>(null)
 // ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
 // dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
-const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null } | null>(null)
+const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void } | null>(null)
 let requestId = 0
 let diffRequestId = 0
 let summaryRequestId = 0
@@ -381,6 +381,51 @@ function openLineComments(line: number) {
     inlineThreadId.value = null
     draft.value = { target: `file:${selectedFilePath.value}:${line}`, text: '' }
   }
+  revealCommentLine(line)
+}
+
+// The panel shrinks when the conversation opens, so the line has to be scrolled back into
+// view after the layout settles — otherwise it ends up just below the fold.
+function revealCommentLine(line: number | null | undefined) {
+  if (!line) return
+  void nextTick(() => diffView.value?.revealLine?.(line))
+}
+
+// A review comment can be two screens of Markdown. Long ones are clamped with a toggle,
+// because the code is the thing on screen that must not be pushed away.
+const longCommentChars = 500
+const expandedComments = ref(new Set<string>())
+const commentKey = (threadId: number, commentId: number) => `${threadId}:${commentId}`
+function isLongComment(content: string | null): boolean {
+  return (content?.length ?? 0) > longCommentChars
+}
+function isExpanded(threadId: number, commentId: number): boolean {
+  return expandedComments.value.has(commentKey(threadId, commentId))
+}
+function toggleComment(threadId: number, commentId: number) {
+  const key = commentKey(threadId, commentId)
+  const next = new Set(expandedComments.value)
+  if (!next.delete(key)) next.add(key)
+  expandedComments.value = next
+}
+
+function openThreadInFile(thread: PrCommentThread) {
+  inlineThreadId.value = thread.id
+  draft.value = null
+  commentError.value = ''
+  revealCommentLine(thread.rightLine)
+}
+
+// With several comments in one file, stepping through them beats hunting for chips.
+const inlineThreadIndex = computed(() =>
+  threadsInFile.value.findIndex(thread => thread.id === inlineThreadId.value))
+function stepThreadInFile(offset: 1 | -1) {
+  const list = threadsInFile.value
+  if (list.length === 0) return
+  const next = inlineThreadIndex.value < 0
+    ? (offset === 1 ? 0 : list.length - 1)
+    : (inlineThreadIndex.value + offset + list.length) % list.length
+  openThreadInFile(list[next]!)
 }
 
 function resolveThread(threadId: number) {
@@ -652,6 +697,7 @@ function resetThreads() {
   commentError.value = ''
   snippets.value = {}
   snippetsLoading.value = false
+  expandedComments.value = new Set()
 }
 
 async function loadThreads(project: string, repository: string, id: number) {
@@ -1333,8 +1379,12 @@ onMounted(loadProjects)
                   <p v-else-if="thread.filePath && snippetsLoading" class="muted snippet-loading">Wczytywanie kodu…</p>
                   <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
                     <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
-                    <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>
-                    <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                    <div v-if="comment.content" class="thread-content markdown-body"
+                      :class="{ 'thread-content--clamped': isLongComment(comment.content) && !isExpanded(thread.id, comment.id) }"
+                      v-html="renderComment(comment.content)" />
+                    <button v-if="comment.content && isLongComment(comment.content)" type="button" class="comment-expand"
+                      @click="toggleComment(thread.id, comment.id)">{{ isExpanded(thread.id, comment.id) ? 'Zwiń' : 'Pokaż całość' }}</button>
+                    <p v-else-if="!comment.content" class="thread-content muted">(komentarz usunięty)</p>
                   </div>
                   <p v-if="movedSinceComment(thread)" class="thread-moved">
                     Kod zmienił się po tym komentarzu (iteracja {{ thread.iterationId }} → {{ lastIteration }}).
@@ -1391,8 +1441,8 @@ onMounted(loadProjects)
                 <button v-for="thread in threadsInFile" :key="thread.id" type="button"
                   class="file-thread-chip" :class="{ 'file-thread-chip--resolved': isResolved(thread) }"
                   :aria-pressed="inlineThreadId === thread.id"
-                  :title="thread.comments[0]?.content ?? ''"
-                  @click="inlineThreadId = thread.id; draft = null">
+                  :title="thread.comments[0]?.content ? commentPreview(thread.comments[0].content) : ''"
+                  @click="openThreadInFile(thread)">
                   {{ isResolved(thread) ? '✓' : '💬' }} {{ thread.rightLine ? `linia ${thread.rightLine}` : 'plik' }}
                 </button>
               </div>
@@ -1401,13 +1451,20 @@ onMounted(loadProjects)
               <div v-if="inlineThread || lineDraft !== null" class="inline-comments">
                 <div class="inline-comments-head">
                   <strong>{{ inlineThread ? `Komentarz w linii ${inlineThread.rightLine ?? '—'}` : `Nowy komentarz do linii ${lineDraft}` }}</strong>
+                  <template v-if="inlineThread && threadsInFile.length > 1">
+                    <span class="inline-position">{{ inlineThreadIndex + 1 }} z {{ threadsInFile.length }}</span>
+                    <button type="button" aria-label="Poprzedni komentarz w pliku" @click="stepThreadInFile(-1)">‹</button>
+                    <button type="button" aria-label="Następny komentarz w pliku" @click="stepThreadInFile(1)">›</button>
+                  </template>
                   <button type="button" class="inline-close" @click="closeInlineComments">Zamknij</button>
                 </div>
                 <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
                 <template v-if="inlineThread">
                   <div v-for="comment in inlineThread.comments" :key="comment.id" class="thread-comment">
                     <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
-                    <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>
+                    <!-- Never clamped here: the block scrolls and can be resized, so the
+                         whole comment is always reachable without a second click. -->
+                    <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
                     <p v-else class="thread-content muted">(komentarz usunięty)</p>
                   </div>
                   <div v-if="draft?.target === String(inlineThread.id)" class="comment-draft">
@@ -1510,7 +1567,7 @@ onMounted(loadProjects)
                       :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
                     <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
                     <span v-if="movedSinceComment(thread)" class="thread-moved-dot" title="Kod zmienił się po tym komentarzu">●</span>
-                    <p class="thread-content thread-preview">{{ thread.comments[0]?.content ?? '(komentarz usunięty)' }}</p>
+                    <p class="thread-content thread-preview">{{ thread.comments[0]?.content ? commentPreview(thread.comments[0].content) : '(komentarz usunięty)' }}</p>
                   </li>
                 </ul>
                 <button type="button" class="comments-open" title="Widok komentarzy (c)" @click="toggleComments">Otwórz widok komentarzy</button>

@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../src/App.vue'
 
+const revealed = vi.hoisted(() => [] as number[])
 const api = vi.hoisted(() => ({
   projects: vi.fn(),
   repositories: vi.fn(),
@@ -31,6 +32,14 @@ vi.mock('../src/MonacoDiff.vue', () => ({
     name: 'MonacoDiff',
     props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines'],
     emits: ['openLine'],
+    // Options-API methods land on the instance, which is what the template ref holds, so
+    // App can call revealLine on the stub exactly as it calls it on the real editor.
+    methods: {
+      revealLine: (line: number) => revealed.push(line),
+      goToDiff: () => {},
+      focusEditor: () => {},
+      cursorLine: () => null,
+    },
     template: '<div class="test-diff">Diff</div>',
   },
 }))
@@ -62,6 +71,7 @@ const details = {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  revealed.length = 0
   api.projects.mockResolvedValue([{ id: 'project', name: 'Project' }])
   api.repositories.mockResolvedValue([{ id: 'repo-a', name: 'Repo A' }])
   api.pullRequests.mockResolvedValue([details])
@@ -566,6 +576,37 @@ describe('PR review', () => {
 
     // Two threads in one file cost one diff, not two.
     expect(api.fileDiff).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the code visible: never truncates a comment and steps between threads in a file', async () => {
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Jan', content: 'Krotki.', commentType: 'text', publishedAt: null }] },
+      { id: 2, status: 'active', filePath: '/src/first.cs', rightLine: 56, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Anna', content: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.file-thread-chip')[0]!.trigger('click')
+    await flushPromises()
+    expect(revealed.at(-1)).toBe(4)
+    expect(wrapper.find('.thread-content--clamped').exists()).toBe(false)
+
+    // Stepping moves to the next thread in the file and scrolls its line into view.
+    await wrapper.findAll('.inline-comments-head button')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.inline-position').text()).toBe('2 z 2')
+    expect(revealed.at(-1)).toBe(56)
+
+    // In the diff a comment is never truncated — the block scrolls instead.
+    expect(wrapper.find('.thread-content--clamped').exists()).toBe(false)
+    expect(wrapper.find('.inline-comments .thread-content').text().length).toBeGreaterThan(500)
     wrapper.unmount()
   })
 

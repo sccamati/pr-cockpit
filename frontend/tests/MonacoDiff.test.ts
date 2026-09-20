@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   onMouseMove: vi.fn(),
   onMouseLeave: vi.fn(),
   hoverSet: vi.fn(),
+  setPosition: vi.fn(),
+  revealLineInCenter: vi.fn(),
   modifiedEditor: null as unknown,
   decorationsSet: vi.fn(),
   decorationsClear: vi.fn(),
@@ -95,6 +97,8 @@ beforeEach(() => {
     updateOptions: mocks.modifiedUpdate,
     focus: vi.fn(),
     getPosition: () => ({ lineNumber: 12 }),
+    setPosition: mocks.setPosition,
+    revealLineInCenter: mocks.revealLineInCenter,
     onMouseDown: mocks.onMouseDown,
     onMouseMove: mocks.onMouseMove,
     onMouseLeave: mocks.onMouseLeave,
@@ -227,6 +231,20 @@ describe('Monaco reading options', () => {
     expect(themes).toContain('pr-cockpit-code')
     expect(themes).toContain('pr-cockpit-code-dark')
     expect(vi.mocked(monaco.editor.createDiffEditor).mock.calls[0]![1]!.theme).toBe('pr-cockpit-code')
+    wrapper.unmount()
+  })
+
+  it('scrolls a commented line into the middle of the view', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/a.ts', originalPath: null, originalText: 'a', modifiedText: 'b', commentLines: [56] },
+    })
+    await flushPromises()
+
+    ;(wrapper.vm as unknown as { revealLine(line: number): void }).revealLine(56)
+
+    // Centred rather than merely scrolled to, so the code around the comment is visible.
+    expect(mocks.setPosition).toHaveBeenCalledWith({ lineNumber: 56, column: 1 })
+    expect(mocks.revealLineInCenter).toHaveBeenCalledWith(56)
     wrapper.unmount()
   })
 

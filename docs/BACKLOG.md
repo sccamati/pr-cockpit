@@ -302,6 +302,12 @@ Status: zaimplementowane. Prośba użytkownika po obejrzeniu B-20.
 
 **Odczyt potwierdzony na żywym Azure DevOps (2026-09-20):** PR 1904 w `SmartIT_Monorepo` zwraca 8 wątków z plikami, liniami i iteracjami; wątki systemowe są odfiltrowane. Wcześniejszy brak komentarzy wynikał z tego, że działał proces backendu sprzed etapu 4 — trasa `/threads` zwracała 404.
 
+**Czytelność i układ, po informacji zwrotnej:**
+- Treść komentarza to **Markdown**, renderowany tym samym sanityzowanym torem co opis PR (`markdown-it` z `html:false` + DOMPurify). Surowy tekst zamieniał każdy pogrubiony nagłówek i fragment kodu w szum. Znaczniki narzędziowe w rodzaju `<!--review-swarm-->` są usuwane przed renderem, bo przy `html:false` markdown-it by je wypisał. W szynie zostaje jedna linia podglądu ze zdjętą interpunkcją Markdowna.
+- Otwarcie komentarza **przewija diff do jego linii** (`setPosition` + `revealLineInCenter`), inaczej rozmowa zajmowała miejsce, w którym był kod, a linia znikała pod zgięciem.
+- Blok rozmowy nad diffem **nigdy nie ucina treści** — ma własny pasek przewijania i natywne `resize: vertical`, więc to użytkownik decyduje, ile panelu mu oddać. Przycinanie z „Pokaż całość” zostało tylko w widoku listy komentarzy, gdzie kilkanaście długich wątków jest nieczytelne.
+- Przy kilku komentarzach w pliku blok ma nawigację `‹ ›` i licznik „n z m”, a żetony nad diffem przewijają do swojej linii.
+
 **Nadal niesprawdzony zapis:** `AzureDevOps:AllowComments` nie jest ustawiony, więc założenie wątku, odpowiedź i zmiana statusu kończą się kontrolowanym 503, nie docierając do Azure DevOps.
 
 ## Później — do osobnej decyzji

@@ -9,6 +9,29 @@ import type { WorkItem } from './api'
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 const workItemPattern = /#(\d+)/g
+// Tooling leaves markers like <!--review-swarm--> in comments. Azure DevOps hides them as
+// HTML comments; with html:false markdown-it would print them, so they go first.
+const htmlComment = /<!--[\s\S]*?-->/g
+
+/**
+ * A pull request comment, through the same two sanitising layers as the description.
+ * Comments are Markdown in Azure DevOps, and showing the source instead of the result
+ * turned every bold heading and code span into noise.
+ */
+export function renderComment(text: string): string {
+  return renderDescription(text.replace(htmlComment, ''))
+}
+
+/** One plain line for a list, with the Markdown punctuation taken off rather than rendered. */
+export function commentPreview(text: string): string {
+  return text
+    .replace(htmlComment, '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[*_`>#]/g, '')
+    .replace(/^\s*[-=]{3,}\s*$/gm, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 export function renderDescription(text: string, workItems: readonly WorkItem[] = []): string {
   const fragment = DOMPurify.sanitize(markdown.render(text), { RETURN_DOM_FRAGMENT: true })
