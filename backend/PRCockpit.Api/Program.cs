@@ -1,23 +1,19 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using PRCockpit.Api.Analysis;
-using PRCockpit.Api.AzureDevOps;
-using PRCockpit.Api.Checklists;
-using PRCockpit.Api.Persistence;
+using PRCockpit.Application.Analysis;
+using PRCockpit.Application.Ports;
+using PRCockpit.Application.PullRequests;
+using PRCockpit.Domain.Analysis;
+using PRCockpit.Domain.PullRequests;
+using PRCockpit.Domain.Review;
+using PRCockpit.Infrastructure;
+using PRCockpit.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHttpClient<AzureDevOpsClient>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-builder.Services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
-builder.Services.AddDbContext<PrCockpitContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("PrCockpit")));
-// Scoped, because they now depend on the scoped DbContext.
-builder.Services.AddScoped<ChecklistStore>();
-builder.Services.AddScoped<SummaryStore>();
-builder.Services.AddScoped<ReviewProgressStore>();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddScoped<PullRequestContextService>();
+builder.Services.AddScoped<SummaryService>();
 
 var app = builder.Build();
 
@@ -33,90 +29,82 @@ using (var scope = app.Services.CreateScope())
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
 var api = app.MapGroup("/api");
+const string PullRequests = "/projects/{project}/repositories/{repositoryId}/pull-requests";
 
-api.MapGet("/projects", async (AzureDevOpsClient client, CancellationToken ct) =>
+api.MapGet("/projects", async (IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetProjectsAsync(ct)));
 
-api.MapGet("/projects/{project}/repositories", async (string project, AzureDevOpsClient client, CancellationToken ct) =>
+api.MapGet("/projects/{project}/repositories", async (
+    string project, IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetRepositoriesAsync(project, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests", async (
-    string project, string repositoryId, AzureDevOpsClient client, CancellationToken ct) =>
+api.MapGet(PullRequests, async (
+    string project, string repositoryId, IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetPullRequestsAsync(project, repositoryId, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/checklist-progress", async (
-    string project, string repositoryId, ChecklistStore store, CancellationToken ct) =>
+// The literal segments below win over the {pullRequestId:int} routes, the way route
+// matching prefers a literal over a constrained parameter.
+api.MapGet($"{PullRequests}/checklist-progress", async (
+    string project, string repositoryId, IChecklistStore store, CancellationToken ct) =>
     await Execute(() => store.GetProgressAsync(project, repositoryId, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}", async (
-    string project, string repositoryId, int pullRequestId, AzureDevOpsClient client, CancellationToken ct) =>
+api.MapGet($"{PullRequests}/file-review-progress", async (
+    string project, string repositoryId, IReviewProgressStore store, CancellationToken ct) =>
+    await Execute(() => store.GetProgressAsync(project, repositoryId, ct)));
+
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}", async (
+    string project, string repositoryId, int pullRequestId, IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/diff", async (
-    string project, string repositoryId, int pullRequestId, string path, AzureDevOpsClient client, CancellationToken ct) =>
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/diff", async (
+    string project, string repositoryId, int pullRequestId, string path,
+    IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)));
 
-api.MapPost("/csharp/hovers", async (CSharpHoverRequest request) =>
-    await Execute(() => Task.FromResult(CSharpHovers.Build(request))));
+api.MapPost("/csharp/hovers", async (CSharpHoverRequest request, ICSharpHoverAnalyzer analyzer) =>
+    await Execute(() => Task.FromResult(analyzer.Build(request))));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/context", async (
-    string project, string repositoryId, int pullRequestId, AzureDevOpsClient client, CancellationToken ct) =>
-    await Execute(async () =>
-    {
-        var details = await client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct);
-        return await PrContextBuilder.BuildAsync(details,
-            (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
-            ContextBudget.Default, ct);
-    }));
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/context", async (
+    string project, string repositoryId, int pullRequestId,
+    PullRequestContextService contexts, CancellationToken ct) =>
+    await Execute(() => contexts.BuildAsync(project, repositoryId, pullRequestId, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/summary", async (
-    string project, string repositoryId, int pullRequestId, SummaryStore store, CancellationToken ct) =>
-    await Execute(async () => new { stored = await store.GetAsync(project, repositoryId, pullRequestId, ct) }));
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/summary", async (
+    string project, string repositoryId, int pullRequestId, SummaryService summaries, CancellationToken ct) =>
+    await Execute(async () => new { stored = await summaries.GetSavedAsync(project, repositoryId, pullRequestId, ct) }));
 
-api.MapPost("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/summary", async (
-    string project, string repositoryId, int pullRequestId, AzureDevOpsClient client,
-    IAiSummaryAnalyzer analyzer, SummaryStore store, CancellationToken ct) =>
-    await Execute(async () =>
-    {
-        var details = await client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct);
-        var context = await PrContextBuilder.BuildAsync(details,
-            (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
-            ContextBudget.Default, ct);
-        var result = await SummaryRunner.RunAsync(context, analyzer, ct);
-        await store.SaveAsync(project, repositoryId, pullRequestId, result, ct);
-        return result;
-    }));
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/summary", async (
+    string project, string repositoryId, int pullRequestId, SummaryService summaries, CancellationToken ct) =>
+    await Execute(() => summaries.GenerateAsync(project, repositoryId, pullRequestId, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/file-review-progress", async (
-    string project, string repositoryId, ReviewProgressStore store, CancellationToken ct) =>
-    await Execute(() => store.GetProgressAsync(project, repositoryId, ct)));
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/checklist", async (
+    string project, string repositoryId, int pullRequestId, IChecklistStore store, CancellationToken ct) =>
+    await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
 
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/file-reviews", async (
-    string project, string repositoryId, int pullRequestId, ReviewProgressStore store, CancellationToken ct) =>
+api.MapPut($"{PullRequests}/{{pullRequestId:int}}/checklist/{{item}}", async (
+    string project, string repositoryId, int pullRequestId, string item, ChecklistUpdate update,
+    IChecklistStore store, CancellationToken ct) =>
+    await Execute(() => store.SetAsync(project, repositoryId, pullRequestId, item, update.Completed, ct)));
+
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/file-reviews", async (
+    string project, string repositoryId, int pullRequestId, IReviewProgressStore store, CancellationToken ct) =>
     await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
 
 // The file path travels in the body: a route segment cannot carry a slash-laden path safely.
-api.MapPut("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/file-reviews", async (
+api.MapPut($"{PullRequests}/{{pullRequestId:int}}/file-reviews", async (
     string project, string repositoryId, int pullRequestId, FileReviewUpdate update,
-    ReviewProgressStore store, CancellationToken ct) =>
+    IReviewProgressStore store, CancellationToken ct) =>
     await Execute(() => store.SetFileAsync(project, repositoryId, pullRequestId, update, ct)));
 
-api.MapPut("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/reading-path", async (
+api.MapPut($"{PullRequests}/{{pullRequestId:int}}/reading-path", async (
     string project, string repositoryId, int pullRequestId, ReadingPathUpdate update,
-    ReviewProgressStore store, CancellationToken ct) =>
+    IReviewProgressStore store, CancellationToken ct) =>
     await Execute(() => store.SetReadingPathAsync(project, repositoryId, pullRequestId, update.Paths, ct)));
-
-api.MapGet("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/checklist", async (
-    string project, string repositoryId, int pullRequestId, ChecklistStore store, CancellationToken ct) =>
-    await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
-
-api.MapPut("/projects/{project}/repositories/{repositoryId}/pull-requests/{pullRequestId:int}/checklist/{item}", async (
-    string project, string repositoryId, int pullRequestId, string item, ChecklistUpdate update,
-    ChecklistStore store, CancellationToken ct) =>
-    await Execute(() => store.SetAsync(project, repositoryId, pullRequestId, item, update.Completed, ct)));
 
 app.Run();
 
+// Every failure kind is mapped here rather than in a try/catch per endpoint, so a new one
+// has exactly one place to be handled.
 static async Task<IResult> Execute<T>(Func<Task<T>> action)
 {
     try

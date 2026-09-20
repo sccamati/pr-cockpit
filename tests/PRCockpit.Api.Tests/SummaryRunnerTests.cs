@@ -1,6 +1,11 @@
-using PRCockpit.Api.Analysis;
-using PRCockpit.Api.AzureDevOps;
+using PRCockpit.Application.Analysis;
+using PRCockpit.Domain.Analysis;
+using PRCockpit.Infrastructure.Analysis;
+using PRCockpit.Application.PullRequests;
+using PRCockpit.Domain.PullRequests;
+using PRCockpit.Infrastructure.AzureDevOps;
 using Microsoft.Extensions.Configuration;
+using PRCockpit.Application.Ports;
 
 namespace PRCockpit.Api.Tests;
 

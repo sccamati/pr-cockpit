@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/backend/">
+    <Project Path="backend/PRCockpit.Domain/PRCockpit.Domain.csproj" />
+    <Project Path="backend/PRCockpit.Application/PRCockpit.Application.csproj" />
+    <Project Path="backend/PRCockpit.Infrastructure/PRCockpit.Infrastructure.csproj" />
     <Project Path="backend/PRCockpit.Api/PRCockpit.Api.csproj" />
   </Folder>
   <Folder Name="/tests/">

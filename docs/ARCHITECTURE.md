@@ -4,7 +4,22 @@
 Vue 3 / Vite → ASP.NET Core API → Azure DevOps REST API
 ```
 
-Frontend wybiera projekt i repozytorium, wyświetla aktywne PR-y i szczegóły. W developmentcie Vite przekazuje żądania `/api` do backendu. Backend jest pojedynczą aplikacją; `AzureDevOpsClient` izoluje wywołania HTTP, a `AzureDevOpsMapper` mapuje odpowiedzi na prosty kontrakt API. To wystarcza na obecny zakres bez dodatkowych projektów domenowych czy wzorców pośredniczących.
+Frontend wybiera projekt i repozytorium, wyświetla aktywne PR-y i szczegóły. W developmentcie Vite przekazuje żądania `/api` do backendu.
+
+Backend jest podzielony na cztery projekty, a zależności wskazują do środka:
+
+```text
+PRCockpit.Api  →  PRCockpit.Application  →  PRCockpit.Domain
+      ↓                      ↑
+PRCockpit.Infrastructure ────┘
+```
+
+- **Domain** — modele PR-a, pakiet kontekstu, stan review i reguły takie jak `TextLineLimit`. Nie zna HTTP, bazy, Roslyna ani ASP.NET.
+- **Application** — porty (`IAzureDevOpsClient`, `IAiSummaryAnalyzer`, `ICSharpHoverAnalyzer`, trzy magazyny) oraz logika przypadków użycia: `PrContextBuilder`, `SummaryRunner`, `PullRequestContextService`, `SummaryService`. Sekwencja „pobierz szczegóły → zbuduj kontekst → uruchom AI → zapisz” ma tu jednego właściciela, zamiast siedzieć w ciele endpointu.
+- **Infrastructure** — adaptery: `AzureDevOpsClient` i `AzureDevOpsMapper`, `CliSummaryAnalyzer`, Roslyn w `CSharpHovers`, `PrCockpitContext` z encjami i migracjami oraz trzy magazyny. `InfrastructureServices.AddInfrastructure` jest jedynym miejscem, które wiąże port z konkretną implementacją.
+- **Api** — host: rejestracja zależności, trasy i `Execute`.
+
+Kierunek zależności nie jest deklaracją — pilnuje go `ArchitectureTests`, który czyta faktyczne referencje zestawów i sprawdza, że domena nie zna EF, SqlClient, Roslyna, ASP.NET ani HTTP, że aplikacja nie zna infrastruktury i że każdy port ma adapter. Złamanie warstwy wywraca test, a nie tylko konwencję.
 
 Backend czyta organizację i PAT z konfiguracji .NET (User Secrets lub zmienne środowiskowe). Frontend nie otrzymuje PAT. Integracja używa Azure DevOps REST API 7.1 i pobiera dane na żądanie. Dla szczegółów PR pobiera ostatnią iterację, listę zmienionych plików, commity i powiązane Work Items. Lista plików korzysta z porównania ostatniej iteracji z bazą PR i obsługuje strony zmian; licznik wynika z długości listy. Commity są pobierane przez [endpoint PR commits](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-commits/get-pull-request-commits?view=azure-devops-rest-7.1) z `continuationToken`; odpowiedź szczegółów zawiera ich ID, wiadomość, autora i opcjonalną datę, a `commitsCount` wynika z długości tej listy.
 

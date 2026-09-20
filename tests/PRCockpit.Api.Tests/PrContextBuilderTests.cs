@@ -1,4 +1,6 @@
-using PRCockpit.Api.AzureDevOps;
+using PRCockpit.Application.PullRequests;
+using PRCockpit.Domain.PullRequests;
+using PRCockpit.Infrastructure.AzureDevOps;
 
 namespace PRCockpit.Api.Tests;
 

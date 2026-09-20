@@ -21,6 +21,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\backend\PRCockpit.Api\PRCockpit.Api.csproj" />
+    <ProjectReference Include="..\..\backend\PRCockpit.Domain\PRCockpit.Domain.csproj" />
+    <ProjectReference Include="..\..\backend\PRCockpit.Application\PRCockpit.Application.csproj" />
+    <ProjectReference Include="..\..\backend\PRCockpit.Infrastructure\PRCockpit.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

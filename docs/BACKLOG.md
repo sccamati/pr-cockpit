@@ -150,10 +150,23 @@ Status: zaimplementowane. Decyzja użytkownika po przedstawieniu kompromisów.
 
 **Niesprawdzone:** zachowanie przy równoległych zapisach z dwóch okien oraz to, czy dotychczasowe dane z pliku SQLite mają zostać przeniesione — obecnie **nie są**, baza SQL Server startuje pusta.
 
+## Wdrożone — podział na warstwy
+
+### B-13 — Clean Architecture w osobnych projektach
+
+Status: zaimplementowane. Decyzja użytkownika, podjęta po przedstawieniu zastrzeżenia, że zapis w `CLAUDE.md` tego repo mówił, iż narzędzie jednoosobowe nie zarabia na warstwy.
+
+**Zakres:** backend rozbity z jednego projektu na cztery — `PRCockpit.Domain`, `PRCockpit.Application`, `PRCockpit.Infrastructure`, `PRCockpit.Api` — z zależnościami skierowanymi do środka. Modele i reguły trafiły do domeny, porty i przypadki użycia do aplikacji, adaptery (Azure DevOps, Roslyn, EF Core, magazyny) do infrastruktury, a host z trasami i mapowaniem błędów został w API. Orkiestracja „pobierz szczegóły → zbuduj kontekst → uruchom AI → zapisz”, która siedziała w ciele endpointu, dostała własnego właściciela w `SummaryService`.
+
+**Najważniejsze:** doszedł `ArchitectureTests`, który czyta faktyczne referencje zestawów i wywraca build, gdy warstwa zostanie złamana — domena nie zna EF, SqlClient, Roslyna, ASP.NET ani HTTP; aplikacja nie zna infrastruktury; każdy port ma adapter. Bez tego katalogi byłyby tylko nazwami.
+
+**Spłacony dług:** projekt API nie zależy już od Roslyna, bo podpowiedzi C# przeniosły się do infrastruktury. Pozostało jednak jawne przypięcie `Microsoft.CodeAnalysis.Common` i `CSharp.Workspaces` w wersji 5.9.0 w API — samo `EntityFrameworkCore.Design` ciąga niespójny zestaw Roslyna (`CSharp 5.9.0` obok `CSharp.Workspaces 5.0.0`) i bez przypięcia NuGet odmawia przywrócenia pakietów.
+
+**Zweryfikowane:** 62 testy backendu (49 wcześniejszych plus 13 reguł architektonicznych) i 33 testy frontendu przechodzą; aplikacja wstaje po przebudowie i wykonuje realne zapisy oraz odczyty przez API na żywej bazie SQL Server.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
-- **Podział na warstwy (Clean Architecture, osobne projekty):** decyzja użytkownika, cały backend naraz. Odchodzi od zapisu w `CLAUDE.md` tego repo, który mówi, że narzędzie jednoosobowe nie zarabia na warstwy — zapis do aktualizacji przy tej zmianie.
 - **Komentarze Azure DevOps:** wątki PR, najpierw do odczytu (bez zmiany PAT), potem zapis za wyłącznikiem konfiguracyjnym.
 - **Quality i Architecture:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
 - **Lokalne repozytorium i zapis pozostałych analiz:** osobne etapy po Summary.

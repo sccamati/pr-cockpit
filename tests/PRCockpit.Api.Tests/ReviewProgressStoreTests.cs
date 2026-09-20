@@ -1,8 +1,8 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using PRCockpit.Api.Checklists;
-using PRCockpit.Api.Persistence;
+using PRCockpit.Domain.Review;
+using PRCockpit.Infrastructure.Persistence;
 
 namespace PRCockpit.Api.Tests;
 
