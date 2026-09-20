@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type C
 import FileTree from './FileTree.vue'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
 import { commentPreview, renderComment, renderDescription } from './description'
-import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type PrComment, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -29,7 +29,11 @@ const summaryReadError = ref('')
 const summarySavedAt = ref<string | null>(null)
 const checklist = ref<ChecklistState | null>(null)
 const checklistLoading = ref(false)
-const threads = ref<PrCommentThread[]>([])
+// What is left after the deleted comments are dropped, so the templates never have to ask
+// whether a comment still has content.
+type ReadableComment = PrComment & { content: string }
+type ReadableThread = Omit<PrCommentThread, 'comments'> & { comments: ReadableComment[] }
+const threads = ref<ReadableThread[]>([])
 const commentsOpen = ref(false)
 const threadSearch = ref('')
 const onlyActiveThreads = ref(false)
@@ -235,7 +239,7 @@ const visibleThreads = computed(() => {
 // order you read the pull request in, so a comment is where you expect it to be.
 const threadGroups = computed(() => {
   const order = new Map(orderedPaths.value.map((path, index) => [path, index]))
-  const groups = new Map<string, PrCommentThread[]>()
+  const groups = new Map<string, ReadableThread[]>()
   for (const thread of visibleThreads.value) {
     const key = thread.filePath ?? ''
     const group = groups.get(key)
@@ -450,7 +454,7 @@ const zoneLines = computed(() => {
   if (lineDraft.value) lines.push(lineDraft.value)
   return [...new Set(lines)].sort((a, b) => a - b)
 })
-function threadAtLine(line: number): PrCommentThread | null {
+function threadAtLine(line: number): ReadableThread | null {
   return threadsInFile.value.find(thread => thread.rightLine === line) ?? null
 }
 function toggleZone(line: number) {
@@ -990,6 +994,20 @@ function resetThreads() {
   snippetsLoading.value = false
 }
 
+// A deleted comment has no content, so on screen it was a row saying only that something
+// used to be here — it broke up the conversation without adding to it. Filtering at the
+// one place threads enter state means every counter, badge and editor marker follows,
+// because they all derive from this list.
+function withoutDeleted(list: PrCommentThread[]): ReadableThread[] {
+  return list
+    .map(thread => ({
+      ...thread,
+      comments: thread.comments.filter((comment): comment is ReadableComment => !!comment.content),
+    }))
+    // A thread whose every comment is gone has nothing left to read.
+    .filter(thread => thread.comments.length > 0)
+}
+
 async function loadThreads(project: string, repository: string, id: number) {
   const current = ++threadsRequestId
   threadsLoading.value = true
@@ -997,7 +1015,7 @@ async function loadThreads(project: string, repository: string, id: number) {
   try {
     const result = await api.commentThreads(project, repository, id)
     if (current !== threadsRequestId) return
-    threads.value = result
+    threads.value = withoutDeleted(result)
     if (commentsOpen.value) void loadSnippets()
   } catch (cause) {
     if (current === threadsRequestId) threadsError.value = message(cause)
@@ -1885,9 +1903,8 @@ onMounted(async () => {
                       </div>
                     </div>
                     <template v-else>
-                      <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                      <p v-if="!comment.content" class="thread-content muted">(komentarz usunięty)</p>
-                      <div v-if="comment.isMine && comment.content" class="comment-own-actions">
+                      <div class="thread-content markdown-body" v-html="renderComment(comment.content)" />
+                      <div v-if="comment.isMine" class="comment-own-actions">
                         <template v-if="deleting === comment.id">
                           <span class="muted">Usunąć na stałe?</span>
                           <button type="button" class="comment-delete" :disabled="commentSaving" @click="confirmDelete(thread.id, comment.id)">Tak, usuń</button>
@@ -1979,8 +1996,7 @@ onMounted(async () => {
                 <template v-if="inlineThread">
                   <div v-for="comment in inlineThread.comments" :key="comment.id" class="thread-comment">
                     <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
-                    <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                    <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                    <div class="thread-content markdown-body" v-html="renderComment(comment.content)" />
                   </div>
                   <div v-if="draft?.target === String(inlineThread.id)" class="comment-draft">
                     <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" aria-label="Odpowiedź w wątku"></textarea>
@@ -2054,9 +2070,8 @@ onMounted(async () => {
                           </div>
                         </div>
                         <template v-else>
-                          <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                          <p v-else class="thread-content muted">(komentarz usunięty)</p>
-                          <div v-if="comment.isMine && comment.content" class="comment-own-actions">
+                          <div class="thread-content markdown-body" v-html="renderComment(comment.content)" />
+                          <div v-if="comment.isMine" class="comment-own-actions">
                             <template v-if="deleting === comment.id">
                               <span class="muted">Usunąć na stałe?</span>
                               <button type="button" class="comment-delete" :disabled="commentSaving" @click="confirmDelete(threadAtLine(zone.line)!.id, comment.id)">Tak, usuń</button>
@@ -2177,7 +2192,7 @@ onMounted(async () => {
                       :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
                     <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
                     <span v-if="movedSinceComment(thread)" class="thread-moved-dot" title="Kod zmienił się po tym komentarzu">●</span>
-                    <p class="thread-content thread-preview">{{ thread.comments[0]?.content ? commentPreview(thread.comments[0].content) : '(komentarz usunięty)' }}</p>
+                    <p class="thread-content thread-preview">{{ commentPreview(thread.comments[0]!.content!) }}</p>
                   </li>
                 </ul>
                 <button type="button" class="comments-open" title="Widok komentarzy (c)" @click="toggleComments">Otwórz widok komentarzy</button>

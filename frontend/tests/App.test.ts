@@ -362,10 +362,13 @@ describe('PR review', () => {
     // A thread with no file has nothing to jump to.
     expect(locations[1]!.attributes('disabled')).toBeDefined()
 
-    // The rail is a summary; the full conversation, including a deleted comment keeping
-    // its place, lives in the comments view.
+    // The rail is a summary; the full conversation lives in the comments view. A deleted
+    // comment is not part of it — a row saying only that something used to be here broke
+    // the conversation up without adding to it.
     await wrapper.find('.comments-open').trigger('click')
-    expect(wrapper.text()).toContain('(komentarz usunięty)')
+    expect(wrapper.text()).not.toContain('komentarz usunięty')
+    expect(wrapper.text()).toContain('Czy to na pewno tutaj?')
+    expect(wrapper.findAll('.comments-view .thread-comment')).toHaveLength(2)
     await wrapper.find('.comments-close').trigger('click')
 
     await wrapper.findAll('.thread-location')[0]!.trigger('click')
@@ -428,6 +431,29 @@ describe('PR review', () => {
     wrapper.findComponent({ name: 'MonacoDiff' }).vm.$emit('openLine', 11)
     await flushPromises()
     expect(wrapper.find('.zone-card--draft').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('drops a thread whose every comment was deleted, counters included', async () => {
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Jan', content: 'Do poprawy.', commentType: 'text', publishedAt: null }] },
+      // Every comment gone: nothing left to read, so nothing is shown and nothing counted.
+      { id: 2, status: 'active', filePath: '/src/first.cs', rightLine: 9, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Anna', content: null, commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.thread-location')).toHaveLength(1)
+    // The header counter, the rail and the editor markers all read the same filtered list.
+    expect(wrapper.find('.pr-header-comments').text()).toContain('1')
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'MonacoDiff' }).props('commentLines')).toEqual([4])
     wrapper.unmount()
   })
 
