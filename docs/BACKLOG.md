@@ -475,6 +475,39 @@ Jeśli wróci, w logu backendu stanie teraz linia Warning z treścią odpowiedzi
 powie, co się dzieje. Gdyby przyczyną okazały się dwa oddzielne obiekty JSON w jednej
 odpowiedzi albo limit 16 384 znaków wyjścia, `extractJson` tego nie załatwia.
 
+## Wdrożone — czytelniejsza podpowiedź i ranking skalowany rozmiarem PR
+
+Status: zaimplementowane, pokryte testami. Dwie uwagi użytkownika z 20 wrz 2026.
+
+**„Pokaż, gdzie szukać" było nieczytelne.** Lista pokazywała pełną ścieżkę w `<code>`,
+myślnik i powód — przy ścieżkach w rodzaju
+`/apps/ekobill/server/Ekobill.Server/Modules/MasterData/Services/PpeService.cs` ścieżka
+zjadała cały wiersz, zawijała się, a powód, po który się tam sięga, lądował na końcu
+szarym drobnym drukiem. Teraz każdy wpis ma numer pozycji w kółku (kolejność rankingu to
+informacja), nazwę pliku wytłuszczoną, katalog obok niej drobno i przygaszony, a powód
+w osobnym wierszu normalnym kolorem tekstu. Pełna ścieżka została w `title`. Ten sam układ
+w obu miejscach: w szynie i na ekranie domknięcia.
+
+**Dziesięć plików to za mało przy dużym PR.** Ranking był na sztywno ucięty do 10 w czterech
+miejscach (instrukcja dla modelu, walidacja odpowiedzi, magazyn, front). Przy PR o 80+
+plikach dziesiątka przestaje być punktem startu — staje się próbką. `SummaryContract.CriticalFileLimit`
+daje teraz mniej więcej jeden wskazany plik na cztery zmienione, z podłogą 10 i sufitem 25:
+20 plików → 10, 44 → 11, 84 → 21, 200 → 25. Ta sama liczba idzie do instrukcji dla modelu
+i do walidacji, więc model nie jest proszony o więcej, niż wolno mu zwrócić.
+
+Domyślna długość ścieżki przejścia też rośnie, ale **wolniej** — jeden plik na osiem
+zmienionych, między 8 a 12. To decyzja, nie przeoczenie: „widoczny koniec" był jednym z
+trzech warunków powodzenia wycinka, a ścieżka na 21 plików przestaje go spełniać. Ranking
+pokazuje wszystko, co model uznał za ważne; przejście domyślnie bierze z tego tyle, ile da
+się przeczytać za jednym posiedzeniem, a resztę można dokliknąć na ekranie wejścia.
+
+**Zweryfikowane:** 125 testów backendu (doszło 8, w tym tabelka progów), 89 frontendu.
+Oba buildy przechodzą.
+
+**Niesprawdzone:** nie widziałem nowej podpowiedzi ani dłuższej propozycji w przeglądarce,
+i nie sprawdzono, czy model faktycznie zwraca 21 sensownych plików przy PR tej wielkości —
+limit pozwala, ale o jakości listy decyduje model.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

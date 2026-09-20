@@ -1,3 +1,4 @@
+using PRCockpit.Application.Analysis;
 using PRCockpit.Application.Ports;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,9 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
     // Mirrors the $top=2000 change page the Azure DevOps client already uses, so a pull
     // request that fits on screen always fits here too.
     private const int MaxFilesPerPullRequest = 2000;
-    private const int MaxReadingPath = 10;
+    // A sanity bound on what may be stored, not the product rule: how long a path is
+    // actually proposed follows SummaryContract.CriticalFileLimit and the size of the PR.
+    private const int MaxReadingPath = SummaryContract.MaxCriticalFiles;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 

@@ -62,7 +62,7 @@ public static class SummaryRunner
         IReadOnlyList<CriticalFile>? files, PrContext context)
     {
         if (files is null || files.Count == 0) return [];
-        if (files.Count > SummaryContract.MaxCriticalFiles)
+        if (files.Count > SummaryContract.CriticalFileLimit(context.ChangedFiles.Count))
             throw new SummaryAnalysisException("AI returned an invalid Summary.", 502);
 
         var allowed = context.ChangedFiles.Select(file => file.Path).ToHashSet(StringComparer.Ordinal);
@@ -86,6 +86,18 @@ public static class SummaryRunner
 public static class SummaryContract
 {
     public const int SchemaVersion = 2;
-    public const int MaxCriticalFiles = 10;
     public const int MaxCriticalFileTextLength = 200;
+
+    /// <summary>
+    /// Ten files is enough to open a pull request of twenty and far too few to open one of
+    /// eighty: at that size a ranking of ten is not a starting point, it is a sample. So the
+    /// ranking grows with the change, roughly one named file per four changed ones, and
+    /// stops at <see cref="MaxCriticalFiles"/> — past that the list stops being a shortlist.
+    /// <para>The same rule runs in the browser (criticalFileLimit in App.vue). Keep them in step.</para>
+    /// </summary>
+    public const int MinCriticalFiles = 10;
+    public const int MaxCriticalFiles = 25;
+
+    public static int CriticalFileLimit(int changedFileCount) =>
+        Math.Clamp((changedFileCount + 3) / 4, MinCriticalFiles, MaxCriticalFiles);
 }

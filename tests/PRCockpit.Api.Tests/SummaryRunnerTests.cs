@@ -165,6 +165,34 @@ public class SummaryRunnerTests
         Assert.Equal("AI CLI returned invalid JSON.", error.Message);
     }
 
+    // Ten files opens a pull request of twenty; it only samples one of eighty.
+    [Theory]
+    [InlineData(1, 10)]
+    [InlineData(20, 10)]
+    [InlineData(40, 10)]
+    [InlineData(44, 11)]
+    [InlineData(84, 21)]
+    [InlineData(100, 25)]
+    [InlineData(208, 25)]   // past this the shortlist stops being short
+    public void TheRankingGrowsWithTheChangeAndThenStops(int changedFiles, int expected)
+    {
+        Assert.Equal(expected, SummaryContract.CriticalFileLimit(changedFiles));
+    }
+
+    [Fact]
+    public async Task ARankingLongerThanThisPullRequestAllowsIsRejected()
+    {
+        // Two changed files, so the floor of ten applies and eleven names is too many.
+        IReadOnlyList<CriticalFile> files = [.. Enumerable.Range(0, 11)
+            .Select(index => new CriticalFile($"/src/file{index}.cs", "Rola.", "Powód."))];
+        var analyzer = new FakeAnalyzer(new SummaryDraft(2, ["Zdanie jedno.", "Zdanie dwa."], files));
+
+        var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
+            SummaryRunner.RunAsync(Context(), analyzer, CancellationToken.None));
+
+        Assert.Equal(502, error.StatusCode);
+    }
+
     private static PrContext Context() => new(
         new PrContextMetadata(123, "Change", "Description", "Author", "Repo", "feature", "main",
             "active", DateTimeOffset.Parse("2026-09-01T12:00:00Z"), [], [],

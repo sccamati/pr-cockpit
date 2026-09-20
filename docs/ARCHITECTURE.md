@@ -81,7 +81,9 @@ Wyjaśnienia plików ścieżki powstają w tle zaraz po akceptacji, w kolejnośc
 
 Przerwane przejście czeka: `pr_reading_paths` trzyma `Position` i `HeadCommitSha` z chwili wyboru ścieżki. Ścieżka bez `HeadCommitSha` pochodzi z szyny, nie z przejścia, i nie jest proponowana do wznowienia. Inna głowa PR niż zapisana daje wybór — wznów dotychczasową albo przelicz propozycję; ścieżka nie jest kasowana bez decyzji użytkownika. Pozycja jest przycinana do długości ścieżki przy odczycie, a plik, który wypadł z PR, wypada też ze ścieżki. Przejście domknięte (pozycja równa długości) nie proponuje już niczego i PR otwiera się normalnie.
 
-Długość ścieżki (8) i liczba równoległych wyjaśnień (2) są nazwanymi stałymi w `App.vue` z komentarzem `// ponytail:`, nie pozycjami w konfiguracji: jednoosobowe narzędzie lokalne nie ma pliku ustawień, a zakładanie go dla dwóch liczb kosztowałoby więcej, niż daje.
+**Ranking skaluje się z rozmiarem PR.** Dziesięć plików otwiera PR o dwudziestu plikach, ale PR o osiemdziesięciu tylko próbkuje — dziesiątka przestaje być punktem startu, a staje się losowym wycinkiem. `SummaryContract.CriticalFileLimit` daje więc mniej więcej jeden wskazany plik na cztery zmienione, z podłogą 10 i sufitem 25; powyżej sufitu lista przestaje być krótką listą. Ta sama liczba trafia do instrukcji dla modelu i do walidacji odpowiedzi, więc model nie jest proszony o więcej, niż wolno mu zwrócić. `MaxReadingPath` w magazynie to już tylko sanity bound równy sufitowi, a nie reguła produktowa. Domyślna długość ścieżki przejścia rośnie wolniej — jeden plik na osiem zmienionych, między 8 a 12 — bo przejście bez widocznego końca jest tym, co miało zastąpić. Reguła rankingu żyje w dwóch językach (`criticalFileLimit` w `App.vue`), tak jak reguła nieaktualności.
+
+Liczba równoległych wyjaśnień (2) są nazwanymi stałymi w `App.vue` z komentarzem `// ponytail:`, nie pozycjami w konfiguracji: jednoosobowe narzędzie lokalne nie ma pliku ustawień, a zakładanie go dla dwóch liczb kosztowałoby więcej, niż daje.
 
 ## Trwałość
 

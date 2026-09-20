@@ -220,6 +220,44 @@ describe('US-P3 — ekran wejścia', () => {
   })
 })
 
+// Ten named files open a pull request of twenty and only sample one of eighty, so both
+// the ranking and the default path grow with the change.
+describe('duży PR dostaje dłuższą propozycję', () => {
+  const many = Array.from({ length: 84 }, (_unused, index) => `/src/file${index}.cs`)
+
+  beforeEach(() => {
+    const big = {
+      ...details, changedFilesCount: many.length,
+      changedFiles: many.map((path, index) => ({
+        path, changeType: 'edit', originalPath: null, objectId: String(index % 10).repeat(40),
+      })),
+    }
+    api.pullRequests.mockResolvedValue([big])
+    api.pullRequest.mockResolvedValue(big)
+    // 84 changed files allow a ranking of 21; the model names all of them.
+    api.savedSummary.mockResolvedValue({
+      result: summary(many.slice(0, 21).map((path, index) => ({
+        path, role: `Rola ${index + 1}.`, why: `Powód ${index + 1}.`,
+      }))),
+      savedAt: '2026-09-01T12:00:00Z',
+    })
+  })
+
+  it('offers more than ten files and a path longer than eight', async () => {
+    const wrapper = await openPr()
+
+    // The whole ranking is on offer...
+    expect(wrapper.findAll('.walk-file-pick input')).toHaveLength(21)
+    // ...and the path picked by default grows too, but far more slowly: 84 / 8 = 11.
+    expect(pickedPaths(wrapper)).toEqual(many.slice(0, 11))
+
+    await wrapper.find('.walk-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 11')
+    wrapper.unmount()
+  })
+})
+
 describe('US-P4 — przejście plik po pliku', () => {
   async function startWalk() {
     const wrapper = await openPr()

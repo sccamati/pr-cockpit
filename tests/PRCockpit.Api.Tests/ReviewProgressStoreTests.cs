@@ -1,4 +1,5 @@
-﻿using Microsoft.Data.Sqlite;
+﻿using PRCockpit.Application.Analysis;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PRCockpit.Domain.Review;
@@ -161,10 +162,13 @@ public sealed class ReviewProgressStoreTests : IDisposable
         Assert.Equal(400, failure.StatusCode);
     }
 
+    // A sanity bound on what may be stored, not the product rule — how long a path is
+    // actually proposed follows the size of the pull request.
     [Fact]
     public async Task RejectsAnOversizeReadingPath()
     {
-        var paths = Enumerable.Range(0, 11).Select(index => $"/file{index}.cs").ToArray();
+        var paths = Enumerable.Range(0, SummaryContract.MaxCriticalFiles + 1)
+            .Select(index => $"/file{index}.cs").ToArray();
 
         var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
             Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(paths), CancellationToken.None));

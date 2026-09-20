@@ -82,8 +82,19 @@ const sideBySide = ref(false)
 // --- Przejście (the guided walkthrough) ---
 // ponytail: the brief calls these configuration. A one-person local tool has no settings
 // file, so they are named constants here; a settings screen is the upgrade path.
-const walkDefaultLength = 8   // US-P3: the ranking offers up to 10, the walkthrough takes 8
 const walkParallelPrefetch = 2 // US-P5: explanations generated at once
+// Ten files is enough to open a pull request of twenty and far too few to open one of
+// eighty — at that size a ranking of ten is a sample, not a starting point. Both the
+// ranking and the walkthrough's default path therefore grow with the change. The ranking
+// rule is the same one the backend applies (SummaryContract.CriticalFileLimit); the path
+// grows more slowly, because a walkthrough with no visible end is the thing it replaces.
+// ponytail: four constants, not a settings file — a one-person local tool has none.
+function criticalFileLimit(changedFiles: number): number {
+  return Math.min(25, Math.max(10, Math.ceil(changedFiles / 4)))
+}
+function walkPathLength(changedFiles: number): number {
+  return Math.min(12, Math.max(8, Math.ceil(changedFiles / 8)))
+}
 // 'tree' is everything that existed before the walkthrough; the other three are its screens.
 const view = ref<'tree' | 'entry' | 'walk' | 'done'>('tree')
 const walkPosition = ref(0)
@@ -179,7 +190,7 @@ const criticalProposal = computed(() => {
   const paths = new Map((details.value?.changedFiles ?? []).map(file => [file.path, file]))
   return (summary.value?.criticalFiles ?? [])
     .filter(file => paths.get(file.path) && !paths.get(file.path)!.category)
-    .slice(0, 10)
+    .slice(0, criticalFileLimit(details.value?.changedFiles.length ?? 0))
 })
 const showProposal = computed(() =>
   criticalProposal.value.length > 0 && !proposalDismissed.value && criticalPaths.value.length === 0)
@@ -641,7 +652,9 @@ function toggleCritical(path: string) {
   if (!details.value?.changedFiles.some(file => file.path === path)) return
   const selected = criticalPaths.value
   if (selected.includes(path)) saveReadingPath(selected.filter(item => item !== path))
-  else if (selected.length < 10) saveReadingPath([...selected, path])
+  else if (selected.length < criticalFileLimit(details.value?.changedFiles.length ?? 0)) {
+    saveReadingPath([...selected, path])
+  }
 }
 
 function moveCritical(path: string, offset: -1 | 1) {
@@ -714,7 +727,7 @@ const walkSkippedPaths = computed(() => walkPaths.value.filter(path => walkSkipp
 // to the configured length. Once the user touches it, their version is the list.
 const walkDefaultPick = computed(() => criticalProposal.value
   .filter(file => reviewState(file.path) !== 'current')
-  .slice(0, walkDefaultLength)
+  .slice(0, walkPathLength(details.value?.changedFiles.length ?? 0))
   .map(file => file.path))
 const walkPick = computed(() => walkPicked.value ?? walkDefaultPick.value)
 const walkPickSet = computed(() => new Set(walkPick.value))
@@ -1770,9 +1783,13 @@ onMounted(async () => {
               <span v-if="debugSaved" class="muted" role="status">Zapisano.</span>
               <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
             </div>
-            <ul v-if="showDebugHint" class="debug-hint">
-              <li v-for="file in criticalProposal" :key="file.path"><code>{{ file.path }}</code> — {{ file.why }}</li>
-            </ul>
+            <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
+              <li v-for="(file, index) in criticalProposal" :key="file.path">
+                <span class="debug-hint-order">{{ index + 1 }}</span>
+                <span class="debug-hint-file" :title="file.path">{{ fileName(file.path) }}<small>{{ fileDirectory(file.path) }}</small></span>
+                <span class="debug-hint-why">{{ file.why }}</span>
+              </li>
+            </ol>
           </div>
           <div class="walk-actions">
             <button type="button" class="walk-primary" @click="leaveWalkthrough">Zejdź do pozostałych plików</button>
@@ -2214,7 +2231,11 @@ onMounted(async () => {
               <!-- "Show me" reuses the ranking the Summary already returned — no second
                    model run, and nothing here is scored against your answer. -->
               <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
-                <li v-for="file in criticalProposal" :key="file.path"><code>{{ file.path }}</code> — {{ file.why }}</li>
+                <li v-for="(file, index) in criticalProposal" :key="file.path">
+                  <span class="debug-hint-order">{{ index + 1 }}</span>
+                  <span class="debug-hint-file" :title="file.path">{{ fileName(file.path) }}<small>{{ fileDirectory(file.path) }}</small></span>
+                  <span class="debug-hint-why">{{ file.why }}</span>
+                </li>
               </ol>
             </details>
 

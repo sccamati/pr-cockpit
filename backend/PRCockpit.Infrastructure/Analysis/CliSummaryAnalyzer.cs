@@ -18,8 +18,9 @@ public sealed class CliSummaryAnalyzer(
     private const int LoggedCharacters = 400;
 
     private const int MaxOutputCharacters = 16_384;
-    private const string Instruction = "Write a factual summary of this pull request in 2 to 5 short Polish sentences. " +
-        "Then name up to 10 files a reviewer should read first, most important first, as criticalFiles. " +
+    private static string Instruction(int criticalFileLimit) =>
+        "Write a factual summary of this pull request in 2 to 5 short Polish sentences. " +
+        $"Then name up to {criticalFileLimit} files a reviewer should read first, most important first, as criticalFiles. " +
         "Every path must be copied exactly from context.changedFiles; never invent one, never repeat one. " +
         "For each file give role (what it does) and why (why read it first), each a short Polish sentence of at most 200 characters. " +
         "Files whose text was omitted may still be listed if the metadata justifies it. An empty list is allowed. " +
@@ -34,7 +35,9 @@ public sealed class CliSummaryAnalyzer(
         "Return only JSON: {\"schemaVersion\":2,\"sentences\":[\"...\"]}.";
 
     public Task<SummaryDraft> AnalyzeAsync(PrContext context, CancellationToken ct) =>
-        RunAsync("summary", Instruction, context, ct);
+        // The bigger the pull request, the longer the shortlist is allowed to be — ten files
+        // is a sample, not a starting point, when eighty changed.
+        RunAsync("summary", Instruction(SummaryContract.CriticalFileLimit(context.ChangedFiles.Count)), context, ct);
 
     public Task<SummaryDraft> ExplainFileAsync(PrContext context, CancellationToken ct) =>
         RunAsync("file", FileInstruction, context, ct);
