@@ -32,6 +32,12 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 var api = app.MapGroup("/api");
 const string PullRequests = "/projects/{project}/repositories/{repositoryId}/pull-requests";
 
+// What the frontend has to know before it offers an action it cannot perform. Writing
+// comments is off by default, and finding that out from a 503 means finding it out after
+// the comment is already typed.
+api.MapGet("/config", (IConfiguration configuration) =>
+    Results.Ok(new { commentsEnabled = configuration.GetValue("AzureDevOps:AllowComments", false) }));
+
 api.MapGet("/projects", async (IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetProjectsAsync(ct)));
 
@@ -70,6 +76,16 @@ api.MapPost($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}/comm
     string project, string repositoryId, int pullRequestId, int threadId, NewComment comment,
     IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.ReplyToThreadAsync(project, repositoryId, pullRequestId, threadId, comment, ct)));
+
+api.MapPatch($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}/comments/{{commentId:int}}", async (
+    string project, string repositoryId, int pullRequestId, int threadId, int commentId,
+    EditComment comment, IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.UpdateCommentAsync(project, repositoryId, pullRequestId, threadId, commentId, comment, ct)));
+
+api.MapDelete($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}/comments/{{commentId:int}}", async (
+    string project, string repositoryId, int pullRequestId, int threadId, int commentId,
+    IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.DeleteCommentAsync(project, repositoryId, pullRequestId, threadId, commentId, ct)));
 
 api.MapPatch($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}", async (
     string project, string repositoryId, int pullRequestId, int threadId, ThreadStatusUpdate update,

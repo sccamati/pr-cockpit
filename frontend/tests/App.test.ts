@@ -24,6 +24,8 @@ const api = vi.hoisted(() => ({
   createThread: vi.fn(),
   replyToThread: vi.fn(),
   setThreadStatus: vi.fn(),
+  editComment: vi.fn(),
+  deleteComment: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -632,6 +634,47 @@ describe('PR review', () => {
     await wrapper.findAll('.file-thread-chip')[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.findAll('.zone-card')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('edits and deletes only your own comment, and deleting takes two steps', async () => {
+    const thread = {
+      id: 5, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+      comments: [
+        { id: 1, author: 'Jan', content: 'Cudze.', commentType: 'text', publishedAt: null, authorId: 'JAN', isMine: false },
+        { id: 2, author: 'Ja', content: 'Moje.', commentType: 'text', publishedAt: null, authorId: 'ME', isMine: true },
+      ],
+    }
+    api.commentThreads.mockResolvedValue([thread])
+    api.editComment.mockResolvedValue(thread)
+    api.deleteComment.mockResolvedValue(thread)
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    // Only the comment that is mine offers the buttons; the other one has none.
+    expect(wrapper.findAll('.comment-own-actions')).toHaveLength(1)
+
+    await wrapper.findAll('.comment-own-actions button')[0]!.trigger('click')
+    await wrapper.find('.zone-card textarea').setValue('Moje, poprawione.')
+    await wrapper.find('.comment-send').trigger('click')
+    await flushPromises()
+    expect(api.editComment).toHaveBeenCalledWith('project', 'repo-a', 123, 5, 2, 'Moje, poprawione.')
+
+    // Delete asks first: the tombstone stays in Azure DevOps forever.
+    await wrapper.findAll('.comment-own-actions button')[1]!.trigger('click')
+    expect(api.deleteComment).not.toHaveBeenCalled()
+    expect(wrapper.find('.comment-own-actions').text()).toContain('Usunąć na stałe?')
+    await wrapper.find('.comment-delete').trigger('click')
+    await flushPromises()
+    expect(api.deleteComment).toHaveBeenCalledWith('project', 'repo-a', 123, 5, 2)
+    // A successful write must leave the buttons usable — reloading the threads bumps the
+    // request id, which used to disable them permanently.
+    expect(wrapper.find('.thread-resolve').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 

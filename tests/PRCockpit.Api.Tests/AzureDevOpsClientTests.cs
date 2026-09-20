@@ -518,6 +518,80 @@ public sealed class AzureDevOpsClientTests
         Assert.Null(AzureDevOpsMapper.CommentThread(json.RootElement).IterationId);
     }
 
+    // Offering edit and delete on somebody else's comment would be offering a button that
+    // Azure DevOps is certain to refuse, so ownership is resolved before the list is served.
+    [Fact]
+    public async Task MarksWhichCommentsBelongToThePatOwner()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+            request.RequestUri!.PathAndQuery.Contains("connectionData")
+                ? Json("""{"authenticatedUser":{"id":"ME","providerDisplayName":"Ja"}}""")
+                : Json("""
+                    {"value":[{"id":1,"status":"active","comments":[
+                      {"id":1,"author":{"id":"ME","displayName":"Ja"},"content":"Moje","commentType":"text"},
+                      {"id":2,"author":{"id":"INNY","displayName":"Ktos"},"content":"Cudze","commentType":"text"}]}]}
+                    """)))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var thread = Assert.Single(await Client(http)
+            .GetCommentThreadsAsync("proj", "repo", 1, CancellationToken.None));
+
+        Assert.True(thread.Comments[0].IsMine);
+        Assert.False(thread.Comments[1].IsMine);
+    }
+
+    // Identity is a convenience; losing it must not take the comment list with it.
+    [Fact]
+    public async Task StillListsThreadsWhenTheIdentityCallFails()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+            request.RequestUri!.PathAndQuery.Contains("connectionData")
+                ? new HttpResponseMessage(HttpStatusCode.Forbidden)
+                : Json("""{"value":[{"id":1,"comments":[{"id":1,"content":"Uwaga","commentType":"text"}]}]}""")))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var thread = Assert.Single(await Client(http)
+            .GetCommentThreadsAsync("proj", "repo", 1, CancellationToken.None));
+
+        Assert.False(Assert.Single(thread.Comments).IsMine);
+    }
+
+    [Fact]
+    public async Task EditsAndDeletesASingleComment()
+    {
+        var sent = new List<(HttpMethod Method, string Path)>();
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            sent.Add((request.Method, request.RequestUri!.AbsolutePath));
+            return Json("""{"id":9,"status":"active","comments":[{"id":3,"content":"Nowa tresc","commentType":"text"}]}""");
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+        var client = Client(http, allowComments: true);
+
+        await client.UpdateCommentAsync("proj", "repo", 1, 9, 3, new EditComment("Nowa tresc"), CancellationToken.None);
+        await client.DeleteCommentAsync("proj", "repo", 1, 9, 3, CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Patch, sent[0].Method);
+        Assert.EndsWith("/threads/9/comments/3", sent[0].Path);
+        Assert.Equal(HttpMethod.Delete, sent[2].Method);
+        // Each write is followed by reading the thread back, never trusting the write's echo.
+        Assert.Equal(HttpMethod.Get, sent[1].Method);
+        Assert.Equal(HttpMethod.Get, sent[3].Method);
+    }
+
+    [Fact]
+    public async Task ReportsAForbiddenCommentEditAsOwnershipRatherThanConfiguration()
+    {
+        using var http = new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var error = await Assert.ThrowsAsync<AzureDevOpsException>(() => Client(http, allowComments: true)
+            .DeleteCommentAsync("proj", "repo", 1, 9, 3, CancellationToken.None));
+
+        Assert.Equal(403, error.StatusCode);
+        Assert.Contains("your own comments", error.Message);
+    }
+
     [Fact]
     public async Task RefusesToWriteWhileTheSwitchIsOff()
     {
@@ -531,6 +605,8 @@ public sealed class AzureDevOpsClientTests
             () => client.CreateCommentThreadAsync("proj", "repo", 1, new NewCommentThread("Uwaga.", null, null), CancellationToken.None),
             () => client.ReplyToThreadAsync("proj", "repo", 1, 2, new NewComment("Odpowiedź."), CancellationToken.None),
             () => client.SetThreadStatusAsync("proj", "repo", 1, 2, "fixed", CancellationToken.None),
+            () => client.UpdateCommentAsync("proj", "repo", 1, 2, 3, new EditComment("Nowa."), CancellationToken.None),
+            () => client.DeleteCommentAsync("proj", "repo", 1, 2, 3, CancellationToken.None),
         })
         {
             var error = await Assert.ThrowsAsync<AzureDevOpsException>(write);

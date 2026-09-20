@@ -328,7 +328,9 @@ async function sendDraft(resolveAfter = false) {
   } catch (cause) {
     if (current === threadsRequestId) commentError.value = message(cause)
   } finally {
-    if (current === threadsRequestId) commentSaving.value = false
+    // Unconditionally: reloading the threads bumps the request id, so a guard here would
+    // leave every comment button disabled for the rest of the pull request.
+    commentSaving.value = false
   }
 }
 
@@ -347,7 +349,9 @@ async function setThreadStatus(threadId: number, status: string) {
   } catch (cause) {
     if (current === threadsRequestId) commentError.value = message(cause)
   } finally {
-    if (current === threadsRequestId) commentSaving.value = false
+    // Unconditionally: reloading the threads bumps the request id, so a guard here would
+    // leave every comment button disabled for the rest of the pull request.
+    commentSaving.value = false
   }
 }
 
@@ -462,6 +466,64 @@ function stepThreadInFile(offset: 1 | -1) {
     ? (offset === 1 ? 0 : list.length - 1)
     : (inlineThreadIndex.value + offset + list.length) % list.length
   openThreadInFile(list[next]!)
+}
+
+// Editing reuses the draft: one place that sends, one place that reloads the threads.
+const editing = ref<{ threadId: number; commentId: number; text: string } | null>(null)
+// Deleting is two steps of its own. It is the one comment action that destroys something,
+// and Azure DevOps keeps the tombstone forever.
+const deleting = ref<number | null>(null)
+
+function startEdit(threadId: number, commentId: number, content: string) {
+  editing.value = { threadId, commentId, text: content }
+  draft.value = null
+  deleting.value = null
+  commentError.value = ''
+}
+
+async function sendEdit() {
+  const pending = editing.value
+  if (!details.value || !pending || commentSaving.value || !pending.text.trim()) return
+  const current = threadsRequestId
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  commentSaving.value = true
+  commentError.value = ''
+  try {
+    await api.editComment(project, repository, id, pending.threadId, pending.commentId, pending.text)
+    if (current !== threadsRequestId) return
+    editing.value = null
+    await loadThreads(project, repository, id)
+  } catch (cause) {
+    if (current === threadsRequestId) commentError.value = message(cause)
+  } finally {
+    // Unconditionally: reloading the threads bumps the request id, so a guard here would
+    // leave every comment button disabled for the rest of the pull request.
+    commentSaving.value = false
+  }
+}
+
+async function confirmDelete(threadId: number, commentId: number) {
+  if (!details.value || commentSaving.value) return
+  const current = threadsRequestId
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  commentSaving.value = true
+  commentError.value = ''
+  try {
+    await api.deleteComment(project, repository, id, threadId, commentId)
+    if (current !== threadsRequestId) return
+    deleting.value = null
+    await loadThreads(project, repository, id)
+  } catch (cause) {
+    if (current === threadsRequestId) commentError.value = message(cause)
+  } finally {
+    // Unconditionally: reloading the threads bumps the request id, so a guard here would
+    // leave every comment button disabled for the rest of the pull request.
+    commentSaving.value = false
+  }
 }
 
 function resolveThread(threadId: number) {
@@ -731,6 +793,8 @@ function resetThreads() {
   onlyActiveThreads.value = false
   inlineThreadId.value = null
   draft.value = null
+  editing.value = null
+  deleting.value = null
   commentSaving.value = false
   commentError.value = ''
   snippets.value = {}
@@ -1420,12 +1484,32 @@ onMounted(loadProjects)
                   <p v-else-if="thread.filePath && snippetsLoading" class="muted snippet-loading">Wczytywanie kodu…</p>
                   <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
                     <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
-                    <div v-if="comment.content" class="thread-content markdown-body"
-                      :class="{ 'thread-content--clamped': isLongComment(comment.content) && !isExpanded(thread.id, comment.id) }"
-                      v-html="renderComment(comment.content)" />
-                    <button v-if="comment.content && isLongComment(comment.content)" type="button" class="comment-expand"
-                      @click="toggleComment(thread.id, comment.id)">{{ isExpanded(thread.id, comment.id) ? 'Zwiń' : 'Pokaż całość' }}</button>
-                    <p v-else-if="!comment.content" class="thread-content muted">(komentarz usunięty)</p>
+                    <div v-if="editing && editing.commentId === comment.id && editing.threadId === thread.id" class="comment-draft">
+                      <textarea v-model="editing.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Edycja komentarza"></textarea>
+                      <div class="debug-actions">
+                        <button type="button" class="comment-send" :disabled="commentSaving || !editing.text.trim()" @click="sendEdit">{{ commentSaving ? 'Zapisywanie…' : 'Zapisz zmianę' }}</button>
+                        <button type="button" :disabled="commentSaving" @click="editing = null">Anuluj</button>
+                      </div>
+                    </div>
+                    <template v-else>
+                      <div v-if="comment.content" class="thread-content markdown-body"
+                        :class="{ 'thread-content--clamped': isLongComment(comment.content) && !isExpanded(thread.id, comment.id) }"
+                        v-html="renderComment(comment.content)" />
+                      <button v-if="comment.content && isLongComment(comment.content)" type="button" class="comment-expand"
+                        @click="toggleComment(thread.id, comment.id)">{{ isExpanded(thread.id, comment.id) ? 'Zwiń' : 'Pokaż całość' }}</button>
+                      <p v-if="!comment.content" class="thread-content muted">(komentarz usunięty)</p>
+                      <div v-if="comment.isMine && comment.content" class="comment-own-actions">
+                        <template v-if="deleting === comment.id">
+                          <span class="muted">Usunąć na stałe?</span>
+                          <button type="button" class="comment-delete" :disabled="commentSaving" @click="confirmDelete(thread.id, comment.id)">Tak, usuń</button>
+                          <button type="button" :disabled="commentSaving" @click="deleting = null">Nie</button>
+                        </template>
+                        <template v-else>
+                          <button type="button" @click="startEdit(thread.id, comment.id, comment.content)">Edytuj</button>
+                          <button type="button" @click="deleting = comment.id; editing = null">Usuń</button>
+                        </template>
+                      </div>
+                    </template>
                   </div>
                   <p v-if="movedSinceComment(thread)" class="thread-moved">
                     Kod zmienił się po tym komentarzu (iteracja {{ thread.iterationId }} → {{ lastIteration }}).
@@ -1557,7 +1641,10 @@ onMounted(loadProjects)
                    Ordinary Vue markup, so replying and resolving work the same as in the
                    comments view. -->
               <Teleport v-for="zone in zoneTargets" :key="zone.line" :to="zone.el">
-                <div class="zone-card" :class="{ 'zone-card--draft': !threadAtLine(zone.line) }">
+                <!-- The editor must not treat a click in the conversation as a click in the
+                     code, but it must not be prevented from happening either. -->
+                <div class="zone-card" :class="{ 'zone-card--draft': !threadAtLine(zone.line) }"
+                  @mousedown.stop @click.stop>
                   <template v-if="threadAtLine(zone.line)">
                     <!-- The whole header folds the block; the caret is a hint, not the only target. -->
                     <div class="zone-head" role="button" tabindex="0" :aria-expanded="!collapsedZones.has(zone.line)"
@@ -1573,8 +1660,28 @@ onMounted(loadProjects)
                       <p v-if="commentError && inlineThreadId === threadAtLine(zone.line)!.id" class="notice error" role="alert">{{ commentError }}</p>
                       <div v-for="comment in threadAtLine(zone.line)!.comments" :key="comment.id" class="thread-comment">
                         <span v-if="comment.id !== threadAtLine(zone.line)!.comments[0]?.id" class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
-                        <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                        <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                        <div v-if="editing && editing.commentId === comment.id" class="comment-draft">
+                          <textarea v-model="editing.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Edycja komentarza"></textarea>
+                          <div class="debug-actions">
+                            <button type="button" class="comment-send" :disabled="commentSaving || !editing.text.trim()" @click="sendEdit">{{ commentSaving ? 'Zapisywanie…' : 'Zapisz zmianę' }}</button>
+                            <button type="button" :disabled="commentSaving" @click="editing = null">Anuluj</button>
+                          </div>
+                        </div>
+                        <template v-else>
+                          <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
+                          <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                          <div v-if="comment.isMine && comment.content" class="comment-own-actions">
+                            <template v-if="deleting === comment.id">
+                              <span class="muted">Usunąć na stałe?</span>
+                              <button type="button" class="comment-delete" :disabled="commentSaving" @click="confirmDelete(threadAtLine(zone.line)!.id, comment.id)">Tak, usuń</button>
+                              <button type="button" :disabled="commentSaving" @click="deleting = null">Nie</button>
+                            </template>
+                            <template v-else>
+                              <button type="button" @click="startEdit(threadAtLine(zone.line)!.id, comment.id, comment.content)">Edytuj</button>
+                              <button type="button" @click="deleting = comment.id; editing = null">Usuń</button>
+                            </template>
+                          </div>
+                        </template>
                       </div>
                       <p v-if="movedSinceComment(threadAtLine(zone.line)!)" class="thread-moved">
                         Kod zmienił się po tym komentarzu (iteracja {{ threadAtLine(zone.line)!.iterationId }} → {{ lastIteration }}).

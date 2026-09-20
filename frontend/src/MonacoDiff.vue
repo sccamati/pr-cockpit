@@ -335,8 +335,10 @@ function syncZones() {
         afterLineNumber: line,
         domNode: container,
         heightInPx: 0,
-        // Without this the editor swallows clicks meant for the buttons inside the block.
-        suppressMouseDown: true,
+        // Deliberately false. suppressMouseDown makes the editor call preventDefault on
+        // mousedown over the zone, which kills focus in the textarea and the click on every
+        // button inside it. The card stops propagation itself instead.
+        suppressMouseDown: false,
       }
       const id = accessor.addZone(zone)
       zoneIds.set(line, id)

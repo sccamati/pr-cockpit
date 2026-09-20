@@ -21,7 +21,10 @@ public record FileDiff(string Path, string? OriginalPath, string Kind, string? O
 /// Azure DevOps really does omit it: a soft-deleted comment arrives without content.
 /// </summary>
 public record PrComment(
-    int Id, string? Author, string? Content, string? CommentType, DateTimeOffset? PublishedAt);
+    int Id, string? Author, string? Content, string? CommentType, DateTimeOffset? PublishedAt,
+    // Azure DevOps only lets you edit or delete your own comment, so the UI must know which
+    // ones those are rather than offering a button that is certain to be refused.
+    string? AuthorId = null, bool IsMine = false);
 
 /// <summary>
 /// A comment thread, anchored to a file and line when it has a thread context. System
@@ -34,6 +37,7 @@ public record PrComment(
 /// </summary>
 public record NewCommentThread(string? Content, string? FilePath, int? Line);
 public record NewComment(string? Content);
+public record EditComment(string? Content);
 public record ThreadStatusUpdate(string? Status);
 
 public record PrCommentThread(

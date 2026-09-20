@@ -38,6 +38,18 @@ public interface IAzureDevOpsClient
         string project, string repositoryId, int pullRequestId, int threadId, NewComment comment,
         CancellationToken ct);
 
+    /// <summary>
+    /// Editing and deleting reach only your own comments — Azure DevOps refuses the rest,
+    /// which is why every comment carries whether it is yours.
+    /// </summary>
+    Task<PrCommentThread> UpdateCommentAsync(
+        string project, string repositoryId, int pullRequestId, int threadId, int commentId,
+        EditComment comment, CancellationToken ct);
+
+    Task<PrCommentThread> DeleteCommentAsync(
+        string project, string repositoryId, int pullRequestId, int threadId, int commentId,
+        CancellationToken ct);
+
     Task<PrCommentThread> SetThreadStatusAsync(
         string project, string repositoryId, int pullRequestId, int threadId, string? status,
         CancellationToken ct);

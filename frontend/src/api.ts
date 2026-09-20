@@ -39,7 +39,14 @@ export interface PrComment {
   content: string | null
   commentType: string | null
   publishedAt: string | null
+  authorId: string | null
+  // Azure DevOps only allows editing and deleting your own comment.
+  isMine: boolean
 }
+// Writing comments is off unless the backend says otherwise, so the UI asks once instead
+// of finding out from a 503 after the comment has been typed.
+export interface AppConfig { commentsEnabled: boolean }
+
 export interface PrCommentThread {
   id: number
   status: string | null
@@ -173,10 +180,20 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function del<T>(path: string): Promise<T> {
+  const response = await fetch(`/api${path}`, { method: 'DELETE' })
+  if (!response.ok) {
+    const problem = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(problem?.detail ?? `Żądanie nie powiodło się (${response.status}).`)
+  }
+  return response.json() as Promise<T>
+}
+
 const location = (project: string, repository: string) =>
   `/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(repository)}`
 
 export const api = {
+  config: () => get<AppConfig>('/config'),
   projects: () => get<Project[]>('/projects'),
   repositories: (project: string) => get<Repository[]>(`/projects/${encodeURIComponent(project)}/repositories`),
   pullRequests: (project: string, repository: string) =>
@@ -194,6 +211,10 @@ export const api = {
     post<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads`, thread),
   replyToThread: (project: string, repository: string, id: number, threadId: number, content: string) =>
     post<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}/comments`, { content }),
+  editComment: (project: string, repository: string, id: number, threadId: number, commentId: number, content: string) =>
+    patch<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}/comments/${commentId}`, { content }),
+  deleteComment: (project: string, repository: string, id: number, threadId: number, commentId: number) =>
+    del<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}/comments/${commentId}`),
   setThreadStatus: (project: string, repository: string, id: number, threadId: number, status: string) =>
     patch<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}`, { status }),
   csharpHovers: (originalText: string, modifiedText: string, signal?: AbortSignal) =>

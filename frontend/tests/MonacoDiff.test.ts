@@ -252,8 +252,9 @@ describe('Monaco reading options', () => {
 
     const zone = mocks.addZone.mock.calls[0]![0] as { afterLineNumber: number; domNode: HTMLElement; suppressMouseDown: boolean }
     expect(zone.afterLineNumber).toBe(12)
-    // Without this the editor eats clicks meant for the buttons inside the block.
-    expect(zone.suppressMouseDown).toBe(true)
+    // Must stay false: suppressMouseDown makes the editor preventDefault the mousedown,
+    // which kills focus in the textarea and every button click inside the block.
+    expect(zone.suppressMouseDown).toBe(false)
     expect(wrapper.emitted('zones')?.at(-1)?.[0]).toEqual([{ line: 12, el: zone.domNode }])
 
     // A line that no longer has a comment loses its container.

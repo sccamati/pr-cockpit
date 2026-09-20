@@ -98,14 +98,18 @@ public static class AzureDevOpsMapper
             filePath, rightLine, leftLine, isSystem, comments, iteration);
     }
 
-    private static PrComment Comment(JsonElement value) => new(
-        RequiredInt(value, "id"),
-        value.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object
-            ? OptionalString(author, "displayName") : null,
-        OptionalString(value, "content"),
-        OptionalString(value, "commentType"),
-        value.TryGetProperty("publishedDate", out var date) && date.ValueKind == JsonValueKind.String
-            ? date.GetDateTimeOffset() : null);
+    private static PrComment Comment(JsonElement value)
+    {
+        var hasAuthor = value.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object;
+        return new PrComment(
+            RequiredInt(value, "id"),
+            hasAuthor ? OptionalString(author, "displayName") : null,
+            OptionalString(value, "content"),
+            OptionalString(value, "commentType"),
+            value.TryGetProperty("publishedDate", out var date) && date.ValueKind == JsonValueKind.String
+                ? date.GetDateTimeOffset() : null,
+            hasAuthor ? OptionalString(author, "id") : null);
+    }
 
     private static int? Line(JsonElement context, string name) =>
         context.TryGetProperty(name, out var position) && position.ValueKind == JsonValueKind.Object &&
