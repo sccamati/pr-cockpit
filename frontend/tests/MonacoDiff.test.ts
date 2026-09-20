@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => ({
   revealFirstDiff: vi.fn(),
   onDidUpdateDiff: vi.fn(),
   onMouseDown: vi.fn(),
+  onMouseMove: vi.fn(),
+  onMouseLeave: vi.fn(),
+  hoverSet: vi.fn(),
+  modifiedEditor: null as unknown,
   decorationsSet: vi.fn(),
   decorationsClear: vi.fn(),
   disposeGlyphListener: vi.fn(),
@@ -39,7 +43,7 @@ vi.mock('monaco-editor', () => ({
       return model
     }),
     TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
-    MouseTargetType: { GUTTER_GLYPH_MARGIN: 2 },
+    MouseTargetType: { GUTTER_GLYPH_MARGIN: 2, GUTTER_LINE_NUMBERS: 3 },
     createDiffEditor: vi.fn(() => ({
       setModel: vi.fn(), layout: vi.fn(), dispose: vi.fn(),
       updateOptions: mocks.diffUpdateOptions,
@@ -47,13 +51,9 @@ vi.mock('monaco-editor', () => ({
       revealFirstDiff: mocks.revealFirstDiff,
       onDidUpdateDiff: mocks.onDidUpdateDiff,
       getOriginalEditor: () => ({ updateOptions: mocks.originalUpdate }),
-      getModifiedEditor: () => ({
-        updateOptions: mocks.modifiedUpdate,
-        focus: vi.fn(),
-        getPosition: () => ({ lineNumber: 12 }),
-        onMouseDown: mocks.onMouseDown,
-        createDecorationsCollection: () => ({ set: mocks.decorationsSet, clear: mocks.decorationsClear }),
-      }),
+      // One stable modified editor per diff editor: the component keeps two decoration
+      // collections, and a fresh object per call would hand it two fresh ones each time.
+      getModifiedEditor: () => mocks.modifiedEditor,
     })),
   },
   languages: {
@@ -90,7 +90,23 @@ beforeEach(() => {
     return { dispose: mocks.disposeSemanticProvider }
   })
   mocks.onDidUpdateDiff.mockReturnValue({ dispose: vi.fn() })
+  let collections = 0
+  mocks.modifiedEditor = {
+    updateOptions: mocks.modifiedUpdate,
+    focus: vi.fn(),
+    getPosition: () => ({ lineNumber: 12 }),
+    onMouseDown: mocks.onMouseDown,
+    onMouseMove: mocks.onMouseMove,
+    onMouseLeave: mocks.onMouseLeave,
+    // First collection is the comment markers, second is the hover "+".
+    createDecorationsCollection: () => ({
+      set: collections++ === 0 ? mocks.decorationsSet : mocks.hoverSet,
+      clear: vi.fn(),
+    }),
+  }
   mocks.onMouseDown.mockReturnValue({ dispose: mocks.disposeGlyphListener })
+  mocks.onMouseMove.mockReturnValue({ dispose: vi.fn() })
+  mocks.onMouseLeave.mockReturnValue({ dispose: vi.fn() })
   window.matchMedia = vi.fn().mockReturnValue({
     matches: false,
     addEventListener() {},
@@ -214,6 +230,31 @@ describe('Monaco reading options', () => {
     wrapper.unmount()
   })
 
+  it('offers a plus on the hovered line, but not where a comment already is', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: {
+        path: '/src/a.ts', originalPath: null, originalText: 'a', modifiedText: 'b',
+        commentLines: [4],
+      },
+    })
+    await flushPromises()
+    const move = mocks.onMouseMove.mock.calls[0]![0] as (event: unknown) => void
+    const leave = mocks.onMouseLeave.mock.calls[0]![0] as () => void
+
+    move({ target: { position: { lineNumber: 8 } } })
+    const shown = mocks.hoverSet.mock.calls.at(-1)![0] as { range: { startLineNumber: number } }[]
+    expect(shown.map(entry => entry.range.startLineNumber)).toEqual([8])
+
+    // Line 4 already has a thread, so it keeps its marker instead of offering a second one.
+    move({ target: { position: { lineNumber: 4 } } })
+    expect(mocks.hoverSet.mock.calls.at(-1)![0]).toEqual([])
+
+    move({ target: { position: { lineNumber: 8 } } })
+    leave()
+    expect(mocks.hoverSet.mock.calls.at(-1)![0]).toEqual([])
+    wrapper.unmount()
+  })
+
   it('marks commented lines on the gutter and reports a click on the marker', async () => {
     const wrapper = mount(MonacoDiff, {
       props: {
@@ -226,12 +267,13 @@ describe('Monaco reading options', () => {
     const decorations = mocks.decorationsSet.mock.calls[0]![0] as { range: { startLineNumber: number } }[]
     expect(decorations.map(entry => entry.range.startLineNumber)).toEqual([4, 9])
 
-    // Only the glyph margin counts: a click in the code itself must not open a comment.
+    // The margin and the line number both open a comment; a click in the code does not.
     const handler = mocks.onMouseDown.mock.calls[0]![0] as (event: unknown) => void
     handler({ target: { type: 6, position: { lineNumber: 4 } } })
     expect(wrapper.emitted('openLine')).toBeUndefined()
     handler({ target: { type: 2, position: { lineNumber: 4 } } })
-    expect(wrapper.emitted('openLine')).toEqual([[4]])
+    handler({ target: { type: 3, position: { lineNumber: 7 } } })
+    expect(wrapper.emitted('openLine')).toEqual([[4], [7]])
 
     // Anchoring is right-hand side only, so the cursor line comes from the modified editor.
     expect((wrapper.vm as unknown as { cursorLine(): number }).cursorLine()).toBe(12)

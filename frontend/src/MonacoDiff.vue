@@ -28,7 +28,11 @@ let semanticRegistration: monaco.IDisposable | null = null
 let hoverAbort: AbortController | null = null
 let firstDiffListener: monaco.IDisposable | null = null
 let glyphListener: monaco.IDisposable | null = null
+let hoverMoveListener: monaco.IDisposable | null = null
+let hoverLeaveListener: monaco.IDisposable | null = null
 let glyphs: monaco.editor.IEditorDecorationsCollection | null = null
+let hoverGlyphs: monaco.editor.IEditorDecorationsCollection | null = null
+let hoveredLine: number | null = null
 
 const semanticTokenTypes = [
   'namespace', 'class', 'interface', 'struct', 'enum', 'delegate', 'typeParameter',
@@ -214,16 +218,28 @@ onMounted(() => {
     firstDiffListener = null
     editor?.revealFirstDiff?.()
   })
-  glyphListener = editor.getModifiedEditor().onMouseDown(event => {
-    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return
+  const modified = editor.getModifiedEditor()
+  // Both the margin icon and the line number open the conversation, because "click the
+  // line" is what a reviewer reaches for and a 12-pixel icon is a poor target.
+  glyphListener = modified.onMouseDown(event => {
+    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+        event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) return
     const line = event.target.position?.lineNumber
     if (line) emit('openLine', line)
   })
+  hoverMoveListener = modified.onMouseMove(event => setHoveredLine(event.target.position?.lineNumber ?? null))
+  hoverLeaveListener = modified.onMouseLeave(() => setHoveredLine(null))
   refreshGlyphs()
   if (language === 'csharp' || originalLanguage === 'csharp') void loadCSharpHovers()
 })
 
-watch(() => props.commentLines, refreshGlyphs, { deep: true })
+watch(() => props.commentLines, () => {
+  refreshGlyphs()
+  // A line that just got a thread must lose its "+" without waiting for another mouse move.
+  const line = hoveredLine
+  hoveredLine = null
+  setHoveredLine(line)
+}, { deep: true })
 
 watch(() => props.sideBySide, value => editor?.updateOptions({ renderSideBySide: value ?? false }))
 
@@ -237,6 +253,25 @@ defineExpose({
 
 // Always the modified editor. With renderSideBySide off, deleted lines are view zones with
 // no addressable position, so the right-hand side is the only side a marker can live on.
+// The affordance for starting a comment: hovering a line puts a "+" in its margin, the
+// way a code review tool is expected to behave. Without it the margin looks inert and
+// nobody discovers that a line can be commented at all.
+function setHoveredLine(line: number | null) {
+  if (line === hoveredLine || !editor) return
+  hoveredLine = line
+  hoverGlyphs ??= editor.getModifiedEditor().createDecorationsCollection()
+  const commented = new Set(props.commentLines ?? [])
+  hoverGlyphs.set(line !== null && !commented.has(line)
+    ? [{
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          glyphMarginClassName: 'comment-add-glyph',
+          glyphMarginHoverMessage: { value: 'Dodaj komentarz do tej linii' },
+        },
+      }]
+    : [])
+}
+
 function refreshGlyphs() {
   if (!editor) return
   const lines = props.commentLines ?? []
@@ -254,7 +289,10 @@ function refreshGlyphs() {
 onBeforeUnmount(() => {
   hoverAbort?.abort()
   glyphListener?.dispose()
+  hoverMoveListener?.dispose()
+  hoverLeaveListener?.dispose()
   glyphs?.clear()
+  hoverGlyphs?.clear()
   firstDiffListener?.dispose()
   darkQuery?.removeEventListener?.('change', applyTheme)
   hoverRegistration?.dispose()

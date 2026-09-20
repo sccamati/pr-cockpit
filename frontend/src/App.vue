@@ -263,17 +263,35 @@ const commentLinesForFile = computed(() => threads.value
   .filter(thread => thread.filePath === selectedFilePath.value && (thread.rightLine ?? 0) > 0)
   .map(thread => thread.rightLine!))
 
-// A click on the gutter marker goes to the conversation for that line; a line with no
-// thread yet starts a draft anchored there. Both are two-step — nothing is sent here.
+// Clicking a line keeps you in the diff. An existing thread opens above it, a line
+// without one opens a draft anchored there — switching panels at that moment would take
+// away the code the comment is about. Both are still two-step: nothing is sent here.
+const inlineThreadId = ref<number | null>(null)
+const inlineThread = computed(() =>
+  threads.value.find(thread => thread.id === inlineThreadId.value) ?? null)
+const lineDraft = computed(() => {
+  const target = draft.value?.target ?? ''
+  return target.startsWith(`file:${selectedFilePath.value}:`)
+    ? Number(target.split(':')[2]) || null
+    : null
+})
+
 function openLineComments(line: number) {
   const existing = threads.value.find(thread =>
     thread.filePath === selectedFilePath.value && thread.rightLine === line)
-  commentsOpen.value = true
   commentError.value = ''
-  draft.value = existing
-    ? null
-    : { target: `file:${selectedFilePath.value}:${line}`, text: '' }
-  if (existing) threadSearch.value = ''
+  if (existing) {
+    inlineThreadId.value = existing.id
+    draft.value = null
+  } else {
+    inlineThreadId.value = null
+    draft.value = { target: `file:${selectedFilePath.value}:${line}`, text: '' }
+  }
+}
+
+function closeInlineComments() {
+  inlineThreadId.value = null
+  if (lineDraft.value !== null) draft.value = null
 }
 
 function commentOnCursorLine() {
@@ -472,6 +490,7 @@ function resetDiff() {
   diffLoading.value = false
   diffError.value = ''
   diffSinceIteration.value = null
+  inlineThreadId.value = null
   resetExplanation()
   fileSearch.value = ''
   onlyUnreviewed.value = false
@@ -525,6 +544,7 @@ function resetThreads() {
   commentsOpen.value = false
   threadSearch.value = ''
   onlyActiveThreads.value = false
+  inlineThreadId.value = null
   draft.value = null
   commentSaving.value = false
   commentError.value = ''
@@ -852,6 +872,8 @@ async function openFile(path: string, sinceIteration?: number) {
   diffSinceIteration.value = sinceIteration ?? null
   const pullRequestId = details.value.id
   selectedFilePath.value = path
+  inlineThreadId.value = null
+  if (lineDraft.value !== null) draft.value = null
   resetExplanation()
   fileDiff.value = null
   monacoComponent.value = null
@@ -1247,6 +1269,42 @@ onMounted(loadProjects)
                 <button type="button" class="checklist-retry" @click="openFile(selectedFilePath)">Pokaż cały diff</button>
               </p>
               <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
+              <!-- The conversation for the clicked line, docked above the diff so the code
+                   it is about stays on screen. -->
+              <div v-if="inlineThread || lineDraft !== null" class="inline-comments">
+                <div class="inline-comments-head">
+                  <strong>{{ inlineThread ? `Komentarz w linii ${inlineThread.rightLine ?? '—'}` : `Nowy komentarz do linii ${lineDraft}` }}</strong>
+                  <button type="button" class="inline-close" @click="closeInlineComments">Zamknij</button>
+                </div>
+                <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
+                <template v-if="inlineThread">
+                  <div v-for="comment in inlineThread.comments" :key="comment.id" class="thread-comment">
+                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
+                    <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>
+                    <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                  </div>
+                  <div v-if="draft?.target === String(inlineThread.id)" class="comment-draft">
+                    <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" aria-label="Odpowiedź w wątku"></textarea>
+                    <div class="debug-actions">
+                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                      <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
+                    </div>
+                  </div>
+                  <div v-else class="thread-actions">
+                    <button type="button" @click="startDraft(String(inlineThread.id))">Odpowiedz</button>
+                    <button v-if="inlineThread.status !== 'fixed'" type="button" :disabled="commentSaving" @click="setThreadStatus(inlineThread.id, 'fixed')">Naprawione</button>
+                    <button v-if="inlineThread.status && inlineThread.status !== 'active'" type="button" :disabled="commentSaving" @click="setThreadStatus(inlineThread.id, 'active')">Otwórz ponownie</button>
+                  </div>
+                </template>
+                <div v-else-if="draft" class="comment-draft">
+                  <textarea v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Treść komentarza do linii"></textarea>
+                  <div class="debug-actions">
+                    <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
+                    <button type="button" :disabled="commentSaving" @click="closeInlineComments">Anuluj</button>
+                    <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
+                  </div>
+                </div>
+              </div>
               <p v-if="explanationError" class="notice error file-explanation-error" role="alert">{{ explanationError }}</p>
               <div v-if="explanation" class="file-explanation" aria-label="Wyjaśnienie pliku">
                 <p v-for="(sentence, index) in explanation.sentences" :key="index">{{ sentence }}</p>

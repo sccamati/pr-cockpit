@@ -27,7 +27,12 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../src/api', () => ({ api }))
 vi.mock('../src/MonacoDiff.vue', () => ({
-  default: { template: '<div class="test-diff">Diff</div>' },
+  default: {
+    name: 'MonacoDiff',
+    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines'],
+    emits: ['openLine'],
+    template: '<div class="test-diff">Diff</div>',
+  },
 }))
 
 const details = {
@@ -426,6 +431,46 @@ describe('PR review', () => {
     await flushPromises()
     expect(api.fileDiff).toHaveBeenLastCalledWith('project', 'repo-a', 123, '/src/first.cs', undefined)
     expect(wrapper.find('.diff-since').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('starts a line comment from the diff without leaving the diff', async () => {
+    const existing = {
+      id: 5, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+      comments: [{ id: 1, author: 'Jan', content: 'Czy to na pewno tutaj?', commentType: 'text', publishedAt: null }],
+    }
+    api.commentThreads.mockResolvedValue([existing])
+    api.createThread.mockResolvedValue({ ...existing, id: 6, rightLine: 11 })
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    const diff = wrapper.findComponent({ name: 'MonacoDiff' })
+    // The lines that already carry a thread are handed to the editor as markers.
+    expect(diff.props('commentLines')).toEqual([4])
+
+    // A line without a thread opens a draft, and the diff stays on screen.
+    diff.vm.$emit('openLine', 11)
+    await flushPromises()
+    expect(wrapper.find('.inline-comments').text()).toContain('Nowy komentarz do linii 11')
+    expect(wrapper.find('.comments-view').exists()).toBe(false)
+    expect(wrapper.find('.test-diff').exists()).toBe(true)
+    expect(api.createThread).not.toHaveBeenCalled()
+
+    await wrapper.find('.inline-comments textarea').setValue('Tu brakuje sprawdzenia.')
+    await wrapper.find('.inline-comments .comment-send').trigger('click')
+    await flushPromises()
+    expect(api.createThread).toHaveBeenCalledWith('project', 'repo-a', 123,
+      { content: 'Tu brakuje sprawdzenia.', filePath: '/src/first.cs', line: 11 })
+
+    // A line that already has one opens that conversation instead.
+    diff.vm.$emit('openLine', 4)
+    await flushPromises()
+    expect(wrapper.find('.inline-comments').text()).toContain('Czy to na pewno tutaj?')
     wrapper.unmount()
   })
 

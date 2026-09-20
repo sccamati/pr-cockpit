@@ -264,6 +264,8 @@ Status: zaimplementowane. Podetap 4C plus widok, o który poprosił użytkownik.
 
 **Znaczniki na marginesie:** `glyphMargin: true` i `createDecorationsCollection` na edytorze **zmodyfikowanym** — przy `renderSideBySide: false` linie usunięte są strefami widoku bez adresowalnej pozycji, więc prawa strona jest jedyną, na której znacznik może stać. Kliknięcie w margines otwiera rozmowę dla tej linii, a linia bez wątku otwiera szkic zakotwiczony w niej. Przycisk „Skomentuj linię” bierze linię z kursora (`getPosition()` działa mimo `readOnly`). Nasłuch i kolekcja dekoracji dołączyły do istniejącego bloku zwalniania w `onBeforeUnmount`.
 
+**Doszło po informacji zwrotnej:** komentarz zakłada się **kliknięciem w linię w diffie** — inaczej funkcja jest nie do użycia. Najechanie na linię pokazuje `+` na marginesie, a kliknięcie w margines **albo w numer linii** otwiera rozmowę dla tej linii; ikona o szerokości kilkunastu pikseli to zły cel kliknięcia. Rozmowa i szkic otwierają się **nad diffem**, a nie w widoku komentarzy: przełączenie panelu zabierałoby z ekranu dokładnie ten kod, którego komentarz dotyczy. Linia, która już ma wątek, nie dostaje `+` — ma swój znacznik.
+
 **Widoku view zones świadomie nie budujemy** — PLAN.md §4.5 wariant C konkurowałby ze strefami, których diff w linii już używa na linie usunięte.
 
 ### B-21 — „Co się zmieniło po tym komentarzu”
@@ -276,7 +278,7 @@ Status: zaimplementowane. Prośba użytkownika: żeby po poprawce łatwo było z
 
 **Świadome uproszczenie:** przy takim porównaniu plik dostaje `ChangeType = "edit"`. Plik dodany po tamtej iteracji pokazałby wtedy pustą stronę źródłową zamiast zostać oznaczony jako dodany; odwrotnie byłoby gorzej, bo „add” ukryłoby starą wersję, czyli dokładnie to, po co się tu przychodzi.
 
-**Zweryfikowane:** 95 testów backendu (odczyt iteracji wątku i jej brak przy wątku bez kontekstu diffu) i 43 testy frontendu (oflagowany jest tylko wątek ze starszej iteracji; „Zobacz, co się zmieniło” woła diff z `sinceIteration`, a powrót bez niego; pisanie komentarza wymaga dwóch kroków i czyta wątki ponownie; szukanie po treści i grupowanie po pliku).
+**Zweryfikowane:** 95 testów backendu (odczyt iteracji wątku i jej brak przy wątku bez kontekstu diffu) i 45 testów frontendu (oflagowany jest tylko wątek ze starszej iteracji; szkic z kliknięcia w linię nie opuszcza diffu i wysyła dopiero na drugi krok; `+` pojawia się na linii pod kursorem, ale nie tam, gdzie wątek już jest; „Zobacz, co się zmieniło” woła diff z `sinceIteration`, a powrót bez niego; pisanie komentarza wymaga dwóch kroków i czyta wątki ponownie; szukanie po treści i grupowanie po pliku).
 
 **Niesprawdzone — całe 4B i 4C na żywym PR.** Nic z tego nie było uruchomione przeciwko prawdziwemu Azure DevOps: ani zapis z rozszerzonym PAT, ani semantyka `offset`, ani to, czy 409 w ogóle występuje, ani wygląd znaczników na marginesie. Wyłącznik jest domyślnie wyłączony właśnie dlatego.
 

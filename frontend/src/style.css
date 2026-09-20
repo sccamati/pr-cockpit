@@ -330,13 +330,18 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .comment-send { font-weight: 600; }
 .comment-warning { font-size: 12px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-/* The gutter marker for a line that already has a thread. */
-.comment-glyph { cursor: pointer; }
+/* The gutter marker for a line that already has a thread, and the hover affordance for
+   starting one on a line that does not. */
+.comment-glyph, .comment-add-glyph { cursor: pointer; }
 .comment-glyph::before { content: '💬'; display: block; font-size: 11px; line-height: 22px; text-align: center; }
+.comment-add-glyph::before { content: '+'; display: block; font-size: 15px; line-height: 22px; text-align: center; color: var(--accent); font-weight: 700; }
 .diff-since { margin: 0 12px 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .thread-moved { margin: 6px 0 0; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .thread-moved-dot { color: var(--accent); font-size: 10px; margin-left: 6px; }
 .thread-since { font-size: 12px; }
+.inline-comments { margin: 0 12px 8px; padding: 8px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-muted); }
+.inline-comments-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.inline-close { margin-left: auto; }
 .noise-summary { padding: 6px 10px; font-size: 13px; color: var(--text-muted); background: var(--surface-muted); border-bottom: 1px solid var(--line); cursor: pointer; }
 .noise-summary:hover { background: var(--surface-hover); }
 .noise-summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }
