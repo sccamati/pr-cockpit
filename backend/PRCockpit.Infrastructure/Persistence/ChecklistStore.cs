@@ -17,7 +17,7 @@ public sealed class ChecklistStore(PrCockpitContext context, IConfiguration conf
         var row = await context.Checklists
             .AsNoTracking()
             .FirstOrDefaultAsync(Match(organization, project, repositoryId, pullRequestId), ct);
-        return row is null ? new(false, false, false, false, false, false, null) : ToState(row);
+        return row is null ? new(false, false, false, false, false, false, null, null) : ToState(row);
     }
 
     public async Task<IReadOnlyList<ChecklistProgress>> GetProgressAsync(
@@ -74,8 +74,39 @@ public sealed class ChecklistStore(PrCockpitContext context, IConfiguration conf
         return ToState(row);
     }
 
+    public async Task<ChecklistState> SetDebugNoteAsync(
+        string project, string repositoryId, int pullRequestId, string? note, CancellationToken ct)
+    {
+        var organization = ValidateKey(project, repositoryId, pullRequestId);
+        var trimmed = note?.Trim();
+        if (trimmed is { Length: > DebugNoteUpdate.MaxLength })
+            throw new ChecklistException($"The answer may be at most {DebugNoteUpdate.MaxLength} characters.", 400);
+
+        var row = await context.Checklists
+            .FirstOrDefaultAsync(Match(organization, project, repositoryId, pullRequestId), ct);
+        if (row is null)
+        {
+            row = new PrChecklistRow
+            {
+                Organization = organization,
+                Project = project,
+                RepositoryId = repositoryId,
+                PullRequestId = pullRequestId,
+            };
+            context.Checklists.Add(row);
+        }
+
+        // Blank clears it. Saving an answer does not tick the Debug step — the six boxes
+        // stay the reviewer's own call, the way they have been since B-07.
+        row.DebugNote = string.IsNullOrEmpty(trimmed) ? null : trimmed;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await context.SaveChangesAsync(ct);
+        return ToState(row);
+    }
+
     private static ChecklistState ToState(PrChecklistRow row) => new(
-        row.AiReview, row.Quality, row.Understand, row.Architecture, row.Debug, row.Ready, row.UpdatedAt);
+        row.AiReview, row.Quality, row.Understand, row.Architecture, row.Debug, row.Ready, row.UpdatedAt,
+        row.DebugNote);
 
     private static System.Linq.Expressions.Expression<Func<PrChecklistRow, bool>> Match(
         string organization, string project, string repositoryId, int pullRequestId) =>

@@ -9,5 +9,8 @@ public sealed class PrChecklistRow : PullRequestScopedRow
     public bool Architecture { get; set; }
     public bool Debug { get; set; }
     public bool Ready { get; set; }
+
+    /// <summary>The Debug Check answer. Free text, never scored, never required.</summary>
+    public string? DebugNote { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

@@ -11,11 +11,13 @@ const api = vi.hoisted(() => ({
   pullRequest: vi.fn(),
   fileDiff: vi.fn(),
   generateSummary: vi.fn(),
+  explainFile: vi.fn(),
   savedSummary: vi.fn(),
   checklist: vi.fn(),
   fileReviews: vi.fn(),
   setFileReviewed: vi.fn(),
   setReadingPath: vi.fn(),
+  setDebugNote: vi.fn(),
   fileReviewProgress: vi.fn(),
 }))
 
@@ -59,13 +61,18 @@ beforeEach(() => {
   api.savedSummary.mockResolvedValue(null)
   api.checklist.mockResolvedValue({
     aiReview: false, quality: false, understand: false,
-    architecture: false, debug: false, ready: false, updatedAt: null,
+    architecture: false, debug: false, ready: false, updatedAt: null, debugNote: null,
   })
+  api.setDebugNote.mockImplementation(async (_project, _repository, _id, note) => ({
+    aiReview: false, quality: false, understand: false, architecture: false,
+    debug: false, ready: false, updatedAt: '2026-09-01T12:00:00Z', debugNote: note.trim() || null,
+  }))
   api.fileDiff.mockImplementation(async (_project, _repository, _id, path) => ({
     kind: 'text', path, originalPath: null, originalText: 'old', modifiedText: 'new',
   }))
   api.generateSummary.mockResolvedValue({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    criticalFiles: [],
     summary: 'Zmieniono przepływ faktur. Dodano testy.',
     baseCommitSha: 'a'.repeat(40),
     headCommitSha: 'b'.repeat(40),
@@ -74,6 +81,9 @@ beforeEach(() => {
       wasLimited: true, omittedFiles: [{ path: '/tests/third.cs', reason: 'fileCharacterLimit' }],
     },
   })
+  api.explainFile.mockImplementation(async (_project, _repository, _id, path) => ({
+    schemaVersion: 2, path, headCommitSha: 'b'.repeat(40), sentences: [`Wyjaśnienie dla ${path}.`],
+  }))
   api.fileReviews.mockResolvedValue({ files: [], readingPath: [], updatedAt: null })
   api.fileReviewProgress.mockResolvedValue([])
   api.setReadingPath.mockImplementation(async (_project, _repository, _id, paths) => ({ paths, updatedAt: null }))
@@ -128,6 +138,156 @@ describe('PR review', () => {
     expect(wrapper.find('.diff-toolbar-title').attributes('title')).toBe('/tests/third.cs')
     await wrapper.find('.review-check input').setValue(true)
     expect(wrapper.text()).toContain('Wszystkie pliki obejrzane.')
+    wrapper.unmount()
+  })
+
+  it('folds noise files into their own group and walks them after the code', async () => {
+    const withNoise = {
+      ...details,
+      changedFilesCount: 5,
+      changedFiles: [
+        ...details.changedFiles,
+        { path: '/package-lock.json', changeType: 'edit', originalPath: null, category: 'lockFile' },
+        { path: '/dist/app.js', changeType: 'add', originalPath: null, category: 'buildOutput' },
+      ],
+    }
+    api.pullRequests.mockResolvedValue([withNoise])
+    api.pullRequest.mockResolvedValue(withNoise)
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    // The code tree holds only the three source files; the noise sits in a collapsed group.
+    expect(wrapper.findAll('.changed-files li')).toHaveLength(3)
+    expect(wrapper.find('.noise-summary').text()).toBe('Szum (2)')
+    expect(wrapper.findAll('.noise-section li')).toHaveLength(2)
+    expect(wrapper.find('.noise-section').attributes('open')).toBeUndefined()
+
+    // "Next unreviewed" clears the code before it offers a lockfile. Inside the noise
+    // group the tree order applies, so /dist/app.js comes before the file at the root.
+    for (const expected of ['first.cs', 'second.cs', 'third.cs', 'app.js', 'package-lock.json']) {
+      await wrapper.find('.next-file-button').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.diff-toolbar h4').text()).toBe(expected)
+      await wrapper.find('.review-check input').setValue(true)
+    }
+    expect(wrapper.text()).toContain('Wszystkie pliki obejrzane.')
+    wrapper.unmount()
+  })
+
+  it('offers the AI ranking as a proposal and writes the reading path only once accepted', async () => {
+    api.generateSummary.mockResolvedValue({
+      schemaVersion: 2,
+      summary: 'Zmieniono przepływ faktur. Dodano testy.',
+      sentences: ['Zmieniono przepływ faktur.', 'Dodano testy.'],
+      baseCommitSha: 'a'.repeat(40),
+      headCommitSha: 'b'.repeat(40),
+      criticalFiles: [
+        { path: '/src/second.cs', role: 'Wejście do wysyłki.', why: 'Początek całego flow.' },
+        { path: '/src/first.cs', role: 'Walidacja danych.', why: 'Tu jest reguła biznesowa.' },
+      ],
+      contextReport: { changedFiles: 3, includedFiles: 3, includedDiffCharacters: 20, wasLimited: false, omittedFiles: [] },
+    })
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    // Nothing is proposed before the summary exists, and nothing is ever written on its own.
+    expect(wrapper.find('.critical-proposal').exists()).toBe(false)
+    await wrapper.find('.summary-button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.critical-proposal').exists()).toBe(true)
+    expect(api.setReadingPath).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.critical-list li')).toHaveLength(0)
+
+    // The ranking also labels the rows in the file tree.
+    expect(wrapper.findAll('.file-role').map(role => role.text()))
+      .toEqual(['Walidacja danych.', 'Wejście do wysyłki.'])
+
+    // Accepting keeps the model's order, and the proposal gives way to the real path.
+    await wrapper.find('.critical-accept').trigger('click')
+    await flushPromises()
+    expect(api.setReadingPath).toHaveBeenCalledWith('project', 'repo-a', 123, ['/src/second.cs', '/src/first.cs'])
+    expect(wrapper.find('.critical-proposal').exists()).toBe(false)
+    expect(wrapper.findAll('.critical-list li')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('leaves a reading path the user already built alone', async () => {
+    api.fileReviews.mockResolvedValue({ files: [], readingPath: ['/tests/third.cs'], updatedAt: null })
+    api.generateSummary.mockResolvedValue({
+      schemaVersion: 2,
+      summary: 'Zmieniono przepływ faktur. Dodano testy.',
+      sentences: ['Zmieniono przepływ faktur.', 'Dodano testy.'],
+      baseCommitSha: 'a'.repeat(40),
+      headCommitSha: 'b'.repeat(40),
+      criticalFiles: [{ path: '/src/first.cs', role: 'Walidacja danych.', why: 'Reguła biznesowa.' }],
+      contextReport: { changedFiles: 3, includedFiles: 3, includedDiffCharacters: 20, wasLimited: false, omittedFiles: [] },
+    })
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.summary-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.critical-proposal').exists()).toBe(false)
+    expect(wrapper.findAll('.critical-list li')).toHaveLength(1)
+    // The label still shows — it informs without overwriting anything.
+    expect(wrapper.find('.file-role').text()).toBe('Walidacja danych.')
+    wrapper.unmount()
+  })
+
+  it('explains the open file on demand and drops an explanation that arrives after a file switch', async () => {
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    // Nothing is explained until asked, and the diff is never replaced by the explanation.
+    expect(wrapper.find('.file-explanation').exists()).toBe(false)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
+    await flushPromises()
+    expect(api.explainFile).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/first.cs')
+    expect(wrapper.find('.file-explanation').text()).toContain('Wyjaśnienie dla /src/first.cs.')
+    expect(wrapper.find('.test-diff').exists()).toBe(true)
+
+    // An answer for the file you just left must not appear over the file you moved to.
+    let resolveLate!: (value: unknown) => void
+    api.explainFile.mockReturnValueOnce(new Promise(resolve => { resolveLate = resolve }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e' }))
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+    resolveLate({ schemaVersion: 2, path: '/src/first.cs', headCommitSha: null, sentences: ['Spóźnione.'] })
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    expect(wrapper.find('.file-explanation').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('saves the Debug Check answer without ticking anything for you', async () => {
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.debug-question').text()).toBe('Gdyby ta zmiana nie zadziałała, gdzie zacząłbyś szukać?')
+    await wrapper.find('#debug-answer').setValue('  Od kolejki wysyłki.  ')
+    await wrapper.find('.debug-save').trigger('click')
+    await flushPromises()
+
+    expect(api.setDebugNote).toHaveBeenCalledWith('project', 'repo-a', 123, '  Od kolejki wysyłki.  ')
+    // The field shows what the server stored, and no checklist box moved.
+    expect((wrapper.find('#debug-answer').element as HTMLTextAreaElement).value).toBe('Od kolejki wysyłki.')
+    expect(wrapper.text()).toContain('Zapisano')
+    expect(wrapper.findAll('.checklist-item input').every(box => !(box.element as HTMLInputElement).checked)).toBe(true)
     wrapper.unmount()
   })
 

@@ -8,6 +8,8 @@ export interface TreeFile {
   critical: boolean
   criticalDisabled: boolean
   selected: boolean
+  // What the AI ranking said this file is for, or null. A label, never a decision.
+  role: string | null
 }
 
 export interface TreeFolder {

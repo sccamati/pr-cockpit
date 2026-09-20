@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type C
 import FileTree from './FileTree.vue'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
 import { renderDescription } from './description'
-import { api, type ChecklistItem, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -18,6 +18,9 @@ const fileDiff = ref<FileDiff | null>(null)
 const diffLoading = ref(false)
 const diffError = ref('')
 const summary = ref<SummaryResponse | null>(null)
+const explanation = ref<FileExplanation | null>(null)
+const explanationLoading = ref(false)
+const explanationError = ref('')
 const summaryLoading = ref(false)
 const summaryError = ref('')
 const summaryReadLoading = ref(false)
@@ -26,6 +29,15 @@ const summarySavedAt = ref<string | null>(null)
 const checklist = ref<ChecklistState | null>(null)
 const checklistLoading = ref(false)
 const checklistSaving = ref<ChecklistItem | null>(null)
+// PRODUCT.md §9: the point is a few seconds of active thinking, not a grade. Nothing here
+// checks the answer, and leaving it empty costs nothing.
+// ponytail: one fixed question instead of the 1-3 generated failure scenarios §9 describes
+// — it forces the same few seconds without a third AI path. Ceiling: if the fixed question
+// turns out to be too weak, scenarios join the Summary schema.
+const debugAnswer = ref('')
+const debugSaving = ref(false)
+const debugSaved = ref(false)
+const showDebugHint = ref(false)
 const checklistError = ref('')
 const checklistProgress = ref<Record<number, number>>({})
 const progressLoading = ref(false)
@@ -94,8 +106,8 @@ const filteredFiles = computed(() => onlyUnreviewed.value
   : matchingFiles.value)
 const remainingCount = computed(() => (details.value?.changedFiles.length ?? 0) - reviewedPaths.value.length)
 const unreviewedMatches = computed(() => matchingFiles.value.filter(file => !isReviewed(file.path)))
-const fileTree = computed(() => buildFileTree(
-  filteredFiles.value.map<TreeFile>(file => ({
+function toTreeFile(file: ChangedFile): TreeFile {
+  return {
     path: file.path,
     name: fileName(file.path),
     changeType: changeLabel(file.changeType),
@@ -105,11 +117,31 @@ const fileTree = computed(() => buildFileTree(
     critical: isCritical(file.path),
     criticalDisabled: !isCritical(file.path) && criticalPaths.value.length >= 10,
     selected: selectedFilePath.value === file.path,
-  })),
-  fileSearch.value.trim().length > 0))
+    role: roleByPath.value.get(file.path) ?? null,
+  }
+}
+// Lockfiles, snapshots and build output are classified by the backend and get their own
+// collapsed group, so a 44-file pull request stops opening on twelve rows nobody reads.
+// They stay listed and navigable — hiding a file would be a claim it does not exist.
+// The AI ranking, kept apart from readingPath: PRODUCT.md §10 — a proposal is not a fact
+// until the user accepts it, so nothing is written to the reading path behind their back.
+const proposalDismissed = ref(false)
+const criticalProposal = computed(() => {
+  const paths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
+  return (summary.value?.criticalFiles ?? []).filter(file => paths.has(file.path)).slice(0, 10)
+})
+const showProposal = computed(() =>
+  criticalProposal.value.length > 0 && !proposalDismissed.value && criticalPaths.value.length === 0)
+const roleByPath = computed(() => new Map(criticalProposal.value.map(file => [file.path, file.role])))
+const noiseFiles = computed(() => filteredFiles.value.filter(file => file.category))
+const codeFiles = computed(() => filteredFiles.value.filter(file => !file.category))
+const expandAll = computed(() => fileSearch.value.trim().length > 0)
+const fileTree = computed(() => buildFileTree(codeFiles.value.map(toTreeFile), expandAll.value))
+const noiseTree = computed(() => buildFileTree(noiseFiles.value.map(toTreeFile), expandAll.value))
 // Everything on screen is either all matching files, or only the unreviewed ones — so the
-// rendered tree is the right basis for both stepping and "next unreviewed".
-const orderedPaths = computed(() => flattenTree(fileTree.value))
+// rendered tree is the right basis for both stepping and "next unreviewed". Noise comes
+// last, which is what keeps "next unreviewed" walking the code first.
+const orderedPaths = computed(() => [...flattenTree(fileTree.value), ...flattenTree(noiseTree.value)])
 const orderedIndex = computed(() => orderedPaths.value.indexOf(selectedFilePath.value))
 const hasPreviousFile = computed(() => orderedIndex.value > 0)
 const hasNextFile = computed(() => orderedIndex.value >= 0 && orderedIndex.value < orderedPaths.value.length - 1)
@@ -183,6 +215,12 @@ function moveCritical(path: string, offset: -1 | 1) {
   selected[index] = selected[target]!
   selected[target] = moved
   saveReadingPath(selected)
+}
+
+function acceptProposal() {
+  if (!showProposal.value) return
+  saveReadingPath(criticalProposal.value.map(file => file.path))
+  proposalDismissed.value = true
 }
 
 // Optimistic with rollback, the same shape as setChecklistItem: the request id is captured
@@ -277,6 +315,7 @@ function resetDiff() {
   monacoComponent.value = null
   diffLoading.value = false
   diffError.value = ''
+  resetExplanation()
   fileSearch.value = ''
   onlyUnreviewed.value = false
 }
@@ -289,6 +328,7 @@ function resetSummary() {
   summaryReadLoading.value = false
   summaryReadError.value = ''
   summarySavedAt.value = null
+  proposalDismissed.value = false
 }
 
 async function loadSavedSummary(project: string, repository: string, id: number) {
@@ -314,6 +354,10 @@ function resetChecklist() {
   checklistLoading.value = false
   checklistSaving.value = null
   checklistError.value = ''
+  debugAnswer.value = ''
+  debugSaving.value = false
+  debugSaved.value = false
+  showDebugHint.value = false
 }
 
 function resetChecklistProgress() {
@@ -392,11 +436,39 @@ async function loadChecklist(project: string, repository: string, id: number) {
   checklistError.value = ''
   try {
     const result = await api.checklist(project, repository, id)
-    if (current === checklistRequestId) checklist.value = result
+    if (current === checklistRequestId) {
+      checklist.value = result
+      debugAnswer.value = result.debugNote ?? ''
+    }
   } catch (cause) {
     if (current === checklistRequestId) checklistError.value = message(cause)
   } finally {
     if (current === checklistRequestId) checklistLoading.value = false
+  }
+}
+
+// No optimistic write: this is the reviewer's own sentence, so what the field shows after
+// a save is what the server stored, not what we hoped it stored.
+async function saveDebugAnswer() {
+  if (!details.value || debugSaving.value) return
+  const current = checklistRequestId
+  const project = projectId.value
+  const repository = repositoryId.value
+  const id = details.value.id
+  debugSaving.value = true
+  debugSaved.value = false
+  checklistError.value = ''
+  try {
+    const result = await api.setDebugNote(project, repository, id, debugAnswer.value)
+    if (current === checklistRequestId) {
+      checklist.value = result
+      debugAnswer.value = result.debugNote ?? ''
+      debugSaved.value = true
+    }
+  } catch (cause) {
+    if (current === checklistRequestId) checklistError.value = message(cause)
+  } finally {
+    if (current === checklistRequestId) debugSaving.value = false
   }
 }
 
@@ -552,11 +624,38 @@ async function generateSummary() {
   }
 }
 
+function resetExplanation() {
+  explanation.value = null
+  explanationLoading.value = false
+  explanationError.value = ''
+}
+
+// Rides the diff request id: switching files or leaving the PR invalidates an explanation
+// still in flight, exactly like a late diff response.
+async function explainFile() {
+  if (!details.value || !selectedFilePath.value || explanationLoading.value) return
+  const current = diffRequestId
+  const pullRequestId = details.value.id
+  const path = selectedFilePath.value
+  explanationError.value = ''
+  explanationLoading.value = true
+  try {
+    const result = await api.explainFile(projectId.value, repositoryId.value, pullRequestId, path)
+    if (current !== diffRequestId) return
+    explanation.value = result
+  } catch (cause) {
+    if (current === diffRequestId) explanationError.value = message(cause)
+  } finally {
+    if (current === diffRequestId) explanationLoading.value = false
+  }
+}
+
 async function openFile(path: string) {
   if (!details.value) return
   const current = ++diffRequestId
   const pullRequestId = details.value.id
   selectedFilePath.value = path
+  resetExplanation()
   fileDiff.value = null
   monacoComponent.value = null
   diffError.value = ''
@@ -653,6 +752,7 @@ const shortcutHelp = [
   { keys: 'f', label: 'Tryb skupienia' },
   { keys: 'g', label: 'Przejdź kursorem do kodu' },
   { keys: 'o', label: 'Opis PR i powrót do pliku' },
+  { keys: 'e', label: 'Wyjaśnij ten plik' },
   { keys: 'Esc', label: 'Zamknij pomoc albo wróć do listy' },
   { keys: '?', label: 'Ta pomoc' },
 ]
@@ -734,6 +834,7 @@ const shortcuts: Record<string, () => void> = {
   f: () => { focusMode.value = !focusMode.value },
   g: () => diffView.value?.focusEditor(),
   o: toggleBriefing,
+  e: explainFile,
 }
 
 // Capture phase: Monaco stops propagation of the keys it owns, so a bubble-phase
@@ -845,9 +946,13 @@ onMounted(loadProjects)
               <button class="next-file-button" type="button" :disabled="!nextUnreviewedPath" @click="openNextUnreviewed">Następny nieobejrzany →</button>
               <p v-if="matchingFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
               <p v-else-if="!nextUnreviewedPath && remainingCount > 0" class="file-list-hint">{{ unreviewedMatches.length === 0 ? 'Brak nieobejrzanych plików w wynikach wyszukiwania.' : 'To ostatni nieobejrzany plik. Oznacz go po przejrzeniu.' }}</p>
-              <div v-if="filteredFiles.length > 0" class="changed-files" aria-label="Zmienione pliki">
+              <div v-if="codeFiles.length > 0" class="changed-files" aria-label="Zmienione pliki">
                 <FileTree :node="fileTree" :show-ratio="!onlyUnreviewed" @open="openFile" @toggle-critical="toggleCritical" />
               </div>
+              <details v-if="noiseFiles.length > 0" class="noise-section" :open="expandAll || noiseTree.containsSelected">
+                <summary class="noise-summary">Szum ({{ noiseFiles.length }})</summary>
+                <FileTree :node="noiseTree" :show-ratio="!onlyUnreviewed" @open="openFile" @toggle-critical="toggleCritical" />
+              </details>
             </template>
           </div>
 
@@ -867,10 +972,17 @@ onMounted(loadProjects)
                   <button type="button" title="Następna zmiana w pliku (.)" aria-label="Następna zmiana w pliku" @click="goToDiff('next')">›</button>
                   <button type="button" class="diff-layout-toggle" :aria-pressed="sideBySide" @click="sideBySide = !sideBySide">{{ sideBySide ? 'Obok siebie' : 'W linii' }}</button>
                   <button type="button" title="Opis PR (o)" @click="showBriefing">Opis PR</button>
+                  <button type="button" class="explain-button" title="Wyjaśnij ten plik (e)"
+                    :disabled="explanationLoading" @click="explainFile">{{ explanationLoading ? 'Wyjaśniam…' : 'Wyjaśnij ten plik' }}</button>
                 </div>
                 <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
               </div>
               <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
+              <p v-if="explanationError" class="notice error file-explanation-error" role="alert">{{ explanationError }}</p>
+              <div v-if="explanation" class="file-explanation" aria-label="Wyjaśnienie pliku">
+                <p v-for="(sentence, index) in explanation.sentences" :key="index">{{ sentence }}</p>
+                <p class="file-explanation-note muted">Wyjaśnienie AI dla tej wersji pliku. Zapisane lokalnie.</p>
+              </div>
               <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
               <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
               <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
@@ -926,10 +1038,42 @@ onMounted(loadProjects)
               <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
             </details>
 
-            <details class="rail-block critical-section" :open="criticalPaths.length > 0">
+            <details class="rail-block debug-check" :open="remainingCount === 0">
+              <summary>Debug Check</summary>
+              <p class="debug-question">Gdyby ta zmiana nie zadziałała, gdzie zacząłbyś szukać?</p>
+              <p v-if="remainingCount > 0" class="muted debug-hint-later">Pytanie ma sens po przeczytaniu PR — zostało {{ remainingCount }} {{ remainingCount === 1 ? 'plik' : 'plików' }}.</p>
+              <label class="debug-label" for="debug-answer">Twoja odpowiedź</label>
+              <textarea id="debug-answer" v-model="debugAnswer" class="debug-answer" rows="3"
+                :maxlength="2000" placeholder="Jedno zdanie wystarczy."></textarea>
+              <div class="debug-actions">
+                <button type="button" class="debug-save" :disabled="debugSaving" @click="saveDebugAnswer">{{ debugSaving ? 'Zapisywanie…' : 'Zapisz' }}</button>
+                <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
+                <span v-if="debugSaved" class="debug-saved" role="status">Zapisano</span>
+              </div>
+              <!-- "Show me" reuses the ranking the Summary already returned — no second
+                   model run, and nothing here is scored against your answer. -->
+              <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
+                <li v-for="file in criticalProposal" :key="file.path"><code>{{ file.path }}</code> — {{ file.why }}</li>
+              </ol>
+            </details>
+
+            <details class="rail-block critical-section" :open="criticalPaths.length > 0 || showProposal">
               <summary>Ścieżka kluczowych plików<span> · {{ criticalPaths.length }} / 10</span></summary>
               <p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Zapisuje się lokalnie.</p>
-              <p v-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian po lewej.</p>
+              <div v-if="showProposal" class="critical-proposal">
+                <p class="critical-proposal-heading">Propozycja AI ({{ criticalProposal.length }})</p>
+                <ol class="critical-proposal-list" aria-label="Propozycja ścieżki czytania">
+                  <li v-for="file in criticalProposal" :key="file.path">
+                    <button class="critical-open" type="button" :title="file.path" @click="openCriticalFile(file.path)">{{ file.path }}</button>
+                    <p class="critical-proposal-why">{{ file.why }}</p>
+                  </li>
+                </ol>
+                <div class="critical-proposal-actions">
+                  <button type="button" class="critical-accept" @click="acceptProposal">Przyjmij ścieżkę</button>
+                  <button type="button" @click="proposalDismissed = true">Odrzuć</button>
+                </div>
+              </div>
+              <p v-else-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian po lewej.</p>
               <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
                 <li v-for="(path, index) in criticalPaths" :key="path">
                   <button class="critical-open" type="button" :title="path" @click="openCriticalFile(path)"><span class="critical-order">{{ index + 1 }}</span><span>{{ path }}</span></button>

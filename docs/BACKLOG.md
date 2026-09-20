@@ -164,6 +164,64 @@ Status: zaimplementowane. Decyzja użytkownika, podjęta po przedstawieniu zastr
 
 **Zweryfikowane:** 62 testy backendu (49 wcześniejszych plus 13 reguł architektonicznych) i 33 testy frontendu przechodzą; aplikacja wstaje po przebudowie i wykonuje realne zapisy oraz odczyty przez API na żywej bazie SQL Server.
 
+## Wdrożone — odszumienie listy plików
+
+### B-14 — Podział drzewa na kod i szum
+
+Status: zaimplementowane. Pierwszy krok etapu 3 z [PLAN.md](PLAN.md) — jedyny, który nie dotyka AI.
+
+**Dlaczego:** `PrContextBuilder` od B-04 rozpoznawał lockfile'e, snapshoty, pliki generowane, zminifikowane i build output, ale wyłącznie po to, żeby nie wysyłać ich do modelu. Drzewo plików w UI nic o tym nie wiedziało, więc PR z dwunastoma takimi plikami otwierał się na dwunastu wierszach, których nikt nie czyta.
+
+**Zakres:** reguła przeniesiona z `PrContextBuilder.ExcludedType` do `FileCategory.Of` w domenie — jedna implementacja, dwóch odbiorców. `ChangedFile` dostał właściwość **wyliczaną** `Category` zamiast parametru konstruktora, więc ani mapper, ani miejsca konstrukcji, ani DTO, ani baza nie wymagały zmiany. Frontend dzieli przefiltrowane pliki na dwa drzewa i renderuje szum w zwiniętym `<details>` „Szum (N)”. Pliki szumu zostają widoczne i oznaczalne, ale w `orderedPaths` lądują na końcu.
+
+**Świadoma decyzja:** liczniki obejrzanych plików i „Wszystkie pliki obejrzane” nadal obejmują szum. Zmiana jest czysto prezentacyjna — ukrycie pliku z rachunku byłoby twierdzeniem, że nie ma go w PR.
+
+**Zweryfikowane:** 68 testów backendu (doszedł `[Theory]` pilnujący, że `ChangedFile.Category` zgadza się z tym, co pomija `PrContextBuilder`) i 34 testy frontendu, w tym nowy test sprawdzający, że szum trafia do własnej zwiniętej grupy i że „następny nieobejrzany” przerabia najpierw kod. `npm run build` przechodzi.
+
+**Niesprawdzone:** wygląd bloku „Szum” na rzeczywistym PR — `max-height: 40%` w szynie plików dobrane na oko, nie zmierzone na długiej liście.
+
+## Wdrożone — ranking plików od AI
+
+### B-15 — Schemat Summary v2 i propozycja ścieżki czytania
+
+Status: zaimplementowane. Etap 3, punkty 3.1 i 3.3 z [PLAN.md](PLAN.md), zrobione jako jedna zmiana — sam punkt 3.1 nie dałby nic widocznego, więc nie dałoby się go ocenić.
+
+**Zakres backendu:** `SummaryDraft` i `SummaryResponse` dostały `criticalFiles` (`path`, `role`, `why`). `SummaryRunner` waliduje je równie twardo jak zdania: maksymalnie 10 pozycji, każda ścieżka **musi** należeć do listy plików tego PR, bez duplikatów, `role` i `why` niepuste i do 200 znaków. Cokolwiek poza kontraktem → 502. Limity zebrane w `SummaryContract`, z którego korzysta też magazyn i prompt. Instrukcja w `CliSummaryAnalyzer` rozszerzona; podział „stała instrukcja vs. niezaufane dane w `context`” nietknięty. Adapter referencyjny tylko przepuszcza treść, więc zmienił się w nim wyłącznie komentarz.
+
+**Decyzja użytkownika — bez zgodności wstecz.** Schemat v1 nie jest już przyjmowany. Żeby stary zapis nie wywracał całego PR-a, `SummaryStore.GetAsync` traktuje niezgodną **wersję** jako brak Summary (UI proponuje wygenerowanie), a nie jako błąd; uszkodzony JSON nadal daje 503.
+
+**Zakres frontendu:** ranking pokazuje się jako **propozycja**, nie jako zapis. Blok „Propozycja AI” pojawia się w szynie tylko wtedy, gdy ścieżka czytania jest pusta, i nic nie zapisuje, dopóki nie klikniesz „Przyjmij ścieżkę”; „Odrzuć” chowa go do czasu przełączenia PR. Wiersze drzewa plików dostają etykiety ról z rankingu niezależnie od akceptacji — etykieta informuje, niczego nie nadpisuje. To wprost wymóg [PRODUCT.md](../PRODUCT.md) §10.
+
+**Zweryfikowane:** 71 testów backendu (doszły trzy: pełny kontrakt v2, pusta i brakująca lista, oraz odrzucenie wymyślonej ścieżki, duplikatu, pustej roli, przekroczonej długości i jedenastej pozycji) i 36 testów frontendu (doszły dwa: propozycja nic nie zapisuje dopóki nie zostanie przyjęta i zachowuje kolejność modelu; istniejąca ścieżka użytkownika nie jest ruszana). `npm run build` przechodzi.
+
+**Niesprawdzone:** jakość samego rankingu na rzeczywistym PR — czy model trafia w te 5–10 plików i czy `why` jest warte czytania. Tego nie da się orzec z testów.
+
+## Wdrożone — wyjaśnienie pliku i Debug Check
+
+### B-16 — Wyjaśnienie pojedynczego pliku na żądanie
+
+Status: zaimplementowane. Etap 3, punkt 3.2 z [PLAN.md](PLAN.md).
+
+**Zakres:** drugi tryb tego samego adaptera (`task: "file"`), a nie drugi port — ten sam plik wykonywalny, ta sama konfiguracja i ten sam kontrakt, więc osobny interfejs kupowałby tylko kolejną rejestrację w DI. `CliSummaryAnalyzer` ma teraz **jedną** ścieżkę uruchomienia procesu dla obu zadań; duplikowanie jej oznaczałoby duplikowanie timeoutu, ograniczonych odczytów i zabijania procesu, czyli całego ryzyka w tej klasie. Kontekst zawęża opcjonalny parametr `onlyPath` w `PrContextBuilder` — budżety zostają dokładnie te same, więc pojedynczy plik nie jest traktowany łagodniej niż ten sam plik w pakiecie całego PR. Walidacja: 1–3 zdania, `schemaVersion == 2`, ścieżka bierze się z kontekstu, nigdy z odpowiedzi modelu.
+
+**Endpoint** `POST .../summary/file` przyjmuje ścieżkę **w ciele** i sprawdza ją względem listy plików tego PR, zanim cokolwiek trafi do Azure DevOps albo do modelu. Zapis w nowej tabeli `pr_file_explanations`, klucz to PR + ścieżka, a SHA głowy jest **kolumną**: wiersz ze starej głowy jest nadpisywany zamiast puchnąć o wiersz na iterację.
+
+**W UI:** przycisk „Wyjaśnij ten plik” w pasku czytania i skrót `e`. Wyjaśnienie pojawia się **nad** diffem, nie zamiast niego. Ładowanie korzysta z licznika `diffRequestId`, więc odpowiedź dla pliku, z którego już wyszedłeś, jest odrzucana — ten sam wzorzec co spóźniony diff.
+
+**Zweryfikowane:** 83 testy backendu (doszły m.in. zawężenie kontekstu do jednego pliku bez pobierania pozostałych, utrzymanie budżetu przy jednym pliku, odrzucenie 0 i 4 zdań oraz odczyt wyjaśnienia tylko dla tej głowy, z której powstało) i 38 testów frontendu (doszedł test, że spóźnione wyjaśnienie nie pojawia się nad kolejnym plikiem).
+
+### B-17 — Debug Check
+
+Status: zaimplementowane w wersji minimalnej. Etap 3, punkt 3.5 z [PLAN.md](PLAN.md), [PRODUCT.md](../PRODUCT.md) §9.
+
+**Zakres:** blok w szynie z jednym pytaniem — „Gdyby ta zmiana nie zadziałała, gdzie zacząłbyś szukać?” — polem na odpowiedź i zapisem w kolumnie `DebugNote` tabeli `pr_checklists`. Rozwija się sam, gdy wszystkie pliki są obejrzane; wcześniej mówi wprost, ile zostało. „Pokaż, gdzie patrzeć” odsłania ranking, który Summary już zwróciło — **żadnego drugiego wywołania modelu**. Zapis odpowiedzi **nie** zaznacza kroku „Debug” w checkliście; sześć pól zostaje decyzją użytkownika, tak jak od B-07.
+
+**Świadome uproszczenie (`ponytail`):** PRODUCT.md §9 mówi o 1–3 generowanych scenariuszach awarii; tu pytanie jest stałe. Cel z §9 brzmi „wymusić kilka sekund aktywnego myślenia”, a to stałe pytanie robi bez trzeciej ścieżki AI i bez schematu v3. Sufit: jeśli stałe pytanie okaże się za słabe, scenariusze dochodzą jako `scenarios` w schemacie Summary.
+
+**Zweryfikowane:** przechowywanie odpowiedzi, czyszczenie pustą treścią, limit 2000 znaków (400) i to, że zapis nie zaznacza kroku „Debug” — testy magazynu na SQLite w pamięci. Frontend: zapis pokazuje to, co zapisał serwer, i nie rusza checklisty.
+
+**Niesprawdzone:** czy pytanie faktycznie zmienia sposób czytania PR. To ocena użytkownika po kilku prawdziwych PR-ach, nie test.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

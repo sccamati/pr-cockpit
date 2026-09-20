@@ -13,6 +13,9 @@ public interface IChecklistStore
 
     Task<ChecklistState> SetAsync(
         string project, string repositoryId, int pullRequestId, string item, bool? completed, CancellationToken ct);
+
+    Task<ChecklistState> SetDebugNoteAsync(
+        string project, string repositoryId, int pullRequestId, string? note, CancellationToken ct);
 }
 
 /// <summary>A generated summary, kept so reopening a pull request costs no model run.</summary>
@@ -22,6 +25,20 @@ public interface ISummaryStore
 
     Task<StoredSummary> SaveAsync(
         string project, string repositoryId, int pullRequestId, SummaryResponse result, CancellationToken ct);
+}
+
+/// <summary>
+/// One explanation per file, so reopening a file costs no model run. Keyed by path; the
+/// head commit is a column, and a row from an older head is simply regenerated over.
+/// </summary>
+public interface IFileExplanationStore
+{
+    Task<StoredFileExplanation?> GetAsync(
+        string project, string repositoryId, int pullRequestId, string path, string? headCommitSha,
+        CancellationToken ct);
+
+    Task<StoredFileExplanation> SaveAsync(
+        string project, string repositoryId, int pullRequestId, FileExplanation result, CancellationToken ct);
 }
 
 /// <summary>Which files were read, and the order the reviewer wants to read them in.</summary>

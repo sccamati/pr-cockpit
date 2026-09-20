@@ -6,6 +6,18 @@ namespace PRCockpit.Api.Tests;
 
 public class PrContextBuilderTests
 {
+    // The file tree groups on this value, so it has to agree with what the context builder
+    // drops — one rule, two callers.
+    [Theory]
+    [InlineData("/src/Program.cs", null)]
+    [InlineData("/package-lock.json", "lockFile")]
+    [InlineData("/src/Generated.g.cs", "generated")]
+    [InlineData("/tests/__snapshots__/view.txt", "snapshot")]
+    [InlineData("/dist/app.js", "buildOutput")]
+    [InlineData("/app.min.js", "minified")]
+    public void ChangedFileExposesTheSameCategoryTheContextBuilderUses(string path, string? expected) =>
+        Assert.Equal(expected, new ChangedFile(path, "edit", null).Category);
+
     [Fact]
     public async Task KeepsMetadataAndSkipsExcludedTypesWithoutFetchingTheirDiffs()
     {

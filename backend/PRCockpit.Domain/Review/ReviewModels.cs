@@ -2,9 +2,18 @@ namespace PRCockpit.Domain.Review;
 
 public record ChecklistState(
     bool AiReview, bool Quality, bool Understand, bool Architecture, bool Debug, bool Ready,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt, string? DebugNote = null);
 
 public record ChecklistUpdate(bool? Completed);
+
+/// <summary>
+/// The Debug Check answer: where the reviewer would start looking if the change did not
+/// work. PRODUCT.md §9 — the point is a few seconds of thinking, so nothing grades it.
+/// </summary>
+public record DebugNoteUpdate(string? Note)
+{
+    public const int MaxLength = 2000;
+}
 public record ChecklistProgress(int PullRequestId, int CompletedCount);
 
 public record FileReviewEntry(string Path, string? BlobId, string? HeadSha, DateTimeOffset UpdatedAt);

@@ -29,6 +29,7 @@ public static class InfrastructureServices
         services.AddScoped<IChecklistStore, ChecklistStore>();
         services.AddScoped<ISummaryStore, SummaryStore>();
         services.AddScoped<IReviewProgressStore, ReviewProgressStore>();
+        services.AddScoped<IFileExplanationStore, FileExplanationStore>();
 
         // Stateless: one process spawner and one Roslyn wrapper.
         services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();

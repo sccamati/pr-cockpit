@@ -14,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddScoped<PullRequestContextService>();
 builder.Services.AddScoped<SummaryService>();
+builder.Services.AddScoped<FileExplanationService>();
 
 var app = builder.Build();
 
@@ -77,9 +78,23 @@ api.MapPost($"{PullRequests}/{{pullRequestId:int}}/summary", async (
     string project, string repositoryId, int pullRequestId, SummaryService summaries, CancellationToken ct) =>
     await Execute(() => summaries.GenerateAsync(project, repositoryId, pullRequestId, ct)));
 
+// The path travels in the body, not the query string: it is user-supplied input that the
+// service checks against this pull request's file list before anything else happens.
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/summary/file", async (
+    string project, string repositoryId, int pullRequestId, FileExplanationRequest request,
+    FileExplanationService explanations, CancellationToken ct) =>
+    await Execute(() => explanations.ExplainAsync(project, repositoryId, pullRequestId, request.Path ?? "", ct)));
+
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/checklist", async (
     string project, string repositoryId, int pullRequestId, IChecklistStore store, CancellationToken ct) =>
     await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
+
+// A literal segment beats the {item} parameter in routing, so this stays a separate
+// endpoint rather than a seventh name inside the checklist item switch.
+api.MapPut($"{PullRequests}/{{pullRequestId:int}}/checklist/debug-note", async (
+    string project, string repositoryId, int pullRequestId, DebugNoteUpdate update,
+    IChecklistStore store, CancellationToken ct) =>
+    await Execute(() => store.SetDebugNoteAsync(project, repositoryId, pullRequestId, update.Note, ct)));
 
 api.MapPut($"{PullRequests}/{{pullRequestId:int}}/checklist/{{item}}", async (
     string project, string repositoryId, int pullRequestId, string item, ChecklistUpdate update,

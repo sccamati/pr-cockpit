@@ -2,7 +2,9 @@ export interface Project { id: string; name: string }
 export interface Repository { id: string; name: string }
 export interface Reviewer { name: string; vote: number }
 export interface WorkItem { id: string; url: string }
-export interface ChangedFile { path: string; changeType: string; originalPath: string | null; objectId?: string | null }
+// category is computed by the backend: null for ordinary code, otherwise the kind of
+// noise (lockFile, snapshot, generated, minified, buildOutput).
+export interface ChangedFile { path: string; changeType: string; originalPath: string | null; objectId?: string | null; category?: string | null }
 export interface Commit { id: string; message: string; author: string; authoredAt: string | null }
 interface FileDiffBase { path: string; originalPath: string | null }
 export type FileDiff = FileDiffBase & (
@@ -52,10 +54,13 @@ export interface PullRequestDetails extends PullRequestSummary {
   headCommitSha?: string | null
 }
 
+export interface CriticalFile { path: string; role: string; why: string }
+
 export interface SummaryResponse {
   schemaVersion: number
   summary: string
   sentences: string[]
+  criticalFiles: CriticalFile[]
   baseCommitSha: string | null
   headCommitSha: string | null
   contextReport: {
@@ -67,6 +72,13 @@ export interface SummaryResponse {
   }
 }
 export interface StoredSummary { result: SummaryResponse; savedAt: string }
+
+export interface FileExplanation {
+  schemaVersion: number
+  path: string
+  headCommitSha: string | null
+  sentences: string[]
+}
 
 export interface FileReviewEntry { path: string; blobId: string | null; headSha: string | null; updatedAt: string }
 export interface FileReviewState {
@@ -86,7 +98,7 @@ export interface ReadingPathState { paths: string[]; updatedAt: string | null }
 export interface FileReviewProgress { pullRequestId: number; reviewedCount: number; changedFilesCount: number }
 
 export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
-export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null }
+export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null; debugNote: string | null }
 export interface ChecklistProgress { pullRequestId: number; completedCount: number }
 
 async function get<T>(path: string): Promise<T> {
@@ -143,6 +155,8 @@ export const api = {
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
+  explainFile: (project: string, repository: string, id: number, path: string) =>
+    post<FileExplanation>(`${location(project, repository)}/pull-requests/${id}/summary/file`, { path }),
   savedSummary: (project: string, repository: string, id: number) =>
     get<{ stored: StoredSummary | null }>(`${location(project, repository)}/pull-requests/${id}/summary`)
       .then(response => response.stored),
@@ -156,6 +170,8 @@ export const api = {
     put<ReadingPathState>(`${location(project, repository)}/pull-requests/${id}/reading-path`, { paths }),
   fileReviewProgress: (project: string, repository: string) =>
     get<FileReviewProgress[]>(`${location(project, repository)}/pull-requests/file-review-progress`),
+  setDebugNote: (project: string, repository: string, id: number, note: string) =>
+    put<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist/debug-note`, { note }),
   setChecklistItem: (project: string, repository: string, id: number, item: ChecklistItem, completed: boolean) =>
     put<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist/${item === 'aiReview' ? 'ai-review' : item}`, { completed }),
 }

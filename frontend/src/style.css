@@ -284,6 +284,29 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 
 /* --- Changed files as a folder tree -------------------------------------- */
 .changed-files { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid var(--line); }
+.noise-section { flex: 0 0 auto; max-height: 40%; overflow-y: auto; border-top: 1px solid var(--line); }
+.file-role { margin: 0 0 2px 10px; font-size: 12px; color: var(--text-muted); font-style: italic; }
+.critical-proposal { border: 1px dashed var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+.critical-proposal-heading { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.critical-proposal-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.critical-proposal-why { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
+.critical-proposal-actions { display: flex; gap: 8px; margin-top: 8px; }
+.critical-accept { font-weight: 600; }
+.file-explanation { margin: 0 12px 8px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-muted); border-radius: 0 6px 6px 0; }
+.file-explanation p { margin: 0 0 4px; font-size: 13px; }
+.file-explanation-note { font-size: 12px; margin-bottom: 0 !important; }
+.file-explanation-error { margin: 0 12px 8px; }
+.debug-question { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.debug-hint-later { font-size: 12px; margin: 0 0 6px; }
+.debug-label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.debug-answer { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: inherit; resize: vertical; }
+.debug-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.debug-save { font-weight: 600; }
+.debug-saved { font-size: 12px; color: var(--text-muted); }
+.debug-hint { margin: 8px 0 0; padding-left: 20px; font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px; }
+.noise-summary { padding: 6px 10px; font-size: 13px; color: var(--text-muted); background: var(--surface-muted); border-bottom: 1px solid var(--line); cursor: pointer; }
+.noise-summary:hover { background: var(--surface-hover); }
+.noise-summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }
 /* One indent step per nesting level; compacted chains keep this shallow. */
 .tree-folder .tree-folder, .tree-folder > .tree-files { padding-left: 9px; }
 .tree-summary { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--surface-muted); cursor: pointer; }

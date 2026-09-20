@@ -8,7 +8,8 @@ public static class PrContextBuilder
         PullRequestDetails details,
         Func<string, CancellationToken, Task<FileDiff>> getDiff,
         ContextBudget budget,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? onlyPath = null)
     {
         ArgumentNullException.ThrowIfNull(details);
         ArgumentNullException.ThrowIfNull(getDiff);
@@ -18,10 +19,13 @@ public static class PrContextBuilder
 
         var files = new List<ContextChangedFile>(details.ChangedFilesCount);
         var used = 0;
-        foreach (var change in details.ChangedFiles)
+        // onlyPath narrows the package to a single file for the per-file explanation. The
+        // budget rules stay exactly the same, so one file cannot be handled more loosely
+        // than the same file inside a whole-PR package.
+        foreach (var change in details.ChangedFiles.Where(file => onlyPath is null || file.Path == onlyPath))
         {
             ct.ThrowIfCancellationRequested();
-            var reason = ExcludedType(change.Path) ??
+            var reason = FileCategory.Of(change.Path) ??
                 (used >= budget.MaxDiffCharactersPerPullRequest ? "pullRequestCharacterLimit" : null);
             if (reason is not null)
             {
@@ -68,31 +72,4 @@ public static class PrContextBuilder
 
     private static ContextChangedFile Omitted(ChangedFile change, string reason) =>
         new(change.Path, change.ChangeType, change.OriginalPath, null, null, reason);
-
-    private static string? ExcludedType(string path)
-    {
-        var name = Path.GetFileName(path);
-        if (name.Equals("package-lock.json", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("npm-shrinkwrap.json", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("yarn.lock", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("pnpm-lock.yaml", StringComparison.OrdinalIgnoreCase) ||
-            name.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
-            return "lockFile";
-        if (name.EndsWith(".snap", StringComparison.OrdinalIgnoreCase) ||
-            path.Contains("/__snapshots__/", StringComparison.OrdinalIgnoreCase))
-            return "snapshot";
-        if (name.Contains(".generated.", StringComparison.OrdinalIgnoreCase) ||
-            name.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase))
-            return "generated";
-        if (name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase) ||
-            name.EndsWith(".min.css", StringComparison.OrdinalIgnoreCase))
-            return "minified";
-        if (path.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(segment =>
-            segment.Equals("node_modules", StringComparison.OrdinalIgnoreCase) ||
-            segment.Equals("dist", StringComparison.OrdinalIgnoreCase) ||
-            segment.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
-            segment.Equals("obj", StringComparison.OrdinalIgnoreCase)))
-            return "buildOutput";
-        return null;
-    }
 }

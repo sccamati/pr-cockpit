@@ -11,6 +11,7 @@ function file(path: string, overrides: Partial<TreeFile> = {}): TreeFile {
     critical: false,
     criticalDisabled: false,
     selected: false,
+    role: null,
     ...overrides,
   }
 }

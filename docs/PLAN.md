@@ -27,9 +27,9 @@ Decyzje użytkownika podjęte przy planowaniu i nadal obowiązujące:
 
 ## Zanim dołożysz kolejną funkcję
 
-PRODUCT.md §21 stawia sprawę wprost: jeżeli narzędzie nie poprawiło rozumienia PR-ów, **nie dokładamy funkcji, tylko poprawiamy `Understand`**. Etapy 1 i 2 nie zostały jeszcze przejrzane w przeglądarce na prawdziwym PR.
+PRODUCT.md §21 stawia sprawę wprost: jeżeli narzędzie nie poprawiło rozumienia PR-ów, **nie dokładamy funkcji, tylko poprawiamy `Understand`**. Etapy 1 i 2 zostały przejrzane w przeglądarce na prawdziwym PR i przyjęte przez użytkownika (potwierdzenie ustne, 2026-09-20), więc etap 3 ruszył.
 
-Do sprawdzenia własnymi oczami, zanim ruszy etap 3:
+Lista kontrolna, z której to wyszło — zachowana dla historii:
 
 - układ trójpanelowy, zwłaszcza między 900 a 1200 px, gdzie diff dostaje ~550 px (`f` chowa szynę boczną);
 - czy nasłuch klawiatury w fazie przechwytywania wygrywa z Monakiem — wcisnąć `s`, `m`, `.` z kursorem w edytorze;
@@ -44,7 +44,7 @@ Do sprawdzenia własnymi oczami, zanim ruszy etap 3:
 
 Funkcja, którą PRODUCT.md §7 nazywa najważniejszą w MVP i która wciąż nie istnieje. Odpowiada na „które 5–10 plików muszę przeczytać”.
 
-### 3.1 Schemat AI w wersji 2
+### 3.1 Schemat AI w wersji 2 — ZROBIONE (B-15)
 
 Dziś `SummaryRunner` w [PRCockpit.Application/Analysis/SummaryRunner.cs](../backend/PRCockpit.Application/Analysis/SummaryRunner.cs) waliduje jeden kształt: `schemaVersion == 1` i 2–5 zdań. Rozszerzamy o ranking plików:
 
@@ -60,31 +60,31 @@ Dziś `SummaryRunner` w [PRCockpit.Application/Analysis/SummaryRunner.cs](../bac
 
 Walidacja równie twarda jak obecna: maks. 10 pozycji, `path` **musi** należeć do listy zmienionych plików tego PR (odrzucamy halucynacje ścieżek), bez duplikatów, limity długości. Wynik poza kontraktem → 502.
 
-Zgodność wstecz: `SummaryStore.GetAsync` re-waliduje przy odczycie, więc musi przyjmować **zarówno** v1 (istniejące zapisy), jak i v2. Stare zapisy czytamy jako v2 z pustą listą plików — bez migracji bazy, bo cała odpowiedź leży w kolumnie jako JSON.
+Zgodność wstecz **odrzucona przez użytkownika** — robimy docelowo. Przyjmujemy wyłącznie v2, a zapis w starej wersji `SummaryStore.GetAsync` raportuje jako brak Summary (`null`), nie jako błąd, żeby przedawniony wiersz nie blokował całego PR-a.
 
 Instrukcja w [CliSummaryAnalyzer.cs](../backend/PRCockpit.Infrastructure/Analysis/CliSummaryAnalyzer.cs) rozszerzona o polecenie wskazania plików, z zachowaniem rozdziału „stała instrukcja vs. niezaufane dane w `context`”.
 
-### 3.2 Wyjaśnienie pojedynczego pliku na żądanie
+### 3.2 Wyjaśnienie pojedynczego pliku na żądanie — ZROBIONE (B-16)
 
 Drugi tryb tego samego adaptera: `task: "file"`, kontekst zawężony do jednego pliku (obie wersje, w istniejącym budżecie 20 000 znaków). Zwraca 1–3 zdania: co ten plik robi i co się w nim zmieniło.
 
-Nowy port obok `IAiSummaryAnalyzer` albo rozszerzenie istniejącego — decyzja przy implementacji. Endpoint `POST .../summary/file`, ze ścieżką **w ciele** i tą samą listą dozwolonych ścieżek co diff. Zapis w nowej tabeli EF pod kluczem PR + ścieżka + SHA głowy, więc płacisz raz.
+Decyzja przy implementacji: **rozszerzenie** `IAiSummaryAnalyzer`, nie nowy port — ten sam plik wykonywalny i ta sama konfiguracja. Endpoint `POST .../summary/file`, ze ścieżką **w ciele** i tą samą listą dozwolonych ścieżek co diff. Zapis w nowej tabeli EF pod kluczem PR + ścieżka + SHA głowy, więc płacisz raz.
 
 W UI: przycisk „Wyjaśnij ten plik” w pasku czytania plus skrót `e`. Wyjaśnienie nad diffem, nie zamiast niego.
 
-### 3.3 Ścieżka czytania: propozycja AI zamiast pustej listy
+### 3.3 Ścieżka czytania: propozycja AI zamiast pustej listy — ZROBIONE (B-15)
 
 Ścieżka kluczowych plików jest dziś pusta, dopóki sam nie wyklikasz pozycji. Po etapie 3 zostaje **wypełniona propozycją AI**, którą nadal można edytować, przestawiać i usuwać — mechanika i zapis bez zmian, zmienia się punkt startowy. Wiersze w drzewie plików dostają etykiety ról z rankingu.
 
 > PRODUCT.md §10: AI nigdy nie zapisuje niczego jako faktu bez akceptacji użytkownika. Ranking jest propozycją, nie decyzją.
 
-### 3.4 Odszumienie listy plików — tanie, bo kod już istnieje
+### 3.4 Odszumienie listy plików — ZROBIONE (B-14)
 
 `PrContextBuilder.ExcludedType` w [PrContextBuilder.cs](../backend/PRCockpit.Application/PullRequests/PrContextBuilder.cs) **już** klasyfikuje lockfile'y, snapshoty, pliki generowane, zminifikowane i build output — ale tylko na potrzeby pakietu dla AI. Drzewo plików w UI tego nie widzi.
 
-Wystawiamy tę klasyfikację jako pole `category` na `ChangedFile` i dzielimy drzewo na **„Kod”** i zwinięty **„Szum (12)”**. Zero nowej logiki, zero AI — wystawienie istniejącej funkcji. Najtańsza pozycja w całym etapie.
+Wystawione jako właściwość **wyliczana** `Category` (nie parametr konstruktora — zero zmian w mapperze, DTO i bazie), reguła przeniesiona do `FileCategory.Of` w domenie. Drzewo dzieli się na kod i zwinięty blok „Szum (N)”. Szczegóły w [BACKLOG.md](BACKLOG.md) B-14.
 
-### 3.5 Debug Check — opcjonalnie, na końcu
+### 3.5 Debug Check — ZROBIONE w wersji minimalnej (B-17)
 
 PRODUCT.md §9: jedno pytanie kontrolne po przeczytaniu PR, *„gdyby ten feature nie działał, gdzie zacząłbyś szukać?”*. Cel nazwany tam wprost: **wymusić kilka sekund aktywnego myślenia**, nie egzaminować. Robić dopiero, jeśli etapy 1–3 faktycznie pomogły.
 

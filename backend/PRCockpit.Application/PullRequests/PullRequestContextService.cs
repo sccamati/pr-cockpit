@@ -17,8 +17,9 @@ public sealed class PullRequestContextService(IAzureDevOpsClient client)
     }
 
     public Task<PrContext> BuildAsync(
-        string project, string repositoryId, PullRequestDetails details, CancellationToken ct) =>
+        string project, string repositoryId, PullRequestDetails details, CancellationToken ct,
+        string? onlyPath = null) =>
         PrContextBuilder.BuildAsync(details,
             (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
-            ContextBudget.Default, ct);
+            ContextBudget.Default, ct, onlyPath);
 }

@@ -37,6 +37,7 @@ defineEmits<{ open: [path: string]; toggleCritical: [path: string] }>()
           :title="file.critical ? 'Usuń ze ścieżki czytania' : 'Dodaj do ścieżki czytania'"
           :aria-label="file.critical ? `Usuń ${file.name} ze ścieżki czytania` : `Dodaj ${file.name} do ścieżki czytania`"
           @click="$emit('toggleCritical', file.path)">{{ file.critical ? '★' : '☆' }}</button>
+        <p v-if="file.role" class="file-role" :title="file.role">{{ file.role }}</p>
         <p v-if="file.originalPath && file.originalPath !== file.path" class="previous-path">z {{ file.originalPath }}</p>
       </li>
     </ul>
