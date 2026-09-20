@@ -72,7 +72,9 @@ beforeEach(() => {
   api.fileReviewProgress.mockResolvedValue([])
   api.commentThreads.mockResolvedValue([])
   api.config.mockResolvedValue({ commentsEnabled: true })
-  api.savedSummary.mockResolvedValue(null)
+  // Summary is never generated on its own, so the ordinary case is one already paid for
+  // and read back from the local database for free.
+  api.savedSummary.mockResolvedValue({ result: summary(), savedAt: '2026-09-01T12:00:00Z' })
   api.generateSummary.mockResolvedValue(summary())
   api.checklist.mockResolvedValue({
     aiReview: false, quality: false, understand: false, architecture: false,
@@ -170,14 +172,50 @@ describe('US-P3 — ekran wejścia', () => {
     wrapper.unmount()
   })
 
+  // The model costs money, so the entry screen asks before spending any — even though the
+  // proposal is the whole reason the screen exists.
+  it('spends nothing until asked, then proposes', async () => {
+    api.savedSummary.mockResolvedValue(null)
+
+    const wrapper = await openPr()
+
+    expect(api.generateSummary).not.toHaveBeenCalled()
+    expect(wrapper.find('.walk-no-summary').exists()).toBe(true)
+    expect(wrapper.find('.walk-file-list').exists()).toBe(false)
+
+    await wrapper.find('.walk-no-summary .walk-primary').trigger('click')
+    await flushPromises()
+    expect(api.generateSummary).toHaveBeenCalledExactlyOnceWith('project', 'repo-a', 123)
+    expect(pickedPaths(wrapper)).toEqual(paths.slice(0, 6))
+    wrapper.unmount()
+  })
+
   it('says the proposal is unavailable and still hands over the tree', async () => {
+    api.savedSummary.mockResolvedValue(null)
     api.generateSummary.mockRejectedValue(new Error('AI CLI timed out.'))
 
     const wrapper = await openPr()
+    await wrapper.find('.walk-no-summary .walk-primary').trigger('click')
+    await flushPromises()
 
     expect(wrapper.find('.walk-entry [role="alert"]').text()).toContain('AI CLI timed out.')
     await wrapper.findAll('.walk-actions button').at(-1)!.trigger('click')
     expect(wrapper.find('.pr-workspace').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  // A saved ranking from an older commit is still a ranking; recomputing is money, so it
+  // is offered rather than taken.
+  it('shows a stale proposal with the recompute offer instead of recomputing', async () => {
+    api.savedSummary.mockResolvedValue({
+      result: { ...summary(), headCommitSha: OTHER_HEAD }, savedAt: '2026-09-01T12:00:00Z',
+    })
+
+    const wrapper = await openPr()
+
+    expect(wrapper.find('.walk-stale').exists()).toBe(true)
+    expect(api.generateSummary).not.toHaveBeenCalled()
+    expect(pickedPaths(wrapper)).toEqual(paths.slice(0, 6))
     wrapper.unmount()
   })
 })

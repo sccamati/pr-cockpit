@@ -348,14 +348,26 @@ zatrzymuje start z komunikatem. `*`, `+` i `0.0.0.0` liczą się jako adres zewn
 `Uri` ich nie parsuje, a to właśnie one otwierają port na sieć. Świadome wyłączenie:
 `Security:AllowRemoteAccess=true` — wtedy start przechodzi z ostrzeżeniem.
 
-### US-P1 — Summary generowane przy otwarciu PR
+### US-P1 — Summary generowane przy otwarciu PR — **odrzucone przez użytkownika**
 
-Status: zaimplementowane. `loadSavedSummary` po wczytaniu zapisanego wyniku sam uruchamia
-generowanie, gdy wyniku nie ma **albo** jest nieaktualny. Stary wynik zostaje na ekranie do
-czasu nadejścia nowego, a błąd modelu zostawia pełne drzewo plików i przycisk ponowienia.
-Raport pokrycia kontekstu („Kontekst: a / b plików") jest widoczny również na ekranie
-wejścia — przy dużym PR mówi, na ilu plikach ranking naprawdę powstał. Decyzja `[wymagana
-decyzja]` o bardzo dużych PR: **tak**, generujemy, zgodnie z domyślną.
+Status: zaimplementowane 20 wrz 2026, **wycofane tego samego dnia** na wyraźne polecenie
+użytkownika. Powód: każde uruchomienie modelu to pieniądze i decyzja o wydaniu ma należeć
+do człowieka, a nie do ekranu, który się otworzył. To nadpisuje US-P1 z briefu — brief
+zakładał, że automat jest tym, co usuwa tarcie; właściciel budżetu uznał tarcie za tańsze.
+
+Co zostało zamiast automatu:
+- Zapisane Summary wczytuje się jak dotąd i **nic nie kosztuje**, więc drugie otwarcie PR
+  pokazuje propozycję ścieżki od razu.
+- Brak zapisanego Summary → ekran wejścia mówi, że propozycji nie ma, i daje jeden przycisk
+  „Zaproponuj ścieżkę (uruchomi AI)". Wyjście do pełnego drzewa jest obok, od razu.
+- Summary z wcześniejszego commita → propozycja jest pokazywana (to nadal ranking), z
+  informacją, że pochodzi ze starszego commita, i przyciskiem „Przelicz (uruchomi AI)".
+  Przeliczanie też kosztuje, więc też czeka na kliknięcie.
+- Raport pokrycia kontekstu („Kontekst: a / b plików") jest widoczny także na ekranie
+  wejścia — przy dużym PR mówi, na ilu plikach ranking naprawdę powstał.
+
+Decyzja `[wymagana decyzja]` o bardzo dużych PR jest przez to bezprzedmiotowa: model rusza
+tylko na kliknięcie, niezależnie od rozmiaru PR.
 
 ### US-P2 — wyjaśnienie pliku traci ważność po zmianie tego pliku (NIESP-04)
 
@@ -409,8 +421,9 @@ długość ścieżki 8, prefetch 2 równolegle, prefetch całej ścieżki. Siedz
 dwóch liczb byłoby tym, czego brief kazał unikać. Ścieżka wyjścia: ekran ustawień, jeśli
 liczby zaczną się zmieniać.
 
-**Zweryfikowane:** 117 testów backendu, 75 testów frontendu (doszło 16 w `Walkthrough.test.ts`
-i 4 w backendzie), `npm run build` i `dotnet build` przechodzą.
+**Zweryfikowane:** 117 testów backendu, 77 testów frontendu (doszło 18 w `Walkthrough.test.ts`
+i 4 w backendzie), `npm run build` i `dotnet build` przechodzą. Testy pilnują też tego, że
+otwarcie PR **nie** uruchamia modelu.
 
 Migracje `AddExplanationBlobId` i `AddWalkthroughPosition` zastosowały się na lokalnej bazie
 przy starcie backendu (`dotnet ef migrations list` pokazuje obie jako wykonane). Blokada

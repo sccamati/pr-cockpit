@@ -953,9 +953,6 @@ async function loadSavedSummary(project: string, repository: string, id: number)
       summary.value = stored.result
       summarySavedAt.value = stored.savedAt
     }
-    // US-P1: nothing to click. A saved result stays on screen while the new one is made,
-    // and a stale one is regenerated because the ranking is what the walkthrough proposes.
-    if (!stored || summaryFreshness.value === 'stale') void generateSummary()
   } catch (cause) {
     if (current === summaryRequestId) summaryReadError.value = message(cause)
   } finally {
@@ -1673,11 +1670,22 @@ onMounted(async () => {
               </div>
               <p v-else class="summary-text">{{ summary.summary }}</p>
               <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem</p>
+              <!-- Regenerating costs money too, so a stale ranking says so and waits. -->
+              <p v-if="summaryFreshness === 'stale'" class="notice walk-stale" role="status">
+                PR zmienił się od zapisania tego Summary — propozycja niżej pochodzi ze starszego commita.
+                <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
+              </p>
             </template>
-            <p v-else class="notice error" role="alert">
-              Propozycja ścieżki jest niedostępna{{ summaryError ? `: ${summaryError}` : '.' }}
+            <p v-else-if="summaryError" class="notice error" role="alert">
+              Propozycja ścieżki jest niedostępna: {{ summaryError }}
               <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Spróbuj ponownie</button>
             </p>
+            <!-- Nothing saved for this pull request: the model runs when asked, not when
+                 the screen opens. Every AI run is money, and it is the user's money. -->
+            <div v-else class="walk-no-summary">
+              <p class="muted">Dla tego PR nie ma jeszcze Summary, więc nie ma propozycji ścieżki.</p>
+              <button type="button" class="walk-primary" :disabled="summaryLoading" @click="generateSummary">Zaproponuj ścieżkę (uruchomi AI)</button>
+            </div>
           </div>
 
           <!-- US-P7: an interrupted walkthrough is offered back before anything is recomputed. -->

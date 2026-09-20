@@ -571,3 +571,5 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .walk-skipped { margin-top: 14px; }
 .walk-debug { margin-top: 16px; }
 .walk-enter-button { width: 100%; margin-bottom: 6px; border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.walk-no-summary { padding: 10px 0; }
+.walk-stale { margin: 8px 0 0; }
