@@ -29,7 +29,7 @@ vi.mock('../src/api', () => ({ api }))
 vi.mock('../src/MonacoDiff.vue', () => ({
   default: {
     name: 'MonacoDiff',
-    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines'],
+    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines'],
     emits: ['openLine'],
     template: '<div class="test-diff">Diff</div>',
   },
@@ -471,6 +471,70 @@ describe('PR review', () => {
     diff.vm.$emit('openLine', 4)
     await flushPromises()
     expect(wrapper.find('.inline-comments').text()).toContain('Czy to na pewno tutaj?')
+    wrapper.unmount()
+  })
+
+  it('marks files that carry comments and resolves a thread from the diff', async () => {
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Jan', content: 'Do poprawy.', commentType: 'text', publishedAt: null }] },
+      { id: 2, status: 'fixed', filePath: '/src/first.cs', rightLine: 20, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Anna', content: 'Już dobrze.', commentType: 'text', publishedAt: null }] },
+    ])
+    api.setThreadStatus.mockResolvedValue({ id: 1, status: 'fixed' })
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    // The tree says which file holds the conversation, before you open anything.
+    const badges = wrapper.findAll('.tree-comments')
+    expect(badges.some(badge => badge.text() === '💬 2')).toBe(true)
+
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    // Both threads are listed above the diff, and only the unresolved one gets a marker.
+    expect(wrapper.findAll('.file-thread-chip').map(chip => chip.text()))
+      .toEqual(['💬 linia 4', '✓ linia 20'])
+    const diff = wrapper.findComponent({ name: 'MonacoDiff' })
+    expect(diff.props('commentLines')).toEqual([4])
+    expect(diff.props('resolvedLines')).toEqual([20])
+
+    await wrapper.findAll('.file-thread-chip')[0]!.trigger('click')
+    await wrapper.find('.thread-resolve').trigger('click')
+    await flushPromises()
+    expect(api.setThreadStatus).toHaveBeenCalledWith('project', 'repo-a', 123, 1, 'fixed')
+    // Nothing optimistic here either: the list is read back afterwards.
+    expect(api.commentThreads).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('replies and resolves in one action, storing the reply first', async () => {
+    const thread = {
+      id: 7, status: 'active', filePath: null, rightLine: null, leftLine: null, isSystem: false, iterationId: null,
+      comments: [{ id: 1, author: 'Jan', content: 'Pytanie.', commentType: 'text', publishedAt: null }],
+    }
+    api.commentThreads.mockResolvedValue([thread])
+    const order: string[] = []
+    api.replyToThread.mockImplementation(async () => { order.push('reply'); return thread })
+    api.setThreadStatus.mockImplementation(async () => { order.push('resolve'); return thread })
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.thread-actions button').trigger('click')
+    await wrapper.find('.comment-draft textarea').setValue('Poprawione.')
+    await wrapper.findAll('.comment-draft button')[1]!.trigger('click')
+    await flushPromises()
+
+    expect(order).toEqual(['reply', 'resolve'])
+    expect(api.setThreadStatus).toHaveBeenCalledWith('project', 'repo-a', 123, 7, 'fixed')
     wrapper.unmount()
   })
 

@@ -14,8 +14,10 @@ const props = defineProps<{
   originalText: string
   modifiedText: string
   sideBySide?: boolean
-  // Lines of this file that already carry a comment thread, as Azure DevOps numbers them.
+  // Lines of this file that already carry a comment thread, as Azure DevOps numbers them,
+  // split so a resolved conversation stops shouting for attention.
   commentLines?: number[]
+  resolvedLines?: number[]
 }>()
 const emit = defineEmits<{ openLine: [line: number] }>()
 const container = ref<HTMLElement | null>(null)
@@ -233,7 +235,7 @@ onMounted(() => {
   if (language === 'csharp' || originalLanguage === 'csharp') void loadCSharpHovers()
 })
 
-watch(() => props.commentLines, () => {
+watch(() => [props.commentLines, props.resolvedLines], () => {
   refreshGlyphs()
   // A line that just got a thread must lose its "+" without waiting for another mouse move.
   const line = hoveredLine
@@ -260,7 +262,7 @@ function setHoveredLine(line: number | null) {
   if (line === hoveredLine || !editor) return
   hoveredLine = line
   hoverGlyphs ??= editor.getModifiedEditor().createDecorationsCollection()
-  const commented = new Set(props.commentLines ?? [])
+  const commented = new Set([...(props.commentLines ?? []), ...(props.resolvedLines ?? [])])
   hoverGlyphs.set(line !== null && !commented.has(line)
     ? [{
         range: new monaco.Range(line, 1, line, 1),
@@ -274,16 +276,19 @@ function setHoveredLine(line: number | null) {
 
 function refreshGlyphs() {
   if (!editor) return
-  const lines = props.commentLines ?? []
   glyphs ??= editor.getModifiedEditor().createDecorationsCollection()
-  glyphs.set(lines.map(line => ({
+  const marker = (line: number, resolved: boolean) => ({
     range: new monaco.Range(line, 1, line, 1),
     options: {
-      glyphMarginClassName: 'comment-glyph',
-      glyphMarginHoverMessage: { value: 'Komentarz w tej linii' },
+      glyphMarginClassName: resolved ? 'comment-glyph comment-glyph--resolved' : 'comment-glyph',
+      glyphMarginHoverMessage: { value: resolved ? 'Rozwiązany komentarz' : 'Komentarz w tej linii' },
       stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
     },
-  })))
+  })
+  glyphs.set([
+    ...(props.commentLines ?? []).map(line => marker(line, false)),
+    ...(props.resolvedLines ?? []).map(line => marker(line, true)),
+  ])
 }
 
 onBeforeUnmount(() => {

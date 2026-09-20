@@ -130,6 +130,8 @@ function toTreeFile(file: ChangedFile): TreeFile {
     criticalDisabled: !isCritical(file.path) && criticalPaths.value.length >= 10,
     selected: selectedFilePath.value === file.path,
     role: roleByPath.value.get(file.path) ?? null,
+    comments: threadsByFile.value.get(file.path)?.total ?? 0,
+    unresolvedComments: threadsByFile.value.get(file.path)?.unresolved ?? 0,
   }
 }
 // Lockfiles, snapshots and build output are classified by the backend and get their own
@@ -162,12 +164,33 @@ function movedSinceComment(thread: PrCommentThread): boolean {
   return thread.iterationId !== null && lastIteration.value > thread.iterationId
 }
 
-const activeThreadCount = computed(() =>
-  threads.value.filter(thread => thread.status === 'active' || thread.status === null).length)
+// "Resolved" is what Azure DevOps means by it: fixed, won't fix or closed. Anything else,
+// including a thread with no status at all, is still waiting for somebody.
+const resolvedStatuses = ['fixed', 'wontFix', 'closed']
+function isResolved(thread: PrCommentThread): boolean {
+  return thread.status !== null && resolvedStatuses.includes(thread.status)
+}
+const activeThreadCount = computed(() => threads.value.filter(thread => !isResolved(thread)).length)
+const threadsByFile = computed(() => {
+  const map = new Map<string, { total: number; unresolved: number }>()
+  for (const thread of threads.value) {
+    if (!thread.filePath) continue
+    const entry = map.get(thread.filePath) ?? { total: 0, unresolved: 0 }
+    entry.total++
+    if (!isResolved(thread)) entry.unresolved++
+    map.set(thread.filePath, entry)
+  }
+  return map
+})
+// Every thread anchored in the open file, newest anchor last, so the bar above the diff
+// shows what is waiting here without having to hunt for the markers.
+const threadsInFile = computed(() => threads.value
+  .filter(thread => thread.filePath === selectedFilePath.value)
+  .sort((a, b) => (a.rightLine ?? 0) - (b.rightLine ?? 0)))
 const visibleThreads = computed(() => {
   const search = threadSearch.value.trim().toLocaleLowerCase()
   return threads.value.filter(thread => {
-    if (onlyActiveThreads.value && thread.status !== 'active' && thread.status !== null) return false
+    if (onlyActiveThreads.value && isResolved(thread)) return false
     if (!search) return true
     return thread.filePath?.toLocaleLowerCase().includes(search) ||
       thread.comments.some(comment =>
@@ -211,7 +234,7 @@ function startDraft(target: string) {
 // No optimistic write anywhere in here. The button locks, the request goes out, and the
 // threads are read back — a comment cannot be rolled back, so nothing is shown as sent
 // before Azure DevOps says it is.
-async function sendDraft() {
+async function sendDraft(resolveAfter = false) {
   const pending = draft.value
   if (!details.value || !pending || commentSaving.value || !pending.text.trim()) return
   const current = threadsRequestId
@@ -228,7 +251,11 @@ async function sendDraft() {
       await api.createThread(project, repository, id,
         { content: pending.text, filePath: path!, line: line ? Number(line) : null })
     } else {
-      await api.replyToThread(project, repository, id, Number(pending.target), pending.text)
+      const threadId = Number(pending.target)
+      await api.replyToThread(project, repository, id, threadId, pending.text)
+      // Two calls, in this order, because Azure DevOps has no combined one: the reply is
+      // what matters, so resolving happens only once it is safely stored.
+      if (resolveAfter) await api.setThreadStatus(project, repository, id, threadId, 'fixed')
     }
     if (current !== threadsRequestId) return
     draft.value = null
@@ -259,8 +286,11 @@ async function setThreadStatus(threadId: number, status: string) {
   }
 }
 
-const commentLinesForFile = computed(() => threads.value
-  .filter(thread => thread.filePath === selectedFilePath.value && (thread.rightLine ?? 0) > 0)
+const commentLinesForFile = computed(() => threadsInFile.value
+  .filter(thread => (thread.rightLine ?? 0) > 0 && !isResolved(thread))
+  .map(thread => thread.rightLine!))
+const resolvedLinesForFile = computed(() => threadsInFile.value
+  .filter(thread => (thread.rightLine ?? 0) > 0 && isResolved(thread))
   .map(thread => thread.rightLine!))
 
 // Clicking a line keeps you in the diff. An existing thread opens above it, a line
@@ -287,6 +317,14 @@ function openLineComments(line: number) {
     inlineThreadId.value = null
     draft.value = { target: `file:${selectedFilePath.value}:${line}`, text: '' }
   }
+}
+
+function resolveThread(threadId: number) {
+  void setThreadStatus(threadId, 'fixed')
+}
+
+function reopenThread(threadId: number) {
+  void setThreadStatus(threadId, 'active')
 }
 
 function closeInlineComments() {
@@ -1201,7 +1239,7 @@ onMounted(loadProjects)
                 <!-- Enter inserts a newline; only the button sends. -->
                 <textarea id="thread-draft" v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000"></textarea>
                 <div class="debug-actions">
-                  <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
+                  <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
                   <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
                   <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
                 </div>
@@ -1212,7 +1250,8 @@ onMounted(loadProjects)
               <p v-else-if="visibleThreads.length === 0" class="muted">Nic nie pasuje do filtra.</p>
               <div v-for="group in threadGroups" :key="group.path || 'none'" class="thread-group">
                 <h4 class="thread-group-head" :title="group.path">{{ group.label }}</h4>
-                <article v-for="thread in group.threads" :key="thread.id" class="thread thread--full">
+                <article v-for="thread in group.threads" :key="thread.id" class="thread thread--full"
+                  :class="{ 'thread--resolved': isResolved(thread) }">
                   <header class="thread-head">
                     <button class="thread-location" type="button" :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
                     <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
@@ -1229,15 +1268,16 @@ onMounted(loadProjects)
                   <div v-if="draft?.target === String(thread.id)" class="comment-draft">
                     <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" :aria-label="`Odpowiedź w wątku ${thread.id}`"></textarea>
                     <div class="debug-actions">
-                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                      <button v-if="!isResolved(thread)" type="button" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft(true)">Odpowiedz i rozwiąż</button>
                       <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
                     </div>
                   </div>
                   <div v-else class="thread-actions">
                     <button type="button" @click="startDraft(String(thread.id))">Odpowiedz</button>
-                    <button v-if="thread.status !== 'fixed'" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'fixed')">Naprawione</button>
-                    <button v-if="thread.status !== 'closed'" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'closed')">Zamknij</button>
-                    <button v-if="thread.status && thread.status !== 'active'" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'active')">Otwórz ponownie</button>
+                    <button v-if="!isResolved(thread)" type="button" class="thread-resolve" :disabled="commentSaving" @click="resolveThread(thread.id)">Rozwiąż</button>
+                    <button v-else type="button" :disabled="commentSaving" @click="reopenThread(thread.id)">Otwórz ponownie</button>
+                    <button v-if="!isResolved(thread)" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'wontFix')">Nie naprawimy</button>
                   </div>
                 </article>
               </div>
@@ -1269,6 +1309,18 @@ onMounted(loadProjects)
                 <button type="button" class="checklist-retry" @click="openFile(selectedFilePath)">Pokaż cały diff</button>
               </p>
               <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
+              <!-- Every thread in this file, so comments are visible on arrival instead of
+                   having to be found. A chip opens the conversation below it. -->
+              <div v-if="threadsInFile.length" class="file-threads">
+                <span class="file-threads-label">Komentarze w pliku:</span>
+                <button v-for="thread in threadsInFile" :key="thread.id" type="button"
+                  class="file-thread-chip" :class="{ 'file-thread-chip--resolved': isResolved(thread) }"
+                  :aria-pressed="inlineThreadId === thread.id"
+                  :title="thread.comments[0]?.content ?? ''"
+                  @click="inlineThreadId = thread.id; draft = null">
+                  {{ isResolved(thread) ? '✓' : '💬' }} {{ thread.rightLine ? `linia ${thread.rightLine}` : 'plik' }}
+                </button>
+              </div>
               <!-- The conversation for the clicked line, docked above the diff so the code
                    it is about stays on screen. -->
               <div v-if="inlineThread || lineDraft !== null" class="inline-comments">
@@ -1286,20 +1338,21 @@ onMounted(loadProjects)
                   <div v-if="draft?.target === String(inlineThread.id)" class="comment-draft">
                     <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" aria-label="Odpowiedź w wątku"></textarea>
                     <div class="debug-actions">
-                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                      <button v-if="!isResolved(inlineThread)" type="button" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft(true)">Odpowiedz i rozwiąż</button>
                       <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
                     </div>
                   </div>
                   <div v-else class="thread-actions">
                     <button type="button" @click="startDraft(String(inlineThread.id))">Odpowiedz</button>
-                    <button v-if="inlineThread.status !== 'fixed'" type="button" :disabled="commentSaving" @click="setThreadStatus(inlineThread.id, 'fixed')">Naprawione</button>
-                    <button v-if="inlineThread.status && inlineThread.status !== 'active'" type="button" :disabled="commentSaving" @click="setThreadStatus(inlineThread.id, 'active')">Otwórz ponownie</button>
+                    <button v-if="!isResolved(inlineThread)" type="button" class="thread-resolve" :disabled="commentSaving" @click="resolveThread(inlineThread.id)">Rozwiąż</button>
+                    <button v-else type="button" :disabled="commentSaving" @click="reopenThread(inlineThread.id)">Otwórz ponownie</button>
                   </div>
                 </template>
                 <div v-else-if="draft" class="comment-draft">
                   <textarea v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Treść komentarza do linii"></textarea>
                   <div class="debug-actions">
-                    <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
+                    <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
                     <button type="button" :disabled="commentSaving" @click="closeInlineComments">Anuluj</button>
                     <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
                   </div>
@@ -1316,7 +1369,8 @@ onMounted(loadProjects)
               <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
               <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" ref="diffView" :path="fileDiff.path"
                 :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
-                :side-by-side="sideBySide" :comment-lines="commentLinesForFile" @open-line="openLineComments" />
+                :side-by-side="sideBySide" :comment-lines="commentLinesForFile" :resolved-lines="resolvedLinesForFile"
+                @open-line="openLineComments" />
             </template>
             <div v-else class="pr-briefing">
               <button v-if="lastFilePath" class="briefing-back" type="button" title="Wróć do pliku (o)"

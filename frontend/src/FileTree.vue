@@ -13,6 +13,9 @@ defineEmits<{ open: [path: string]; toggleCritical: [path: string] }>()
       <span class="tree-label" :title="node.label">{{ node.label }}</span>
       <!-- Under the "unreviewed only" filter every visible file is unread by definition,
            so a 0/N ratio would claim nothing was read. Show the plain count instead. -->
+      <span v-if="node.commentCount > 0" class="tree-comments"
+        :class="{ 'tree-comments--open': node.unresolvedCount > 0 }"
+        :title="`${node.commentCount} komentarzy, ${node.unresolvedCount} nierozwiązanych`">💬 {{ node.commentCount }}</span>
       <span class="tree-count" :class="{ 'tree-count--done': showRatio && node.reviewedCount === node.total }">
         {{ showRatio ? `${node.reviewedCount}/${node.total}` : node.total }}
       </span>
@@ -28,6 +31,9 @@ defineEmits<{ open: [path: string]; toggleCritical: [path: string] }>()
           <span class="file-name">{{ file.name }}</span>
           <span class="file-badges">
             <span class="change-type">{{ file.changeType }}</span>
+            <span v-if="file.comments > 0" class="tree-comments"
+              :class="{ 'tree-comments--open': file.unresolvedComments > 0 }"
+              :title="file.unresolvedComments > 0 ? `${file.unresolvedComments} nierozwiązanych z ${file.comments}` : `${file.comments} rozwiązanych`">💬 {{ file.comments }}</span>
             <span v-if="file.reviewed" class="reviewed-badge">✓</span>
             <span v-else-if="file.stale" class="reviewed-badge reviewed-badge--stale" title="Plik zmienił się od czasu przeczytania">✓ zmienione</span>
           </span>

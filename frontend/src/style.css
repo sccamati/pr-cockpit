@@ -342,6 +342,16 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .inline-comments { margin: 0 12px 8px; padding: 8px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-muted); }
 .inline-comments-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
 .inline-close { margin-left: auto; }
+.tree-comments { font-size: 11px; color: var(--text-muted); }
+.tree-comments--open { color: var(--accent); font-weight: 600; }
+.comment-glyph--resolved { opacity: .45; }
+.file-threads { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 12px 8px; }
+.file-threads-label { font-size: 12px; color: var(--text-muted); }
+.file-thread-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.file-thread-chip--resolved { opacity: .6; }
+.file-thread-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.thread--resolved { opacity: .65; }
+.thread-resolve { font-weight: 600; }
 .noise-summary { padding: 6px 10px; font-size: 13px; color: var(--text-muted); background: var(--surface-muted); border-bottom: 1px solid var(--line); cursor: pointer; }
 .noise-summary:hover { background: var(--surface-hover); }
 .noise-summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }

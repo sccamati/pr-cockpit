@@ -282,6 +282,24 @@ Status: zaimplementowane. Prośba użytkownika: żeby po poprawce łatwo było z
 
 **Niesprawdzone — całe 4B i 4C na żywym PR.** Nic z tego nie było uruchomione przeciwko prawdziwemu Azure DevOps: ani zapis z rozszerzonym PAT, ani semantyka `offset`, ani to, czy 409 w ogóle występuje, ani wygląd znaczników na marginesie. Wyłącznik jest domyślnie wyłączony właśnie dlatego.
 
+## Wdrożone — widoczność komentarzy i resolve
+
+### B-22 — Komentarze widoczne w pliku, oznaczone w drzewie, z resolve
+
+Status: zaimplementowane. Prośba użytkownika po obejrzeniu B-20.
+
+**W drzewie plików** plik z komentarzami dostaje odznakę `💬 N`, wyróżnioną kolorem akcentu, gdy któryś jest nierozwiązany. Foldery sumują to przez wszystkie poziomy, więc zwinięty folder nadal mówi, że w środku coś czeka. Folder w całości przeczytany **nie** zwija się, dopóki został w nim nierozwiązany komentarz — inaczej zniknąłby razem z nim.
+
+**Nad diffem** stoi pasek ze wszystkimi wątkami tego pliku jako żetony (`💬 linia 42`, `✓ linia 20`). Komentarz jest widoczny od razu po otwarciu pliku, zamiast czekać, aż ktoś trafi w znacznik na marginesie. Kliknięcie żetonu otwiera rozmowę pod nim.
+
+**Rozwiązane a nierozwiązane.** „Rozwiązany” znaczy to, co w Azure DevOps: `fixed`, `wontFix` albo `closed`. Wątek bez statusu liczy się jako czekający. Rozwiązany wątek ma wyblakły znacznik `💬` na marginesie, wyblakły żeton z `✓` i wyblakłą kartę w widoku komentarzy; `+` na hoverze nie pojawia się na linii, która już ma wątek — rozwiązany czy nie.
+
+**Resolve** jest osobną akcją „Rozwiąż” (ustawia `fixed`) w widoku komentarzy **i** w bloku nad diffem, obok „Nie naprawimy” i „Otwórz ponownie”. Do tego **„Odpowiedz i rozwiąż”** — dwa żądania po kolei, bo Azure DevOps nie ma jednego łączonego; status zmienia się dopiero, gdy odpowiedź jest zapisana, bo to odpowiedź jest tu rzeczą ważną.
+
+**Zweryfikowane:** 48 testów frontendu. Doszły cztery: liczenie komentarzy przez poziomy drzewa i nierozwinięty folder trzymany otwarty przez nierozwiązany wątek; odznaka `💬 2` na pliku; podział znaczników na rozwiązane i nie; „Rozwiąż” z bloku nad diffem woła status `fixed` i przeładowuje wątki; „Odpowiedz i rozwiąż” wykonuje odpowiedź **przed** zmianą statusu.
+
+**Niesprawdzone:** jak przy całym etapie 4 — nic z tego nie było uruchomione przeciwko prawdziwemu Azure DevOps.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

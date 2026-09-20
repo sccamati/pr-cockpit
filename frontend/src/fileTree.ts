@@ -10,6 +10,8 @@ export interface TreeFile {
   selected: boolean
   // What the AI ranking said this file is for, or null. A label, never a decision.
   role: string | null
+  comments: number
+  unresolvedComments: number
 }
 
 export interface TreeFolder {
@@ -19,6 +21,9 @@ export interface TreeFolder {
   files: TreeFile[]
   total: number
   reviewedCount: number
+  // Summed through every level, so a folded folder still says a comment is waiting inside.
+  commentCount: number
+  unresolvedCount: number
   containsSelected: boolean
   open: boolean
 }
@@ -72,6 +77,10 @@ function toFolder(node: RawNode, prefix: string, expandAll: boolean): TreeFolder
   const total = files.length + folders.reduce((sum, folder) => sum + folder.total, 0)
   const reviewedCount = files.filter(file => file.reviewed).length +
     folders.reduce((sum, folder) => sum + folder.reviewedCount, 0)
+  const commentCount = files.reduce((sum, file) => sum + file.comments, 0) +
+    folders.reduce((sum, folder) => sum + folder.commentCount, 0)
+  const unresolvedCount = files.reduce((sum, file) => sum + file.unresolvedComments, 0) +
+    folders.reduce((sum, folder) => sum + folder.unresolvedCount, 0)
   const containsSelected = files.some(file => file.selected) ||
     folders.some(folder => folder.containsSelected)
 
@@ -82,10 +91,13 @@ function toFolder(node: RawNode, prefix: string, expandAll: boolean): TreeFolder
     files,
     total,
     reviewedCount,
+    commentCount,
+    unresolvedCount,
     containsSelected,
     // A folder you have finished folds itself away, which is the point of the tree on a
-    // 44-file pull request. Searching or holding the open file always wins.
-    open: expandAll || containsSelected || reviewedCount < total,
+    // 44-file pull request. Searching, holding the open file, or an unresolved comment
+    // waiting inside always wins.
+    open: expandAll || containsSelected || reviewedCount < total || unresolvedCount > 0,
   }
 }
 

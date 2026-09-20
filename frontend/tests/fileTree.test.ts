@@ -12,6 +12,8 @@ function file(path: string, overrides: Partial<TreeFile> = {}): TreeFile {
     criticalDisabled: false,
     selected: false,
     role: null,
+    comments: 0,
+    unresolvedComments: 0,
     ...overrides,
   }
 }
@@ -63,6 +65,20 @@ describe('drzewo plików', () => {
     expect(byLabel['done']!.open).toBe(false)
     expect(byLabel['open']!.open).toBe(true)
     expect(byLabel['left']!.open).toBe(true)
+  })
+
+  it('counts comments through every level and keeps a folder open while one is unresolved', () => {
+    const tree = buildFileTree([
+      file('/src/done/one.cs', { reviewed: true, comments: 2, unresolvedComments: 1 }),
+      file('/src/quiet/two.cs', { reviewed: true, comments: 1, unresolvedComments: 0 }),
+    ], false)
+
+    expect(tree.commentCount).toBe(3)
+    expect(tree.unresolvedCount).toBe(1)
+    const byLabel = Object.fromEntries(tree.folders.map(folder => [folder.label, folder]))
+    // A finished folder normally folds away, but not while a comment is still waiting.
+    expect(byLabel['done']!.open).toBe(true)
+    expect(byLabel['quiet']!.open).toBe(false)
   })
 
   it('opens everything while a search is running', () => {
