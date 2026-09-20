@@ -470,7 +470,25 @@ Dwie zmiany:
 uruchamianych tym samym `npm test`). Adapter sprawdzony end-to-end po zmianie — czysty JSON
 przechodzi nietknięty.
 
-**Niesprawdzone:** ponieważ błędu nie udało się odtworzyć, **nie wiadomo, czy to go naprawia**.
+**Uzupełnienie tego samego dnia.** Przy okazji pytania o model wyszło, że CLI pisze własną
+prozę na stdout (odrzucony `--model` drukuje tam „There's an issue with the selected
+model…"), a taki komunikat potrafi nieść obiekt JSON, który **nie jest** odpowiedzią —
+`[claude-code:unrecognized_model] {"model":"…","query_source":"sdk"}`. Pierwsza wersja
+`extractJson` brała pierwszy napotkany obiekt, więc podałaby backendowi właśnie ten: 502
+„AI returned an invalid Summary" i **ani linii w logu**, bo logowanie dodaliśmy przy błędzie
+parsowania, a nie przy nieudanej walidacji. Teraz kandydat liczy się tylko wtedy, gdy ma
+kształt odpowiedzi (pole `sentences`); reszta idzie dalej nietknięta, a skaner szuka kolejnego
+obiektu. Uwaga na uczciwość zapisu: **nieudane uruchomienie CLI kończy się kodem wyjścia 1**,
+nie 0 — backend łapie je wcześniej na kodzie wyjścia, więc ten konkretny komunikat i tak by
+tu nie dotarł. Zabezpieczenie dotyczy tego, co CLI wypisze obok **udanego** przebiegu.
+(Pierwotnie zapisano tu, że CLI wychodzi z zerem; to była pomyłka w odczycie — kod wyjścia
+pochodził z `head` w potoku.)
+
+**Wciąż nieszczelne:** nieudana **walidacja** odpowiedzi (`SummaryRunner`) nadal nie loguje
+tego, co przyszło — `SummaryRunner` żyje w warstwie Application i nie ma loggera. Jeśli 502
+będzie brzmiało „AI returned an invalid Summary", log nadal nic nie powie.
+
+**Niesprawdzone:** ponieważ pierwotnego błędu nie udało się odtworzyć, **nie wiadomo, czy to go naprawia**.
 Jeśli wróci, w logu backendu stanie teraz linia Warning z treścią odpowiedzi i to ona
 powie, co się dzieje. Gdyby przyczyną okazały się dwa oddzielne obiekty JSON w jednej
 odpowiedzi albo limit 16 384 znaków wyjścia, `extractJson` tego nie załatwia.
