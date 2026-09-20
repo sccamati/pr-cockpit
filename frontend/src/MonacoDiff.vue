@@ -18,8 +18,15 @@ const props = defineProps<{
   // split so a resolved conversation stops shouting for attention.
   commentLines?: number[]
   resolvedLines?: number[]
+  // Lines that should carry a comment block rendered between the code, in place.
+  zoneLines?: number[]
 }>()
-const emit = defineEmits<{ openLine: [line: number] }>()
+const emit = defineEmits<{
+  openLine: [line: number]
+  // The containers Monaco created for those lines; the parent teleports its own markup in,
+  // so the conversation stays ordinary Vue instead of hand-built DOM.
+  zones: [zones: { line: number; el: HTMLElement }[]]
+}>()
 const container = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneDiffEditor | null = null
 let originalModel: monaco.editor.ITextModel | null = null
@@ -29,10 +36,14 @@ let hoverRegistration: monaco.IDisposable | null = null
 let semanticRegistration: monaco.IDisposable | null = null
 let hoverAbort: AbortController | null = null
 let firstDiffListener: monaco.IDisposable | null = null
+let diffZoneListener: monaco.IDisposable | null = null
 let glyphListener: monaco.IDisposable | null = null
 let hoverMoveListener: monaco.IDisposable | null = null
 let hoverLeaveListener: monaco.IDisposable | null = null
 let glyphs: monaco.editor.IEditorDecorationsCollection | null = null
+const zoneIds = new Map<number, string>()
+const zoneNodes = new Map<number, HTMLElement>()
+const zoneObservers = new Map<number, ResizeObserver>()
 let hoverGlyphs: monaco.editor.IEditorDecorationsCollection | null = null
 let hoveredLine: number | null = null
 
@@ -220,6 +231,9 @@ onMounted(() => {
     firstDiffListener = null
     editor?.revealFirstDiff?.()
   })
+  // The diff editor rebuilds its own zones whenever the diff recomputes, so ours are
+  // re-asserted afterwards rather than assumed to have survived.
+  diffZoneListener = editor.onDidUpdateDiff(() => syncZones())
   const modified = editor.getModifiedEditor()
   // Both the margin icon and the line number open the conversation, because "click the
   // line" is what a reviewer reaches for and a 12-pixel icon is a poor target.
@@ -232,8 +246,11 @@ onMounted(() => {
   hoverMoveListener = modified.onMouseMove(event => setHoveredLine(event.target.position?.lineNumber ?? null))
   hoverLeaveListener = modified.onMouseLeave(() => setHoveredLine(null))
   refreshGlyphs()
+  syncZones()
   if (language === 'csharp' || originalLanguage === 'csharp') void loadCSharpHovers()
 })
+
+watch(() => props.zoneLines, syncZones, { deep: true })
 
 watch(() => [props.commentLines, props.resolvedLines], () => {
   refreshGlyphs()
@@ -282,6 +299,70 @@ function setHoveredLine(line: number | null) {
     : [])
 }
 
+/**
+ * Comment blocks live between the code as Monaco view zones. The diff editor keeps zones
+ * of its own — alignment on the left, deleted lines when the diff renders inline — so ours
+ * are only ever added and removed one by one, never through a wholesale reset, and they
+ * are re-asserted after the diff recomputes.
+ *
+ * ponytail: the height comes from a ResizeObserver on the container rather than from
+ * measuring the content ourselves. Ceiling: a zone briefly lags a very large paste.
+ */
+function syncZones() {
+  if (!editor) return
+  const modified = editor.getModifiedEditor()
+  const wanted = new Set((props.zoneLines ?? []).filter(line => line > 0))
+
+  modified.changeViewZones(accessor => {
+    for (const [line, id] of [...zoneIds]) {
+      if (wanted.has(line)) continue
+      accessor.removeZone(id)
+      zoneIds.delete(line)
+      zoneObservers.get(line)?.disconnect()
+      zoneObservers.delete(line)
+      zoneNodes.delete(line)
+    }
+
+    for (const line of wanted) {
+      if (zoneIds.has(line)) continue
+      const container = document.createElement('div')
+      container.className = 'comment-zone'
+      const zone: monaco.editor.IViewZone = {
+        afterLineNumber: line,
+        domNode: container,
+        heightInPx: 0,
+        // Without this the editor swallows clicks meant for the buttons inside the block.
+        suppressMouseDown: true,
+      }
+      const id = accessor.addZone(zone)
+      zoneIds.set(line, id)
+      zoneNodes.set(line, container)
+
+      const observer = new ResizeObserver(() => {
+        const height = container.scrollHeight
+        if (height === zone.heightInPx) return
+        zone.heightInPx = height
+        modified.changeViewZones(inner => inner.layoutZone(id))
+      })
+      observer.observe(container)
+      zoneObservers.set(line, observer)
+    }
+  })
+
+  emit('zones', [...zoneNodes].map(([line, el]) => ({ line, el })))
+}
+
+function clearZones() {
+  for (const observer of zoneObservers.values()) observer.disconnect()
+  zoneObservers.clear()
+  const modified = editor?.getModifiedEditor()
+  modified?.changeViewZones(accessor => {
+    for (const id of zoneIds.values()) accessor.removeZone(id)
+  })
+  zoneIds.clear()
+  zoneNodes.clear()
+}
+
 function refreshGlyphs() {
   if (!editor) return
   glyphs ??= editor.getModifiedEditor().createDecorationsCollection()
@@ -301,6 +382,8 @@ function refreshGlyphs() {
 
 onBeforeUnmount(() => {
   hoverAbort?.abort()
+  clearZones()
+  diffZoneListener?.dispose()
   glyphListener?.dispose()
   hoverMoveListener?.dispose()
   hoverLeaveListener?.dispose()

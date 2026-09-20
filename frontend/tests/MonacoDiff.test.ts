@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => ({
   onMouseLeave: vi.fn(),
   hoverSet: vi.fn(),
   setPosition: vi.fn(),
+  addZone: vi.fn(),
+  removeZone: vi.fn(),
+  layoutZone: vi.fn(),
   revealLineInCenter: vi.fn(),
   modifiedEditor: null as unknown,
   decorationsSet: vi.fn(),
@@ -98,6 +101,12 @@ beforeEach(() => {
     focus: vi.fn(),
     getPosition: () => ({ lineNumber: 12 }),
     setPosition: mocks.setPosition,
+    // Monaco's zone accessor, reduced to what the component actually calls.
+    changeViewZones: (change: (accessor: unknown) => void) => change({
+      addZone: mocks.addZone,
+      removeZone: mocks.removeZone,
+      layoutZone: mocks.layoutZone,
+    }),
     revealLineInCenter: mocks.revealLineInCenter,
     onMouseDown: mocks.onMouseDown,
     onMouseMove: mocks.onMouseMove,
@@ -108,6 +117,7 @@ beforeEach(() => {
       clear: vi.fn(),
     }),
   }
+  mocks.addZone.mockImplementation(() => `zone-${mocks.addZone.mock.calls.length}`)
   mocks.onMouseDown.mockReturnValue({ dispose: mocks.disposeGlyphListener })
   mocks.onMouseMove.mockReturnValue({ dispose: vi.fn() })
   mocks.onMouseLeave.mockReturnValue({ dispose: vi.fn() })
@@ -231,6 +241,27 @@ describe('Monaco reading options', () => {
     expect(themes).toContain('pr-cockpit-code')
     expect(themes).toContain('pr-cockpit-code-dark')
     expect(vi.mocked(monaco.editor.createDiffEditor).mock.calls[0]![1]!.theme).toBe('pr-cockpit-code')
+    wrapper.unmount()
+  })
+
+  it('puts a comment container between the lines and emits it for the parent to fill', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/a.ts', originalPath: null, originalText: 'a', modifiedText: 'b', zoneLines: [12] },
+    })
+    await flushPromises()
+
+    const zone = mocks.addZone.mock.calls[0]![0] as { afterLineNumber: number; domNode: HTMLElement; suppressMouseDown: boolean }
+    expect(zone.afterLineNumber).toBe(12)
+    // Without this the editor eats clicks meant for the buttons inside the block.
+    expect(zone.suppressMouseDown).toBe(true)
+    expect(wrapper.emitted('zones')?.at(-1)?.[0]).toEqual([{ line: 12, el: zone.domNode }])
+
+    // A line that no longer has a comment loses its container.
+    await wrapper.setProps({ zoneLines: [] })
+    await flushPromises()
+    expect(mocks.removeZone).toHaveBeenCalled()
+    expect(wrapper.emitted('zones')?.at(-1)?.[0]).toEqual([])
+
     wrapper.unmount()
   })
 

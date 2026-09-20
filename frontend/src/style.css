@@ -294,7 +294,11 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .critical-accept { font-weight: 600; }
 .file-explanation { margin: 0 12px 8px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-muted); border-radius: 0 6px 6px 0; }
 .file-explanation p { margin: 0 0 4px; font-size: 13px; }
-.file-explanation-note { font-size: 12px; margin-bottom: 0 !important; }
+.file-explanation-summary { font-size: 13px; font-weight: 600; cursor: pointer; }
+.file-explanation-summary span { font-weight: 400; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; max-width: 60ch; vertical-align: bottom; }
+.file-explanation[open] .file-explanation-summary { margin-bottom: 6px; }
+.file-explanation-note { font-size: 12px; margin-bottom: 0 !important; display: flex; align-items: center; gap: 8px; }
+.explanation-dismiss { font-size: 11px; padding: 1px 6px; }
 .file-explanation-error { margin: 0 12px 8px; }
 .debug-question { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
 .debug-hint-later { font-size: 12px; margin: 0 0 6px; }
@@ -349,6 +353,14 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
    diff: there the block scrolls, so the whole comment is always reachable. */
 .thread-content--clamped { max-height: 140px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
 .comment-expand { margin-top: 4px; font-size: 12px; padding: 2px 8px; }
+/* A comment block rendered between the lines of code by a Monaco view zone. The editor
+   gives it the full width of the content area, so the card provides its own inset. */
+.comment-zone { width: 100%; }
+.zone-card { margin: 4px 10px 6px 52px; padding: 8px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-muted); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.zone-card--draft { border-left-style: dashed; }
+.zone-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.zone-toggle { border: 0; background: none; padding: 0 2px; cursor: pointer; color: var(--text-muted); }
+.zone-preview { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inline-comments-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
 .inline-close { margin-left: auto; }
 .tree-comments { font-size: 11px; color: var(--text-muted); }

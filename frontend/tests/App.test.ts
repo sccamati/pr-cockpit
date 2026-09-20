@@ -30,8 +30,8 @@ vi.mock('../src/api', () => ({ api }))
 vi.mock('../src/MonacoDiff.vue', () => ({
   default: {
     name: 'MonacoDiff',
-    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines'],
-    emits: ['openLine'],
+    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines', 'zoneLines'],
+    emits: ['openLine', 'zones'],
     // Options-API methods land on the instance, which is what the template ref holds, so
     // App can call revealLine on the stub exactly as it calls it on the real editor.
     methods: {
@@ -39,6 +39,25 @@ vi.mock('../src/MonacoDiff.vue', () => ({
       goToDiff: () => {},
       focusEditor: () => {},
       cursorLine: () => null,
+      // Stands in for Monaco's view zones: a real container per line, so the teleported
+      // conversation actually renders and can be asserted on.
+      syncZones(this: any) {
+        const host = this.$el as HTMLElement
+        host.querySelectorAll('.test-zone').forEach((node: Element) => node.remove())
+        this.$emit('zones', (this.zoneLines ?? []).map((line: number) => {
+          const el = document.createElement('div')
+          el.className = 'test-zone'
+          host.appendChild(el)
+          return { line, el }
+        }))
+      },
+    },
+    mounted(this: any) { this.syncZones() },
+    watch: {
+      zoneLines: {
+        deep: true,
+        handler(this: any) { void this.$nextTick(() => this.syncZones()) },
+      },
     },
     template: '<div class="test-diff">Diff</div>',
   },
@@ -463,24 +482,24 @@ describe('PR review', () => {
     // The lines that already carry a thread are handed to the editor as markers.
     expect(diff.props('commentLines')).toEqual([4])
 
-    // A line without a thread opens a draft, and the diff stays on screen.
+    // The existing thread already has a block between the lines of code.
+    expect(diff.props('zoneLines')).toEqual([4])
+    expect(wrapper.find('.zone-card').text()).toContain('Czy to na pewno tutaj?')
+
+    // A line without a thread opens a draft in its own block, and the diff stays.
     diff.vm.$emit('openLine', 11)
     await flushPromises()
-    expect(wrapper.find('.inline-comments').text()).toContain('Nowy komentarz do linii 11')
+    expect(diff.props('zoneLines')).toEqual([4, 11])
+    expect(wrapper.find('.zone-card--draft').text()).toContain('Nowy komentarz do linii 11')
     expect(wrapper.find('.comments-view').exists()).toBe(false)
     expect(wrapper.find('.test-diff').exists()).toBe(true)
     expect(api.createThread).not.toHaveBeenCalled()
 
-    await wrapper.find('.inline-comments textarea').setValue('Tu brakuje sprawdzenia.')
-    await wrapper.find('.inline-comments .comment-send').trigger('click')
+    await wrapper.find('.zone-card--draft textarea').setValue('Tu brakuje sprawdzenia.')
+    await wrapper.find('.zone-card--draft .comment-send').trigger('click')
     await flushPromises()
     expect(api.createThread).toHaveBeenCalledWith('project', 'repo-a', 123,
       { content: 'Tu brakuje sprawdzenia.', filePath: '/src/first.cs', line: 11 })
-
-    // A line that already has one opens that conversation instead.
-    diff.vm.$emit('openLine', 4)
-    await flushPromises()
-    expect(wrapper.find('.inline-comments').text()).toContain('Czy to na pewno tutaj?')
     wrapper.unmount()
   })
 
@@ -512,8 +531,7 @@ describe('PR review', () => {
     expect(diff.props('commentLines')).toEqual([4])
     expect(diff.props('resolvedLines')).toEqual([20])
 
-    await wrapper.findAll('.file-thread-chip')[0]!.trigger('click')
-    await wrapper.find('.thread-resolve').trigger('click')
+    await wrapper.find('.zone-card .thread-resolve').trigger('click')
     await flushPromises()
     expect(api.setThreadStatus).toHaveBeenCalledWith('project', 'repo-a', 123, 1, 'fixed')
     // Nothing optimistic here either: the list is read back afterwards.
@@ -579,7 +597,7 @@ describe('PR review', () => {
     wrapper.unmount()
   })
 
-  it('keeps the code visible: never truncates a comment and steps between threads in a file', async () => {
+  it('keeps every conversation between the lines it belongs to, foldable one by one', async () => {
     api.commentThreads.mockResolvedValue([
       { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
         comments: [{ id: 1, author: 'Jan', content: 'Krotki.', commentType: 'text', publishedAt: null }] },
@@ -593,20 +611,18 @@ describe('PR review', () => {
     await flushPromises()
     await wrapper.find('.next-file-button').trigger('click')
     await flushPromises()
-    await wrapper.findAll('.file-thread-chip')[0]!.trigger('click')
-    await flushPromises()
-    expect(revealed.at(-1)).toBe(4)
+    // Both conversations sit between the lines at once, so nothing has to be hunted for.
+    expect(wrapper.findAll('.zone-card')).toHaveLength(2)
+    // Nothing is truncated in the code view.
     expect(wrapper.find('.thread-content--clamped').exists()).toBe(false)
+    expect(wrapper.findAll('.zone-card .thread-content')[1]!.text().length).toBeGreaterThan(500)
 
-    // Stepping moves to the next thread in the file and scrolls its line into view.
-    await wrapper.findAll('.inline-comments-head button')[1]!.trigger('click')
+    // A chip still scrolls the editor to its line, and folding one block keeps the rest.
+    await wrapper.findAll('.file-thread-chip')[1]!.trigger('click')
     await flushPromises()
-    expect(wrapper.find('.inline-position').text()).toBe('2 z 2')
     expect(revealed.at(-1)).toBe(56)
-
-    // In the diff a comment is never truncated — the block scrolls instead.
-    expect(wrapper.find('.thread-content--clamped').exists()).toBe(false)
-    expect(wrapper.find('.inline-comments .thread-content').text().length).toBeGreaterThan(500)
+    await wrapper.findAll('.zone-toggle')[1]!.trigger('click')
+    expect(wrapper.findAll('.zone-card .thread-content')).toHaveLength(1)
     wrapper.unmount()
   })
 

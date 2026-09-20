@@ -21,6 +21,7 @@ const summary = ref<SummaryResponse | null>(null)
 const explanation = ref<FileExplanation | null>(null)
 const explanationLoading = ref(false)
 const explanationError = ref('')
+const explanationOpen = ref(true)
 const summaryLoading = ref(false)
 const summaryError = ref('')
 const summaryReadLoading = ref(false)
@@ -377,6 +378,10 @@ function openLineComments(line: number) {
   if (existing) {
     inlineThreadId.value = existing.id
     draft.value = null
+    // Opening a collapsed conversation has to expand it, or the click looks like a no-op.
+    const next = new Set(collapsedZones.value)
+    next.delete(line)
+    collapsedZones.value = next
   } else {
     inlineThreadId.value = null
     draft.value = { target: `file:${selectedFilePath.value}:${line}`, text: '' }
@@ -408,6 +413,29 @@ function toggleComment(threadId: number, commentId: number) {
   if (!next.delete(key)) next.add(key)
   expandedComments.value = next
 }
+
+// Comment blocks are rendered by Monaco as zones between the code; these are the
+// containers it created for us, and the markup is teleported into them.
+const zoneTargets = ref<{ line: number; el: HTMLElement }[]>([])
+const collapsedZones = ref(new Set<number>())
+const zoneLines = computed(() => {
+  const lines = threadsInFile.value
+    .filter(thread => (thread.rightLine ?? 0) > 0)
+    .map(thread => thread.rightLine!)
+  if (lineDraft.value) lines.push(lineDraft.value)
+  return [...new Set(lines)].sort((a, b) => a - b)
+})
+function threadAtLine(line: number): PrCommentThread | null {
+  return threadsInFile.value.find(thread => thread.rightLine === line) ?? null
+}
+function toggleZone(line: number) {
+  const next = new Set(collapsedZones.value)
+  if (!next.delete(line)) next.add(line)
+  collapsedZones.value = next
+}
+// A file whose diff is binary or too large has no editor, so its threads would have
+// nowhere to live. There the docked block stays.
+const useZones = computed(() => fileDiff.value?.kind === 'text')
 
 function openThreadInFile(thread: PrCommentThread) {
   inlineThreadId.value = thread.id
@@ -638,6 +666,8 @@ function resetDiff() {
   diffError.value = ''
   diffSinceIteration.value = null
   inlineThreadId.value = null
+  zoneTargets.value = []
+  collapsedZones.value = new Set()
   resetExplanation()
   fileSearch.value = ''
   onlyUnreviewed.value = false
@@ -986,6 +1016,7 @@ function resetExplanation() {
   explanation.value = null
   explanationLoading.value = false
   explanationError.value = ''
+  explanationOpen.value = true
 }
 
 // Rides the diff request id: switching files or leaving the PR invalidates an explanation
@@ -1025,6 +1056,8 @@ async function openFile(path: string, sinceIteration?: number) {
   const pullRequestId = details.value.id
   selectedFilePath.value = path
   inlineThreadId.value = null
+  zoneTargets.value = []
+  collapsedZones.value = new Set()
   if (lineDraft.value !== null) draft.value = null
   resetExplanation()
   fileDiff.value = null
@@ -1448,7 +1481,7 @@ onMounted(loadProjects)
               </div>
               <!-- The conversation for the clicked line, docked above the diff so the code
                    it is about stays on screen. -->
-              <div v-if="inlineThread || lineDraft !== null" class="inline-comments">
+              <div v-if="!useZones && (inlineThread || lineDraft !== null)" class="inline-comments">
                 <div class="inline-comments-head">
                   <strong>{{ inlineThread ? `Komentarz w linii ${inlineThread.rightLine ?? '—'}` : `Nowy komentarz do linii ${lineDraft}` }}</strong>
                   <template v-if="inlineThread && threadsInFile.length > 1">
@@ -1491,10 +1524,16 @@ onMounted(loadProjects)
                 </div>
               </div>
               <p v-if="explanationError" class="notice error file-explanation-error" role="alert">{{ explanationError }}</p>
-              <div v-if="explanation" class="file-explanation" aria-label="Wyjaśnienie pliku">
+              <!-- Foldable like a comment: it is a few sentences you read once, and it was
+                   holding the top of the panel for the rest of the file. -->
+              <details v-if="explanation" class="file-explanation" :open="explanationOpen" aria-label="Wyjaśnienie pliku"
+                @toggle="explanationOpen = ($event.target as HTMLDetailsElement).open">
+                <summary class="file-explanation-summary">Wyjaśnienie AI<span v-if="!explanationOpen"> · {{ explanation.sentences[0] }}</span></summary>
                 <p v-for="(sentence, index) in explanation.sentences" :key="index">{{ sentence }}</p>
-                <p class="file-explanation-note muted">Wyjaśnienie AI dla tej wersji pliku. Zapisane lokalnie.</p>
-              </div>
+                <p class="file-explanation-note muted">Dla tej wersji pliku. Zapisane lokalnie.
+                  <button type="button" class="explanation-dismiss" @click="resetExplanation">Ukryj</button>
+                </p>
+              </details>
               <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
               <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
               <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
@@ -1502,7 +1541,61 @@ onMounted(loadProjects)
               <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" ref="diffView" :path="fileDiff.path"
                 :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
                 :side-by-side="sideBySide" :comment-lines="commentLinesForFile" :resolved-lines="resolvedLinesForFile"
-                @open-line="openLineComments" />
+                :zone-lines="zoneLines" @open-line="openLineComments" @zones="zoneTargets = $event" />
+              <!-- Rendered between the lines of code, inside the containers Monaco made.
+                   Ordinary Vue markup, so replying and resolving work the same as in the
+                   comments view. -->
+              <Teleport v-for="zone in zoneTargets" :key="zone.line" :to="zone.el">
+                <div class="zone-card" :class="{ 'zone-card--draft': !threadAtLine(zone.line) }">
+                  <template v-if="threadAtLine(zone.line)">
+                    <div class="zone-head">
+                      <button type="button" class="zone-toggle" :aria-expanded="!collapsedZones.has(zone.line)"
+                        @click="toggleZone(zone.line)">{{ collapsedZones.has(zone.line) ? '▸' : '▾' }}</button>
+                      <span class="thread-author">{{ threadAtLine(zone.line)!.comments[0]?.author ?? 'Nieznany autor' }}</span>
+                      <span v-if="threadAtLine(zone.line)!.status && threadStatusLabels[threadAtLine(zone.line)!.status!]" class="thread-status">{{ threadStatusLabels[threadAtLine(zone.line)!.status!] }}</span>
+                      <span v-if="threadAtLine(zone.line)!.comments.length > 1" class="thread-status">{{ threadAtLine(zone.line)!.comments.length }} wpisy</span>
+                      <span v-if="collapsedZones.has(zone.line)" class="zone-preview">{{ commentPreview(threadAtLine(zone.line)!.comments[0]?.content ?? '') }}</span>
+                    </div>
+                    <template v-if="!collapsedZones.has(zone.line)">
+                      <p v-if="commentError && inlineThreadId === threadAtLine(zone.line)!.id" class="notice error" role="alert">{{ commentError }}</p>
+                      <div v-for="comment in threadAtLine(zone.line)!.comments" :key="comment.id" class="thread-comment">
+                        <span v-if="comment.id !== threadAtLine(zone.line)!.comments[0]?.id" class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
+                        <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
+                        <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                      </div>
+                      <p v-if="movedSinceComment(threadAtLine(zone.line)!)" class="thread-moved">
+                        Kod zmienił się po tym komentarzu (iteracja {{ threadAtLine(zone.line)!.iterationId }} → {{ lastIteration }}).
+                        <button type="button" class="thread-since" @click="showChangesSinceComment(threadAtLine(zone.line)!)">Zobacz, co się zmieniło</button>
+                      </p>
+                      <div v-if="draft?.target === String(threadAtLine(zone.line)!.id)" class="comment-draft">
+                        <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" aria-label="Odpowiedź w wątku"></textarea>
+                        <div class="debug-actions">
+                          <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
+                          <button v-if="!isResolved(threadAtLine(zone.line)!)" type="button" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft(true)">Odpowiedz i rozwiąż</button>
+                          <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
+                        </div>
+                      </div>
+                      <div v-else class="thread-actions">
+                        <button type="button" @click="startDraft(String(threadAtLine(zone.line)!.id))">Odpowiedz</button>
+                        <button v-if="!isResolved(threadAtLine(zone.line)!)" type="button" class="thread-resolve" :disabled="commentSaving" @click="resolveThread(threadAtLine(zone.line)!.id)">Rozwiąż</button>
+                        <button v-else type="button" :disabled="commentSaving" @click="reopenThread(threadAtLine(zone.line)!.id)">Otwórz ponownie</button>
+                      </div>
+                    </template>
+                  </template>
+                  <template v-else-if="draft">
+                    <div class="zone-head"><strong>Nowy komentarz do linii {{ zone.line }}</strong></div>
+                    <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
+                    <div class="comment-draft">
+                      <textarea v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Treść komentarza do linii"></textarea>
+                      <div class="debug-actions">
+                        <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
+                        <button type="button" :disabled="commentSaving" @click="closeInlineComments">Anuluj</button>
+                        <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </Teleport>
             </template>
             <div v-else class="pr-briefing">
               <button v-if="lastFilePath" class="briefing-back" type="button" title="Wróć do pliku (o)"

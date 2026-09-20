@@ -122,7 +122,7 @@ Przy `renderSideBySide: false` widoczny jest edytor zmodyfikowany, a linie usuni
 
 - **A — sam panel boczny, zero zmian w edytorze.** ~80% wartości przy minimalnym ryzyku.
 - **B — znaczniki na marginesie.** `glyphMargin: true`, `createDecorationsCollection`, `onMouseDown` na `GUTTER_GLYPH_MARGIN`. Dołączyć do istniejącego bloku zwalniania w `onBeforeUnmount`.
-- **C — wątki w treści diffu przez view zones. Odradzane** — konkuruje ze strefami, których inline diff już używa na linie usunięte.
+- **C — wątki w treści diffu przez view zones. Odradzane, ale ZROBIONE** na wyraźną prośbę użytkownika (B-22). Zastrzeżenie zostaje w mocy: konkuruje ze strefami, których inline diff używa na linie usunięte, więc strefy są dodawane pojedynczo i odtwarzane po `onDidUpdateDiff`. Niesprawdzone w przeglądarce na dużym diffie.
 
 ### 4.6 Bezpieczeństwo — akcja nieodwracalna i widoczna dla zespołu
 
