@@ -523,9 +523,11 @@ public sealed class AzureDevOpsClientTests
     [Fact]
     public async Task MarksWhichCommentsBelongToThePatOwner()
     {
+        string? identityQuery = null;
         using var http = new HttpClient(new StubHandler(request =>
             request.RequestUri!.PathAndQuery.Contains("connectionData")
-                ? Json("""{"authenticatedUser":{"id":"ME","providerDisplayName":"Ja"}}""")
+                ? Json((identityQuery = request.RequestUri.Query) is null ? "" :
+                    """{"authenticatedUser":{"id":"ME","providerDisplayName":"Ja"}}""")
                 : Json("""
                     {"value":[{"id":1,"status":"active","comments":[
                       {"id":1,"author":{"id":"ME","displayName":"Ja"},"content":"Moje","commentType":"text"},
@@ -536,6 +538,9 @@ public sealed class AzureDevOpsClientTests
         var thread = Assert.Single(await Client(http)
             .GetCommentThreadsAsync("proj", "repo", 1, CancellationToken.None));
 
+        // connectionData is preview-only; plain api-version=7.1 is rejected and the failure
+        // is swallowed, so nothing would ever be marked as mine.
+        Assert.Contains("-preview", identityQuery);
         Assert.True(thread.Comments[0].IsMine);
         Assert.False(thread.Comments[1].IsMine);
     }

@@ -162,7 +162,9 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         _currentUserAsked = true;
         try
         {
-            var (json, _) = await GetAsync($"_apis/connectionData?{ApiVersion}", ct);
+            // connectionData is preview-only: plain "api-version=7.1" is rejected outright,
+            // and the rejection is silent here, which is exactly how it went unnoticed.
+            var (json, _) = await GetAsync($"_apis/connectionData?{ApiVersion}-preview", ct);
             using (json)
             {
                 _currentUserId = json.RootElement.TryGetProperty("authenticatedUser", out var user) &&
