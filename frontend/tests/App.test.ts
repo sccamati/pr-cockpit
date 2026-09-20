@@ -125,11 +125,14 @@ beforeEach(() => {
   api.explainFile.mockImplementation(async (_project, _repository, _id, path) => ({
     schemaVersion: 2, path, headCommitSha: 'b'.repeat(40), sentences: [`Wyjaśnienie dla ${path}.`],
   }))
-  api.fileReviews.mockResolvedValue({ files: [], readingPath: [], updatedAt: null })
+  api.fileReviews.mockResolvedValue({
+    files: [], readingPath: { paths: [], position: 0, headCommitSha: null, updatedAt: null }, updatedAt: null,
+  })
   api.fileReviewProgress.mockResolvedValue([])
   api.commentThreads.mockResolvedValue([])
   api.config.mockResolvedValue({ commentsEnabled: true })
-  api.setReadingPath.mockImplementation(async (_project, _repository, _id, paths) => ({ paths, updatedAt: null }))
+  api.setReadingPath.mockImplementation(async (_project, _repository, _id, paths, position, headCommitSha) =>
+    ({ paths, position: position ?? 0, headCommitSha: headCommitSha ?? null, updatedAt: null }))
   api.setFileReviewed.mockImplementation(async (_project, _repository, _id, update) => ({
     entry: update.reviewed
       ? { path: update.path, blobId: update.blobId ?? null, headSha: update.headCommitSha ?? null, updatedAt: '2026-09-01T12:00:00Z' }
@@ -239,10 +242,7 @@ describe('PR review', () => {
     await wrapper.find('.pr-row').trigger('click')
     await flushPromises()
 
-    // Nothing is proposed before the summary exists, and nothing is ever written on its own.
-    expect(wrapper.find('.critical-proposal').exists()).toBe(false)
-    await wrapper.find('.summary-button').trigger('click')
-    await flushPromises()
+    // Summary starts itself (US-P1), but the ranking is still only a proposal.
     expect(wrapper.find('.critical-proposal').exists()).toBe(true)
     expect(api.setReadingPath).not.toHaveBeenCalled()
     expect(wrapper.findAll('.critical-list li')).toHaveLength(0)
@@ -254,14 +254,16 @@ describe('PR review', () => {
     // Accepting keeps the model's order, and the proposal gives way to the real path.
     await wrapper.find('.critical-accept').trigger('click')
     await flushPromises()
-    expect(api.setReadingPath).toHaveBeenCalledWith('project', 'repo-a', 123, ['/src/second.cs', '/src/first.cs'])
+    expect(api.setReadingPath).toHaveBeenCalledWith('project', 'repo-a', 123, ['/src/second.cs', '/src/first.cs'], 0, null)
     expect(wrapper.find('.critical-proposal').exists()).toBe(false)
     expect(wrapper.findAll('.critical-list li')).toHaveLength(2)
     wrapper.unmount()
   })
 
   it('leaves a reading path the user already built alone', async () => {
-    api.fileReviews.mockResolvedValue({ files: [], readingPath: ['/tests/third.cs'], updatedAt: null })
+    api.fileReviews.mockResolvedValue({
+      files: [], readingPath: { paths: ['/tests/third.cs'], position: 0, headCommitSha: null, updatedAt: null }, updatedAt: null,
+    })
     api.generateSummary.mockResolvedValue({
       schemaVersion: 2,
       summary: 'Zmieniono przepływ faktur. Dodano testy.',
@@ -275,8 +277,6 @@ describe('PR review', () => {
     const wrapper = mount(App)
     await flushPromises()
     await wrapper.find('.pr-row').trigger('click')
-    await flushPromises()
-    await wrapper.find('.summary-button').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.critical-proposal').exists()).toBe(false)
@@ -762,14 +762,12 @@ describe('PR review', () => {
     wrapper.unmount()
   })
 
-  it('runs Summary only on click and shows the context limitation', async () => {
+  // US-P1: opening the pull request is the trigger, because the ranking is what the
+  // walkthrough proposes and clicking for it first defeats the point.
+  it('generates Summary on opening the PR and shows the context limitation', async () => {
     const wrapper = mount(App)
     await flushPromises()
     await wrapper.find('.pr-row').trigger('click')
-    await flushPromises()
-
-    expect(api.generateSummary).not.toHaveBeenCalled()
-    await wrapper.find('.summary-button').trigger('click')
     await flushPromises()
 
     expect(api.generateSummary).toHaveBeenCalledExactlyOnceWith('project', 'repo-a', 123)
@@ -782,7 +780,9 @@ describe('PR review', () => {
 
   it('shows an analysis error and ignores a late result after changing PR', async () => {
     let resolveOld!: (value: unknown) => void
-    api.generateSummary.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    api.generateSummary
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+      .mockRejectedValueOnce(new Error('AI CLI timed out.'))
     api.pullRequests.mockResolvedValue([details, { ...details, id: 456, title: 'Another PR' }])
     api.pullRequest.mockImplementation(async (_project, _repo, id) => ({ ...details, id }))
 
@@ -790,19 +790,19 @@ describe('PR review', () => {
     await flushPromises()
     await wrapper.findAll('.pr-row')[0]!.trigger('click')
     await flushPromises()
-    await wrapper.find('.summary-button').trigger('click')
+    // The first PR's run started on its own and is still out (US-P1).
     expect(wrapper.find('.summary-button').attributes('disabled')).toBeDefined()
     await wrapper.find('.back-button').trigger('click')
     await wrapper.findAll('.pr-row')[1]!.trigger('click')
     await flushPromises()
+
+    // US-P1, model unavailable: the message says so and the file tree is still the way out.
+    expect(wrapper.find('.summary-section [role="alert"]').text()).toContain('AI CLI timed out.')
+    expect(wrapper.findAll('.changed-files li').length).toBeGreaterThan(0)
+
     resolveOld({ summary: 'Old PR summary' })
     await flushPromises()
     expect(wrapper.find('.summary-text').exists()).toBe(false)
-
-    api.generateSummary.mockRejectedValueOnce(new Error('AI CLI timed out.'))
-    await wrapper.find('.summary-button').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.summary-section [role="alert"]').text()).toContain('AI CLI timed out.')
     wrapper.unmount()
   })
 })

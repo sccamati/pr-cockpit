@@ -334,6 +334,98 @@ Status: zaimplementowane we frontendzie. Wynik przeglądu UX na prośbę użytko
 
 **Niesprawdzone:** backendu nie przebudowano w tej zmianie — działał proces `PRCockpit.Api`, który trzyma DLL-e, a kod backendu i tak nie był ruszany. Wygląd licznika w nagłówku i dat przy komentarzach nie był oglądany w przeglądarce.
 
+## Wdrożone — przejście prowadzone przez PR (epik US-P0…US-P7)
+
+Źródło: brief BA/PO „Przejście prowadzone przez PR" z 20 wrz 2026, wersja 1.0. Decyzje
+ramowe D-01…D-05 przyjęte bez zmian. Kolejność implementacji zgodna z §2 briefu.
+
+### US-P0 — blokada nasłuchu poza localhostem
+
+Status: zaimplementowane, pokryte testami. Narzędzie nie ma uwierzytelniania (D-01), więc
+adres nasłuchu jest jedyną rzeczą trzymającą token przy jednej maszynie. `LocalOnly` czyta
+`urls`, `ASPNETCORE_URLS` i `Kestrel:Endpoints:*:Url`; cokolwiek innego niż pętla zwrotna
+zatrzymuje start z komunikatem. `*`, `+` i `0.0.0.0` liczą się jako adres zewnętrzny, bo
+`Uri` ich nie parsuje, a to właśnie one otwierają port na sieć. Świadome wyłączenie:
+`Security:AllowRemoteAccess=true` — wtedy start przechodzi z ostrzeżeniem.
+
+### US-P1 — Summary generowane przy otwarciu PR
+
+Status: zaimplementowane. `loadSavedSummary` po wczytaniu zapisanego wyniku sam uruchamia
+generowanie, gdy wyniku nie ma **albo** jest nieaktualny. Stary wynik zostaje na ekranie do
+czasu nadejścia nowego, a błąd modelu zostawia pełne drzewo plików i przycisk ponowienia.
+Raport pokrycia kontekstu („Kontekst: a / b plików") jest widoczny również na ekranie
+wejścia — przy dużym PR mówi, na ilu plikach ranking naprawdę powstał. Decyzja `[wymagana
+decyzja]` o bardzo dużych PR: **tak**, generujemy, zgodnie z domyślną.
+
+### US-P2 — wyjaśnienie pliku traci ważność po zmianie tego pliku (NIESP-04)
+
+Status: zaimplementowane, pokryte testami. `pr_file_explanations` dostało kolumnę `BlobId`,
+a decyzję podejmuje `ContentFreshness` w warstwie Domain: identyfikator treści, a gdy go nie
+ma — commit głowy, dokładnie jak znacznik „Obejrzałem". Jeden dorzucony commit nie kasuje
+już wyjaśnień plików, których nikt nie dotknął — co przy prefetchu (US-P5) było różnicą
+między jednym a ośmioma uruchomieniami modelu.
+
+**Odstępstwo od briefu, świadome:** „jedno miejsce w kodzie" nie wyszło dosłownie. Reguła
+znacznika „Obejrzałem" liczy się w przeglądarce (`reviewState` w `App.vue`) na danych, które
+front i tak ma; reguła wyjaśnienia liczy się w backendzie. To ta sama reguła w dwóch
+językach, z odsyłaczem w komentarzu po obu stronach. Ujednolicenie wymagałoby endpointu
+tylko po to, żeby front zapytał backend o coś, co już wie.
+
+### US-P3…US-P7 — ekran wejścia, tryb przejścia, prefetch, domknięcie, wznowienie
+
+Status: zaimplementowane, pokryte testami (`frontend/tests/Walkthrough.test.ts`).
+
+- **Wejście (US-P3).** PR powyżej pięciu plików kodu otwiera się na propozycji, nie na
+  drzewie. Domyślnie osiem plików z rankingu (dolna granica 3, ranking daje do 10), bez
+  plików już przeczytanych i **bez szumu** — szum można dołożyć ręcznie, ale AI go nie
+  proponuje. Lista jest edytowalna przed startem i dopiero „Rozpocznij przejście" zapisuje
+  ścieżkę czytania; do tego czasu nic nie leci do bazy. Brak rankingu → zdanie, że
+  propozycja jest niedostępna, i wyjście do drzewa.
+- **Przejście (US-P4).** Pełna szerokość, drzewo i szyna schowane, pasek z pozycją
+  w **ścieżce** (nie w liście z Azure DevOps — NIESP-05 zostaje w widoku drzewa i nie jest
+  tu naprawiany). Akcje: przeczytane/dalej, pomiń, wstecz, wyjście — przyklejone na dole,
+  więc dostępne bez przewijania diffu. `m`, `j`, `k` robią w przejściu to samo co w drzewie,
+  tylko po ścieżce; nowych skrótów nie ma. Licznik nierozwiązanych komentarzy stoi
+  w nagłówku PR, który zostaje na ekranie.
+- **Prefetch (US-P5).** Po akceptacji ścieżki wyjaśnienia powstają w tle, w kolejności
+  ścieżki, po dwa naraz, dla całej ścieżki. Wynik ląduje w pamięci przeglądarki, więc
+  wejście na plik nie ma stanu oczekiwania; jeśli użytkownik wyprzedzi prefetch, diff i tak
+  renderuje się natychmiast, a zdania dojeżdżają bez przeładowania. Błąd na jednym pliku
+  zostaje przy tym pliku, z ponowieniem. Wyjście z PR albo z przejścia przerywa prefetch
+  (`AbortController`).
+- **Domknięcie (US-P6).** Liczby (przeczytane / pominięte / poza ścieżką), lista pominiętych
+  z powrotem jednym kliknięciem, pytanie Debug Check i dwa wyjścia. Żaden krok checklisty
+  nie zaznacza się sam.
+- **Wznowienie (US-P7).** `pr_reading_paths` dostało `Position` i `HeadCommitSha`. Ścieżka
+  bez `HeadCommitSha` pochodzi z szyny, nie z przejścia, i nie jest proponowana do wznowienia.
+  Inny commit głowy niż w chwili wyboru → informacja i wybór: wznów albo przelicz; nic nie
+  jest kasowane bez decyzji. Pozycja jest przycinana do długości ścieżki przy odczycie,
+  a plik, który zniknął z PR, wypada ze ścieżki, więc przejście nie prowadzi donikąd.
+
+**Parametry (`[wymagana decyzja]` z briefu).** Wszystkie na wartościach domyślnych:
+długość ścieżki 8, prefetch 2 równolegle, prefetch całej ścieżki. Siedzą jako nazwane stałe
+`walkDefaultLength` i `walkParallelPrefetch` na górze `App.vue`, z komentarzem
+`// ponytail:` — jednoosobowe narzędzie lokalne nie ma pliku ustawień, a zakładanie go dla
+dwóch liczb byłoby tym, czego brief kazał unikać. Ścieżka wyjścia: ekran ustawień, jeśli
+liczby zaczną się zmieniać.
+
+**Zweryfikowane:** 117 testów backendu, 75 testów frontendu (doszło 16 w `Walkthrough.test.ts`
+i 4 w backendzie), `npm run build` i `dotnet build` przechodzą.
+
+Migracje `AddExplanationBlobId` i `AddWalkthroughPosition` zastosowały się na lokalnej bazie
+przy starcie backendu (`dotnet ef migrations list` pokazuje obie jako wykonane). Blokada
+nasłuchu została sprawdzona na żywym procesie: `--urls http://0.0.0.0:5199` zatrzymuje start
+z komunikatem, profil `http` na localhoście startuje normalnie.
+
+**Niesprawdzone:** całości nie oglądano w przeglądarce ani na prawdziwym PR — layout ekranu
+wejścia, paska przejścia i ekranu domknięcia nie był widziany. Nie sprawdzono też, czy
+prefetch dwóch wyjaśnień naraz jest znośny dla realnego adaptera AI: testy używają atrapy,
+która odpowiada natychmiast.
+
+**Poza zakresem, świadomie (za briefem §5):** NIESP-05 i NIESP-06 zostają otwarte, Project
+Memory i Quality Review nietknięte, żadnego uwierzytelniania ani grywalizacji. Kontrakt
+wyniku AI bez zmian — ranking wystarczył taki, jaki jest.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

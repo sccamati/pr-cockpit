@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PRCockpit.Domain.Review;
@@ -111,22 +111,22 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task StoresTheReadingPathInOrderAndReplacesItWholesale()
     {
-        await Store().SetReadingPathAsync("proj", "repo", 7, ["/b.cs", "/a.cs"], CancellationToken.None);
-        await Store().SetReadingPathAsync("proj", "repo", 7, ["/a.cs"], CancellationToken.None);
+        await Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(["/b.cs", "/a.cs"]), CancellationToken.None);
+        await Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(["/a.cs"]), CancellationToken.None);
 
         var state = await Store().GetAsync("proj", "repo", 7, CancellationToken.None);
 
-        Assert.Equal(["/a.cs"], state.ReadingPath);
+        Assert.Equal(["/a.cs"], state.ReadingPath.Paths);
     }
 
     [Fact]
     public async Task KeepsTheReadingPathOrderExactly()
     {
-        await Store().SetReadingPathAsync("proj", "repo", 7, ["/c.cs", "/a.cs", "/b.cs"], CancellationToken.None);
+        await Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(["/c.cs", "/a.cs", "/b.cs"]), CancellationToken.None);
 
         var state = await Store().GetAsync("proj", "repo", 7, CancellationToken.None);
 
-        Assert.Equal(["/c.cs", "/a.cs", "/b.cs"], state.ReadingPath);
+        Assert.Equal(["/c.cs", "/a.cs", "/b.cs"], state.ReadingPath.Paths);
     }
 
     [Theory]
@@ -167,7 +167,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
         var paths = Enumerable.Range(0, 11).Select(index => $"/file{index}.cs").ToArray();
 
         var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
-            Store().SetReadingPathAsync("proj", "repo", 7, paths, CancellationToken.None));
+            Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(paths), CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
     }
@@ -176,9 +176,55 @@ public sealed class ReviewProgressStoreTests : IDisposable
     public async Task RejectsADuplicateInTheReadingPath()
     {
         var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
-            Store().SetReadingPathAsync("proj", "repo", 7, ["/a.cs", "/a.cs"], CancellationToken.None));
+            Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(["/a.cs", "/a.cs"]), CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
+    }
+
+    // US-P7: an interrupted walkthrough waits where it stopped.
+    [Fact]
+    public async Task KeepsThePositionAndTheHeadTheWalkthroughStartedFrom()
+    {
+        await Store().SetReadingPathAsync("proj", "repo", 7,
+            new ReadingPathUpdate(["/a.cs", "/b.cs", "/c.cs"], 2, Sha), CancellationToken.None);
+
+        var state = (await Store().GetAsync("proj", "repo", 7, CancellationToken.None)).ReadingPath;
+
+        Assert.Equal(2, state.Position);
+        Assert.Equal(Sha, state.HeadCommitSha);
+        Assert.NotNull(state.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task APositionPastTheEndOfThePathIsRefused()
+    {
+        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+            Store().SetReadingPathAsync("proj", "repo", 7,
+                new ReadingPathUpdate(["/a.cs"], 2), CancellationToken.None));
+
+        Assert.Equal(400, failure.StatusCode);
+    }
+
+    // Position == length is the walkthrough that reached its end, and nothing to resume.
+    [Fact]
+    public async Task APositionAtTheEndOfThePathIsAllowed()
+    {
+        await Store().SetReadingPathAsync("proj", "repo", 7,
+            new ReadingPathUpdate(["/a.cs"], 1), CancellationToken.None);
+
+        Assert.Equal(1, (await Store().GetAsync("proj", "repo", 7, CancellationToken.None)).ReadingPath.Position);
+    }
+
+    // A shorter path saved over a longer one would otherwise resume nowhere.
+    [Fact]
+    public async Task APositionIsClampedToTheStoredPathOnRead()
+    {
+        await Store().SetReadingPathAsync("proj", "repo", 7,
+            new ReadingPathUpdate(["/a.cs", "/b.cs", "/c.cs"], 3), CancellationToken.None);
+        await Store().SetReadingPathAsync("proj", "repo", 7,
+            new ReadingPathUpdate(["/a.cs"]), CancellationToken.None);
+
+        Assert.Equal(0, (await Store().GetAsync("proj", "repo", 7, CancellationToken.None)).ReadingPath.Position);
     }
 
     [Fact]
@@ -196,7 +242,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
         var state = await Store().GetAsync("proj", "repo", 123, CancellationToken.None);
 
         Assert.Empty(state.Files);
-        Assert.Empty(state.ReadingPath);
+        Assert.Empty(state.ReadingPath.Paths);
         Assert.Null(state.UpdatedAt);
     }
 

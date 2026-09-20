@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PRCockpit.Domain.Analysis;
@@ -15,6 +15,8 @@ public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
 {
     private const string Sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
     private const string OtherSha = "00112233445566778899aabbccddeeff00112233";
+    private const string Blob = "1111111111111111111111111111111111111111";
+    private const string OtherBlob = "2222222222222222222222222222222222222222";
 
     private readonly SqliteConnection _connection;
     private readonly DbContextOptions<PrCockpitContext> _options;
@@ -30,33 +32,57 @@ public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task ReadsBackAnExplanationOnlyForTheHeadItWasGeneratedFrom()
+    public async Task ReadsBackAnExplanationOnlyForTheContentItWasGeneratedFrom()
     {
         var result = new FileExplanation(2, "/src/file.cs", Sha, ["Serwis wysyłki faktur."]);
-        await Explanations().SaveAsync("proj", "repo", 7, result, CancellationToken.None);
+        await Explanations().SaveAsync("proj", "repo", 7, result, Blob, CancellationToken.None);
 
-        var same = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", Sha, CancellationToken.None);
-        var moved = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", OtherSha, CancellationToken.None);
+        var same = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", Blob, Sha, CancellationToken.None);
+        var edited = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", OtherBlob, OtherSha, CancellationToken.None);
 
         // Compared field by field: a record's list member compares by reference, not content.
         Assert.Equal(result.Path, same!.Result.Path);
         Assert.Equal(result.HeadCommitSha, same.Result.HeadCommitSha);
         Assert.Equal(result.Sentences, same.Result.Sentences);
         // The file changed under it, so the saved sentence is no longer an answer.
-        Assert.Null(moved);
+        Assert.Null(edited);
+    }
+
+    // US-P2: one commit used to throw away the explanations of every file in the pull
+    // request, which is what makes the walkthrough's prefetch expensive.
+    [Fact]
+    public async Task ACommitTouchingAnotherFileLeavesThisExplanationAlone()
+    {
+        await Explanations().SaveAsync("proj", "repo", 7,
+            new FileExplanation(2, "/src/file.cs", Sha, ["Serwis wysyłki faktur."]), Blob, CancellationToken.None);
+
+        var stored = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", Blob, OtherSha, CancellationToken.None);
+
+        Assert.Equal("Serwis wysyłki faktur.", Assert.Single(stored!.Result.Sentences));
+    }
+
+    // The fallback, and the one the reviewed marker uses in the same situation.
+    [Fact]
+    public async Task WithoutABlobIdTheHeadCommitDecides()
+    {
+        await Explanations().SaveAsync("proj", "repo", 7,
+            new FileExplanation(2, "/src/file.cs", Sha, ["Serwis wysyłki faktur."]), null, CancellationToken.None);
+
+        Assert.NotNull(await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", null, Sha, CancellationToken.None));
+        Assert.Null(await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", null, OtherSha, CancellationToken.None));
     }
 
     [Fact]
     public async Task OverwritesTheExplanationOfTheSameFileInsteadOfPilingUpRows()
     {
         await Explanations().SaveAsync("proj", "repo", 7,
-            new FileExplanation(2, "/src/file.cs", Sha, ["Stare."]), CancellationToken.None);
+            new FileExplanation(2, "/src/file.cs", Sha, ["Stare."]), Blob, CancellationToken.None);
         await Explanations().SaveAsync("proj", "repo", 7,
-            new FileExplanation(2, "/src/file.cs", OtherSha, ["Nowe."]), CancellationToken.None);
+            new FileExplanation(2, "/src/file.cs", OtherSha, ["Nowe."]), OtherBlob, CancellationToken.None);
 
         using var context = new PrCockpitContext(_options);
         Assert.Equal(1, await context.FileExplanations.CountAsync());
-        var stored = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", OtherSha, CancellationToken.None);
+        var stored = await Explanations().GetAsync("proj", "repo", 7, "/src/file.cs", OtherBlob, OtherSha, CancellationToken.None);
         Assert.Equal("Nowe.", Assert.Single(stored!.Result.Sentences));
     }
 

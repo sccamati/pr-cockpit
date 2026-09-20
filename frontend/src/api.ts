@@ -113,7 +113,7 @@ export interface FileExplanation {
 export interface FileReviewEntry { path: string; blobId: string | null; headSha: string | null; updatedAt: string }
 export interface FileReviewState {
   files: FileReviewEntry[]
-  readingPath: string[]
+  readingPath: ReadingPathState
   updatedAt: string | null
 }
 export interface FileReviewUpdate {
@@ -124,7 +124,14 @@ export interface FileReviewUpdate {
   changedFilesCount?: number
 }
 export interface FileReviewResult { entry: FileReviewEntry | null; reviewedCount: number }
-export interface ReadingPathState { paths: string[]; updatedAt: string | null }
+// The reading path plus where the walkthrough of it stopped (US-P7). position === paths.length
+// means it was walked to the end, so there is nothing to offer resuming.
+export interface ReadingPathState {
+  paths: string[]
+  position: number
+  headCommitSha: string | null
+  updatedAt: string | null
+}
 export interface FileReviewProgress { pullRequestId: number; reviewedCount: number; changedFilesCount: number }
 
 export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
@@ -221,8 +228,8 @@ export const api = {
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
-  explainFile: (project: string, repository: string, id: number, path: string) =>
-    post<FileExplanation>(`${location(project, repository)}/pull-requests/${id}/summary/file`, { path }),
+  explainFile: (project: string, repository: string, id: number, path: string, signal?: AbortSignal) =>
+    post<FileExplanation>(`${location(project, repository)}/pull-requests/${id}/summary/file`, { path }, signal),
   savedSummary: (project: string, repository: string, id: number) =>
     get<{ stored: StoredSummary | null }>(`${location(project, repository)}/pull-requests/${id}/summary`)
       .then(response => response.stored),
@@ -232,8 +239,10 @@ export const api = {
     get<FileReviewState>(`${location(project, repository)}/pull-requests/${id}/file-reviews`),
   setFileReviewed: (project: string, repository: string, id: number, update: FileReviewUpdate) =>
     put<FileReviewResult>(`${location(project, repository)}/pull-requests/${id}/file-reviews`, update),
-  setReadingPath: (project: string, repository: string, id: number, paths: string[]) =>
-    put<ReadingPathState>(`${location(project, repository)}/pull-requests/${id}/reading-path`, { paths }),
+  setReadingPath: (project: string, repository: string, id: number, paths: string[],
+    position?: number, headCommitSha?: string | null) =>
+    put<ReadingPathState>(`${location(project, repository)}/pull-requests/${id}/reading-path`,
+      { paths, position, headCommitSha }),
   fileReviewProgress: (project: string, repository: string) =>
     get<FileReviewProgress[]>(`${location(project, repository)}/pull-requests/file-review-progress`),
   setDebugNote: (project: string, repository: string, id: number, note: string) =>

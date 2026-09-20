@@ -39,7 +39,11 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
                 row.Organization == organization && row.Project == project &&
                 row.RepositoryId == repositoryId && row.PullRequestId == pullRequestId, ct);
 
-        var readingPath = pathRow is null ? [] : ReadPaths(pathRow.PathsJson);
+        var paths = pathRow is null ? [] : ReadPaths(pathRow.PathsJson);
+        // A stored position past the end of a shortened path would resume nowhere, so it
+        // is clamped on read rather than trusted.
+        var readingPath = new ReadingPathState(
+            paths, Math.Clamp(pathRow?.Position ?? 0, 0, paths.Count), pathRow?.HeadCommitSha, pathRow?.UpdatedAt);
         DateTimeOffset? updatedAt = files.Count == 0 ? null : files.Max(file => file.UpdatedAt);
         if (pathRow is not null && (updatedAt is null || pathRow.UpdatedAt > updatedAt))
             updatedAt = pathRow.UpdatedAt;
@@ -102,15 +106,21 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
     }
 
     public async Task<ReadingPathState> SetReadingPathAsync(
-        string project, string repositoryId, int pullRequestId, IReadOnlyList<string>? paths, CancellationToken ct)
+        string project, string repositoryId, int pullRequestId, ReadingPathUpdate update, CancellationToken ct)
     {
         var organization = ValidateKey(project, repositoryId, pullRequestId);
+        ArgumentNullException.ThrowIfNull(update);
+        var paths = update.Paths;
         if (paths is null) throw new ChecklistException("Specify the reading path.", 400);
         if (paths.Count > MaxReadingPath)
             throw new ChecklistException($"The reading path holds at most {MaxReadingPath} files.", 400);
         var validated = paths.Select(ValidatePath).ToArray();
         if (validated.Distinct(StringComparer.Ordinal).Count() != validated.Length)
             throw new ChecklistException("The reading path contains a duplicate file.", 400);
+        var position = update.Position ?? 0;
+        if (position < 0 || position > validated.Length)
+            throw new ChecklistException("Invalid position in the reading path.", 400);
+        var headSha = ValidateSha(update.HeadCommitSha, "commit sha");
 
         var row = await context.ReadingPaths.FirstOrDefaultAsync(entry =>
             entry.Organization == organization && entry.Project == project &&
@@ -128,9 +138,11 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
         }
 
         row.PathsJson = JsonSerializer.Serialize(validated, JsonOptions);
+        row.Position = position;
+        row.HeadCommitSha = headSha;
         row.UpdatedAt = DateTimeOffset.UtcNow;
         await context.SaveChangesAsync(ct);
-        return new ReadingPathState(validated, row.UpdatedAt);
+        return new ReadingPathState(validated, position, headSha, row.UpdatedAt);
     }
 
     public async Task<IReadOnlyList<FileReviewProgress>> GetProgressAsync(

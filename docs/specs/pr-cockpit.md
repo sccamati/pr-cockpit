@@ -793,10 +793,10 @@ z konfiguracji serwera — nie z przeglądarki.
 
 ### 8.3 Ten sam wskaźnik policzony inaczej [FAKT]
 
-- **„Nieaktualność" ma trzy różne definicje** (NIESP-04): dla znacznika „Obejrzałem" —
-  per plik, po identyfikatorze treści; dla Summary — per PR, po commicie głowy; dla wyjaśnienia
-  pliku — per plik, ale **po commicie głowy PR**, więc dorzucenie commita do zupełnie innego
-  pliku unieważnia wyjaśnienia **wszystkich** plików.
+- **„Nieaktualność" ma dwie definicje** (NIESP-04, zamknięte): per plik, po identyfikatorze
+  treści — dla znacznika „Obejrzałem" i dla wyjaśnienia pliku; per PR, po commicie głowy —
+  dla Summary, które opisuje cały PR. Wariantem zapasowym obu reguł per plik jest commit
+  głowy, gdy identyfikatora treści nie da się ustalić.
 - **Postęp czytania jest liczony dwa razy z dwóch źródeł** (NIESP-06): w otwartym PR —
   z bieżącej listy zmienionych plików; na liście PR — z liczby zapamiętanej w momencie
   ostatniego oznaczenia. Oba mogą pokazywać inny mianownik dla tego samego PR.
@@ -1067,17 +1067,18 @@ w pliku wygląda na zepsuty przycisk.
 **→ Decyzja:** czy dla takiego wątku pokazywać blok dokowany nad diffem (najmniejsza zmiana),
 czy kotwiczyć go przy najbliższej linii po stronie „po zmianie", czy wyłączyć dla niego chip.
 
-**NIESP-04 — Trzy różne definicje „nieaktualności" w jednej aplikacji.**
-*Obserwacja:*
+**NIESP-04 — ~~Trzy~~ dwie definicje „nieaktualności" w jednej aplikacji.** **[ZAMKNIĘTE
+20 wrz 2026, US-P2]**
+*Obserwacja (stan sprzed poprawki):*
 - znacznik „Obejrzałem" → per plik, po **identyfikatorze treści pliku**;
 - Summary → per PR, po **commicie głowy** (poprawne, bo Summary opisuje cały PR);
 - wyjaśnienie pojedynczego pliku → per plik, ale porównywane po **commicie głowy PR**.
-*Skutek:* po dorzuceniu commita zmieniającego jeden plik: znaczniki „Obejrzałem" pozostają
+*Skutek:* po dorzuceniu commita zmieniającego jeden plik znaczniki „Obejrzałem" pozostawały
 w mocy dla pozostałych plików (poprawnie), ale **wszystkie zapisane wyjaśnienia plików**
-stają się nieaktualne i zostaną wygenerowane od nowa przy następnym kliknięciu — także dla
-plików, których nikt nie dotknął. To ten sam błąd, który świadomie odrzucono przy znacznikach.
-**→ Decyzja:** czy ujednolicić wyjaśnienie pliku do identyfikatora treści (spójnie ze
-znacznikiem), czy uznać koszt ponownego generowania za akceptowalny i udokumentować różnicę.
+stawały się nieaktualne.
+**→ Rozstrzygnięcie:** wyjaśnienie pliku zostało ujednolicone do identyfikatora treści, tą
+samą regułą co znacznik (wariant zapasowy: commit głowy, gdy identyfikatora nie ma). Zostają
+**dwie** definicje: per plik i per PR — ta druga tylko dla Summary, które opisuje cały PR.
 
 **NIESP-05 — Licznik `Plik X z Y` liczy w innej kolejności niż nawigacja.** **[DEFEKT]**
 *Obserwacja:* `X` to pozycja pliku na liście zwróconej przez Azure DevOps. Klawisze `j`/`k`,
@@ -1177,15 +1178,16 @@ miękkie (komentarz zostaje w wątku bez treści), a obie akcje wymagają dwóch
 | Pojęcie | Gdzie użyte | Co znaczy | Kolizja / uwaga |
 |---|---|---|---|
 | **Obejrzałem / przeczytany** | drzewo plików, licznik, filtr | ręczna decyzja użytkownika, że przeczytał ten plik | **Nie** znaczy „otwarty" — otwarcie pliku niczego nie oznacza |
-| **Nieaktualny** | znacznik pliku, Summary, wyjaśnienie pliku | „to, co zapisano, opisuje inną wersję kodu" | Trzy różne sposoby liczenia — NIESP-04 |
+| **Nieaktualny** | znacznik pliku, Summary, wyjaśnienie pliku | „to, co zapisano, opisuje inną wersję kodu" | **Dwa** sposoby liczenia: per plik (znacznik, wyjaśnienie) i per PR (Summary) — NIESP-04 zamknięte |
 | **Nieobejrzany** | filtr, „następny nieobejrzany", licznik | nieprzeczytany **albo** nieaktualny | Plik nieaktualny liczy się jako nieobejrzany, ale ma własną odznakę |
 | **Kluczowy plik** | ścieżka czytania (ręczna) | plik wybrany przez użytkownika do ścieżki czytania | Inne niż „plik krytyczny" |
 | **Plik krytyczny** | ranking z Summary | plik **zaproponowany** przez AI | **Propozycja**, nie decyzja; nie trafia do ścieżki czytania bez akceptacji |
 | **Szum** | drzewo plików, pakiet dla AI | plik, którego reviewer prawie nigdy nie czyta | Ta sama reguła służy do dwóch różnych celów — świadomie |
 | **Rozwiązany** (wątek) | widok komentarzy, liczniki, odznaki | status *naprawiony*, *nie naprawimy* albo *zamknięty* | Wątek **bez statusu** liczy się jako czekający, nie jako rozwiązany |
 | **Iteracja** | etykieta „kod zmienił się po tym komentarzu", porównanie od iteracji | jedno wypchnięcie zmian do PR (pojęcie Azure DevOps) | Z przeglądarki przychodzi **numer** iteracji, nigdy identyfikator commita |
-| **Commit głowy** | aktualność Summary, wariant zapasowy znacznika | szczyt gałęzi źródłowej w ostatniej iteracji PR | Zmienia się przy każdym wypchnięciu — stąd NIESP-04 |
-| **Identyfikator treści pliku** | reguła nieaktualności znacznika | identyfikator zawartości pliku w danej iteracji | Zmienia się **wtedy i tylko wtedy**, gdy zmieniła się treść tego pliku |
+| **Commit głowy** | aktualność Summary, wariant zapasowy reguł per plik, znacznik czasu ścieżki | szczyt gałęzi źródłowej w ostatniej iteracji PR | Zmienia się przy każdym wypchnięciu — stąd NIESP-04 |
+| **Identyfikator treści pliku** | reguła nieaktualności znacznika **i wyjaśnienia pliku** | identyfikator zawartości pliku w danej iteracji | Zmienia się **wtedy i tylko wtedy**, gdy zmieniła się treść tego pliku |
+| **Przejście** | ekran wejścia, tryb przejścia, domknięcie | prowadzone czytanie ścieżki plik po pliku, z własnym licznikiem | **Dodatkowa** droga obok drzewa, nie zamiennik; licznik liczy po ścieżce, nie po liście z Azure DevOps |
 | **Kontekst** | panel Summary („Kontekst: a / b plików") | pakiet danych przekazany modelowi, po zastosowaniu budżetów | Nie mylić z „kontekstem aplikacji" z opisu problemu produktowego |
 | **Checklista** | nagłówek, szyna, lista PR | sześć ręcznych kroków, bez żadnej logiki między nimi | `Ready` **nie** zmienia się automatycznie i **nie** jest głosem reviewera |
 | **Summary** | szyna, lista propozycji | 2–5 zdań o PR + ranking do 10 plików | Jedna z dwóch ścieżek AI; druga to wyjaśnienie pojedynczego pliku |

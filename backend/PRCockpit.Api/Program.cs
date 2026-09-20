@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using PRCockpit.Application.Analysis;
 using PRCockpit.Application.Ports;
@@ -7,6 +7,7 @@ using PRCockpit.Domain.Analysis;
 using PRCockpit.Domain.PullRequests;
 using PRCockpit.Domain.Review;
 using PRCockpit.Infrastructure;
+using PRCockpit.Api;
 using PRCockpit.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +16,18 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddScoped<PullRequestContextService>();
 builder.Services.AddScoped<SummaryService>();
 builder.Services.AddScoped<FileExplanationService>();
+
+// No authentication, by decision (D-01) — so the port is not offered to the network.
+var remote = LocalOnly.RemoteAddresses(builder.Configuration);
+if (remote.Count > 0)
+{
+    if (!builder.Configuration.GetValue(LocalOnly.OverrideKey, false))
+    {
+        Console.Error.WriteLine(LocalOnly.Refusal(remote));
+        return 1;
+    }
+    Console.WriteLine(LocalOnly.Warning);
+}
 
 var app = builder.Build();
 
@@ -151,9 +164,10 @@ api.MapPut($"{PullRequests}/{{pullRequestId:int}}/file-reviews", async (
 api.MapPut($"{PullRequests}/{{pullRequestId:int}}/reading-path", async (
     string project, string repositoryId, int pullRequestId, ReadingPathUpdate update,
     IReviewProgressStore store, CancellationToken ct) =>
-    await Execute(() => store.SetReadingPathAsync(project, repositoryId, pullRequestId, update.Paths, ct)));
+    await Execute(() => store.SetReadingPathAsync(project, repositoryId, pullRequestId, update, ct)));
 
 app.Run();
+return 0;
 
 // Every failure kind is mapped here rather than in a try/catch per endpoint, so a new one
 // has exactly one place to be handled.

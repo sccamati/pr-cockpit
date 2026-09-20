@@ -74,6 +74,29 @@ const lastFilePath = ref('')
 const monacoComponent = shallowRef<Component | null>(null)
 const focusMode = ref(false)
 const sideBySide = ref(false)
+
+// --- Przejście (the guided walkthrough) ---
+// ponytail: the brief calls these configuration. A one-person local tool has no settings
+// file, so they are named constants here; a settings screen is the upgrade path.
+const walkDefaultLength = 8   // US-P3: the ranking offers up to 10, the walkthrough takes 8
+const walkParallelPrefetch = 2 // US-P5: explanations generated at once
+// 'tree' is everything that existed before the walkthrough; the other three are its screens.
+const view = ref<'tree' | 'entry' | 'walk' | 'done'>('tree')
+const walkPosition = ref(0)
+// The pull request head at the moment the path was chosen. Null means the path was built
+// in the rail rather than by a walkthrough, and no resume is offered for it.
+const walkHeadSha = ref<string | null>(null)
+const walkSkipped = ref<string[]>([])
+// The entry screen's own selection, before the path is written. Null means "not touched",
+// so the default follows the ranking as it arrives.
+const walkPicked = ref<string[] | null>(null)
+const walkResumeDismissed = ref(false)
+// Explanations held for the whole pull request, which is what makes the walkthrough feel
+// instant: the prefetch fills this, and opening a file reads from it (US-P5).
+const explanationCache = ref<Record<string, FileExplanation>>({})
+const prefetchErrors = ref<Record<string, string>>({})
+let prefetchToken = 0
+let prefetchAbort: AbortController | null = null
 const helpDialog = ref<HTMLDialogElement | null>(null)
 // ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
 // dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
@@ -147,8 +170,12 @@ function toTreeFile(file: ChangedFile): TreeFile {
 // until the user accepts it, so nothing is written to the reading path behind their back.
 const proposalDismissed = ref(false)
 const criticalProposal = computed(() => {
-  const paths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
-  return (summary.value?.criticalFiles ?? []).filter(file => paths.has(file.path)).slice(0, 10)
+  // US-P3: a file classified as noise never enters the AI proposal. It can still be added
+  // by hand from the tree, which is the whole difference between a proposal and a rule.
+  const paths = new Map((details.value?.changedFiles ?? []).map(file => [file.path, file]))
+  return (summary.value?.criticalFiles ?? [])
+    .filter(file => paths.get(file.path) && !paths.get(file.path)!.category)
+    .slice(0, 10)
 })
 const showProposal = computed(() =>
   criticalProposal.value.length > 0 && !proposalDismissed.value && criticalPaths.value.length === 0)
@@ -630,9 +657,15 @@ function acceptProposal() {
   proposalDismissed.value = true
 }
 
+function explanationHint(path: string): string {
+  return prefetchErrors.value[path] ?? ''
+}
+
 // Optimistic with rollback, the same shape as setChecklistItem: the request id is captured
 // without incrementing, because this is a mutation of the current generation, not a load.
-async function saveReadingPath(paths: string[]) {
+// The position travels with the path: editing the path from the rail is a new path, so it
+// starts from zero, while the walkthrough passes the place it has reached (US-P7).
+async function saveReadingPath(paths: string[], position = 0) {
   if (!details.value) return
   const current = reviewRequestId
   const previous = readingPath.value
@@ -642,7 +675,7 @@ async function saveReadingPath(paths: string[]) {
   readingPath.value = paths
   fileReviewError.value = ''
   try {
-    const result = await api.setReadingPath(project, repository, id, paths)
+    const result = await api.setReadingPath(project, repository, id, paths, position, walkHeadSha.value)
     if (current === reviewRequestId) readingPath.value = result.paths
   } catch (cause) {
     if (current === reviewRequestId) {
@@ -650,6 +683,173 @@ async function saveReadingPath(paths: string[]) {
       fileReviewError.value = message(cause)
     }
   }
+}
+
+// ---------- Przejście: what the walkthrough is made of ----------
+// Only code files count: a pull request that is five sources plus a lockfile is small.
+const codeFileCount = computed(() =>
+  (details.value?.changedFiles ?? []).filter(file => !file.category).length)
+// US-P3: below this, the proposal screen would cost more than the wall of files it saves.
+const walkWorthwhile = computed(() => codeFileCount.value > 5)
+// The accepted path, already filtered to files that are still in the pull request, so a
+// file dropped by a new iteration leaves no dead row (US-P4).
+const walkPaths = computed(() => criticalPaths.value)
+const walkFilePath = computed(() => walkPaths.value[walkPosition.value] ?? '')
+const walkFinished = computed(() =>
+  walkPaths.value.length > 0 && walkPosition.value >= walkPaths.value.length)
+// A path with no head SHA was built in the rail, not by a walkthrough, so nothing is
+// offered to resume for it.
+const walkResumable = computed(() =>
+  walkHeadSha.value !== null && walkPaths.value.length > 0 && !walkFinished.value)
+const walkChangedSincePicked = computed(() =>
+  walkHeadSha.value !== null && details.value?.headCommitSha != null &&
+  !same(walkHeadSha.value, details.value.headCommitSha))
+const walkReadCount = computed(() => walkPaths.value.filter(path => isReviewed(path)).length)
+const walkSkippedPaths = computed(() => walkPaths.value.filter(path => walkSkipped.value.includes(path)))
+// The entry screen's list: the ranking by default, minus what has already been read, cut
+// to the configured length. Once the user touches it, their version is the list.
+const walkDefaultPick = computed(() => criticalProposal.value
+  .filter(file => reviewState(file.path) !== 'current')
+  .slice(0, walkDefaultLength)
+  .map(file => file.path))
+const walkPick = computed(() => walkPicked.value ?? walkDefaultPick.value)
+const walkPickSet = computed(() => new Set(walkPick.value))
+// On the entry screen "the rest" is measured against what is selected, because the path
+// is not written yet; everywhere after that, against the path itself.
+const walkInsideSet = computed(() => view.value === 'entry' ? walkPickSet.value : criticalPathSet.value)
+const walkOutsideCount = computed(() =>
+  Math.max(0, (details.value?.changedFiles.length ?? 0) - walkInsideSet.value.size))
+const walkOutsideNoiseCount = computed(() =>
+  (details.value?.changedFiles ?? []).filter(file => file.category && !walkInsideSet.value.has(file.path)).length)
+// Every file the entry screen can offer: the ranking plus anything already in the path.
+const walkCandidates = computed(() => {
+  const paths = [...criticalProposal.value.map(file => file.path), ...walkPick.value]
+  return [...new Set(paths)]
+})
+
+function toggleWalkPick(path: string) {
+  const current = walkPick.value
+  walkPicked.value = current.includes(path)
+    ? current.filter(item => item !== path)
+    : [...current, path]
+}
+
+function enterWalkthrough() {
+  if (!walkWorthwhile.value) return
+  walkPicked.value = null
+  walkResumeDismissed.value = false
+  view.value = 'entry'
+}
+
+function leaveWalkthrough() {
+  view.value = 'tree'
+  cancelPrefetch()
+}
+
+// US-P3: accepting is what turns a proposal into a reading path, and the path is what the
+// walkthrough walks. Nothing here happens without the click.
+async function startWalkthrough(paths: string[] = walkPick.value) {
+  if (paths.length === 0) return
+  walkSkipped.value = []
+  walkPosition.value = 0
+  walkHeadSha.value = details.value?.headCommitSha ?? null
+  view.value = 'walk'
+  await saveReadingPath(paths, 0)
+  const first = walkPaths.value[0]
+  if (first) await openFile(first)
+  void prefetchExplanations()
+}
+
+function resumeWalkthrough() {
+  view.value = 'walk'
+  const path = walkFilePath.value
+  if (path) void openFile(path)
+  void prefetchExplanations()
+}
+
+async function goToWalkIndex(index: number) {
+  const paths = walkPaths.value
+  const next = Math.min(Math.max(index, 0), paths.length)
+  walkPosition.value = next
+  void saveReadingPath(paths, next)
+  if (next >= paths.length) {
+    view.value = 'done'
+    cancelPrefetch()
+    return
+  }
+  await openFile(paths[next]!)
+}
+
+// The main action of the walkthrough: this file is read, show me the next one. Marking is
+// local, so a broken connection to Azure DevOps cannot lose it.
+async function walkAdvance(markRead: boolean) {
+  const path = walkFilePath.value
+  if (!path) return
+  if (markRead) {
+    if (!isReviewed(path)) await setFileReviewed(path, true)
+    walkSkipped.value = walkSkipped.value.filter(item => item !== path)
+  } else if (!walkSkipped.value.includes(path)) {
+    walkSkipped.value = [...walkSkipped.value, path]
+  }
+  await goToWalkIndex(walkPosition.value + 1)
+}
+
+function walkBack() {
+  if (walkPosition.value === 0) return
+  void goToWalkIndex(walkPosition.value - 1)
+}
+
+// US-P6: the skipped files are the reason to come back, so one action returns to one.
+function returnToSkipped(path: string) {
+  const index = walkPaths.value.indexOf(path)
+  if (index < 0) return
+  view.value = 'walk'
+  void goToWalkIndex(index)
+}
+
+function cancelPrefetch() {
+  ++prefetchToken
+  prefetchAbort?.abort()
+  prefetchAbort = null
+}
+
+// US-P5: the explanations of the path are generated in the background in path order, so
+// the model is never waited for while reading. Leaving the pull request or the walkthrough
+// stops it; whatever already came back is saved by the backend either way.
+async function prefetchExplanations() {
+  const id = details.value?.id
+  if (!id) return
+  cancelPrefetch()
+  const token = prefetchToken
+  const controller = prefetchAbort = new AbortController()
+  const project = projectId.value
+  const repository = repositoryId.value
+  // Files whose explanation is already in hand cost nothing and are not asked for again.
+  const queue = walkPaths.value.filter(path => !explanationCache.value[path])
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < queue.length && token === prefetchToken) {
+      const path = queue[cursor++]!
+      try {
+        const result = await api.explainFile(project, repository, id, path, controller.signal)
+        if (token !== prefetchToken) return
+        explanationCache.value = { ...explanationCache.value, [path]: result }
+        const { [path]: _dropped, ...rest } = prefetchErrors.value
+        prefetchErrors.value = rest
+        // Arrived while its file is on screen: it appears where the waiting state was,
+        // without reloading anything.
+        if (selectedFilePath.value === path) {
+          explanation.value = result
+          explanationLoading.value = false
+        }
+      } catch (cause) {
+        if (token !== prefetchToken || controller.signal.aborted) return
+        // One file failing is one file: the rest of the path carries on.
+        prefetchErrors.value = { ...prefetchErrors.value, [path]: message(cause) }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: walkParallelPrefetch }, () => worker()))
 }
 
 function openCriticalFile(path: string) {
@@ -748,10 +948,14 @@ async function loadSavedSummary(project: string, repository: string, id: number)
   summaryReadError.value = ''
   try {
     const stored = await api.savedSummary(project, repository, id)
-    if (current === summaryRequestId && stored) {
+    if (current !== summaryRequestId) return
+    if (stored) {
       summary.value = stored.result
       summarySavedAt.value = stored.savedAt
     }
+    // US-P1: nothing to click. A saved result stays on screen while the new one is made,
+    // and a stale one is regenerated because the ranking is what the walkthrough proposes.
+    if (!stored || summaryFreshness.value === 'stale') void generateSummary()
   } catch (cause) {
     if (current === summaryRequestId) summaryReadError.value = message(cause)
   } finally {
@@ -811,6 +1015,18 @@ function resetChecklistProgress() {
   progressError.value = ''
 }
 
+function resetWalkthrough() {
+  cancelPrefetch()
+  view.value = 'tree'
+  walkPosition.value = 0
+  walkHeadSha.value = null
+  walkSkipped.value = []
+  walkPicked.value = null
+  walkResumeDismissed.value = false
+  explanationCache.value = {}
+  prefetchErrors.value = {}
+}
+
 function resetFileReviews() {
   ++reviewRequestId
   fileReviews.value = {}
@@ -831,7 +1047,12 @@ async function loadFileReviews(project: string, repository: string, id: number) 
     const result = await api.fileReviews(project, repository, id)
     if (current !== reviewRequestId) return
     fileReviews.value = Object.fromEntries(result.files.map(entry => [entry.path, entry]))
-    readingPath.value = result.readingPath
+    readingPath.value = result.readingPath.paths
+    walkPosition.value = result.readingPath.position
+    walkHeadSha.value = result.readingPath.headCommitSha
+    // US-P7: a walkthrough taken to its end is done with. Reopening the pull request lands
+    // on the ordinary screen, with nothing offered to resume.
+    if (walkHeadSha.value !== null && walkFinished.value) view.value = 'tree'
     resumeAtFirstUnread()
   } catch (cause) {
     if (current === reviewRequestId) fileReviewError.value = message(cause)
@@ -840,6 +1061,9 @@ async function loadFileReviews(project: string, repository: string, id: number) 
 
 // Picks up where the last session stopped instead of opening on an empty panel.
 function resumeAtFirstUnread() {
+  // The entry screen is the start of the pull request when there is one; opening a file
+  // behind it would only mean the user finds a diff waiting when they leave it.
+  if (view.value !== 'tree') return
   if (selectedFilePath.value || reviewedPaths.value.length === 0) return
   const next = nextUnreviewedPath.value
   if (next) void openFile(next)
@@ -1028,6 +1252,7 @@ async function openPullRequest(id: number) {
   resetSummary()
   resetChecklist()
   resetFileReviews()
+  resetWalkthrough()
   resetThreads()
   details.value = null
   error.value = ''
@@ -1036,6 +1261,9 @@ async function openPullRequest(id: number) {
     const result = await api.pullRequest(projectId.value, repositoryId.value, id)
     if (current === requestId) {
       details.value = result
+      // US-P3: a pull request big enough to get lost in opens on the proposal, not on the
+      // tree. The tree is one click away and everything in it still works.
+      if (walkWorthwhile.value) view.value = 'entry'
       void loadChecklist(projectId.value, repositoryId.value, id)
       void loadSavedSummary(projectId.value, repositoryId.value, id)
       void loadFileReviews(projectId.value, repositoryId.value, id)
@@ -1091,6 +1319,7 @@ async function explainFile() {
     const result = await api.explainFile(projectId.value, repositoryId.value, pullRequestId, path)
     if (current !== diffRequestId) return
     explanation.value = result
+    explanationCache.value = { ...explanationCache.value, [path]: result }
   } catch (cause) {
     if (current === diffRequestId) explanationError.value = message(cause)
   } finally {
@@ -1119,6 +1348,10 @@ async function openFile(path: string, sinceIteration?: number) {
   collapsedZones.value = new Set()
   if (lineDraft.value !== null) draft.value = null
   resetExplanation()
+  // Prefetched ahead of the reader (US-P5), so the sentences are simply there.
+  const cached = explanationCache.value[path]
+  if (cached) explanation.value = cached
+  else if (prefetchErrors.value[path]) explanationError.value = prefetchErrors.value[path]!
   fileDiff.value = null
   monacoComponent.value = null
   diffError.value = ''
@@ -1150,6 +1383,7 @@ function backToList() {
   resetSummary()
   resetChecklist()
   resetFileReviews()
+  resetWalkthrough()
   details.value = null
   error.value = ''
   loading.value = false
@@ -1251,6 +1485,12 @@ function focusSearch() {
 }
 
 function stepFile(offset: 1 | -1) {
+  // In the walkthrough j/k move along the path, not along the tree — same keys, the list
+  // under them is the one on screen.
+  if (view.value === 'walk') {
+    void goToWalkIndex(walkPosition.value + offset)
+    return
+  }
   const paths = orderedPaths.value
   if (paths.length === 0) return
   const index = paths.indexOf(selectedFilePath.value)
@@ -1266,6 +1506,10 @@ function stepFile(offset: 1 | -1) {
 // toggleReviewed writes synchronously, so the computed below it re-evaluates against
 // the new state on the next line. That ordering is what the keyboard test pins.
 function markAndAdvance() {
+  if (view.value === 'walk') {
+    void walkAdvance(true)
+    return
+  }
   if (!selectedFilePath.value) return
   if (!fileDiff.value && !isReviewed(selectedFilePath.value)) return
   if (!isReviewed(selectedFilePath.value)) toggleReviewed()
@@ -1282,6 +1526,8 @@ function escapeLayer() {
   else if (inlineThreadId.value !== null) closeInlineComments()
   else if (commentsOpen.value) commentsOpen.value = false
   else if (focusMode.value) focusMode.value = false
+  else if (view.value === 'walk' || view.value === 'done') leaveWalkthrough()
+  else if (view.value === 'entry') view.value = 'tree'
   else backToList()
 }
 
@@ -1415,9 +1661,102 @@ onMounted(async () => {
             @click="toggleHelp">?</button>
         </div>
 
+        <!-- US-P3. Opening a pull request of 83 files on a tree of 83 files is the problem
+             this screen exists for: one sentence, eight files, one decision. -->
+        <section v-if="view === 'entry'" class="walk-entry" aria-label="Wejście w przejście">
+          <div class="walk-entry-summary">
+            <h3>Co się zmieniło</h3>
+            <p v-if="summaryLoading || summaryReadLoading" class="notice" role="status">Przygotowuję propozycję ścieżki…</p>
+            <template v-else-if="summary">
+              <div v-if="summary.sentences?.length" class="summary-text">
+                <p v-for="(sentence, index) in summary.sentences" :key="index" :class="{ 'summary-lead': index === 0 }">{{ sentence }}</p>
+              </div>
+              <p v-else class="summary-text">{{ summary.summary }}</p>
+              <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem</p>
+            </template>
+            <p v-else class="notice error" role="alert">
+              Propozycja ścieżki jest niedostępna{{ summaryError ? `: ${summaryError}` : '.' }}
+              <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Spróbuj ponownie</button>
+            </p>
+          </div>
+
+          <!-- US-P7: an interrupted walkthrough is offered back before anything is recomputed. -->
+          <div v-if="walkResumable && !walkResumeDismissed" class="walk-resume">
+            <p><strong>Przerwane przejście</strong> — plik {{ walkPosition + 1 }} z {{ walkPaths.length }}.</p>
+            <p v-if="walkChangedSincePicked" class="notice walk-changed" role="status">
+              PR zmienił się od czasu wyboru ścieżki. Możesz wznowić dotychczasową albo przeliczyć propozycję — nic nie kasuję bez Twojej decyzji.
+            </p>
+            <div class="walk-actions">
+              <button type="button" class="walk-primary" @click="resumeWalkthrough">Wznów od pliku {{ walkPosition + 1 }}</button>
+              <button type="button" @click="walkResumeDismissed = true">Przelicz propozycję</button>
+              <button type="button" @click="view = 'tree'">Pełne drzewo plików</button>
+            </div>
+          </div>
+
+          <template v-else>
+            <div class="walk-entry-files">
+              <h3>Proponowana ścieżka ({{ walkPick.length }})</h3>
+              <p v-if="walkCandidates.length === 0" class="muted">
+                Ranking nie wskazał plików. Wejdź w pełne drzewo albo dodaj pliki ręcznie ze ścieżki w prawej szynie.
+              </p>
+              <ul v-else class="walk-file-list">
+                <li v-for="path in walkCandidates" :key="path" :class="{ 'walk-file--off': !walkPickSet.has(path) }">
+                  <label class="walk-file-pick">
+                    <input type="checkbox" :checked="walkPickSet.has(path)" @change="toggleWalkPick(path)">
+                    <span class="walk-file-path" :title="path">{{ fileName(path) }}<small>{{ fileDirectory(path) }}</small></span>
+                  </label>
+                  <span v-if="roleByPath.get(path)" class="walk-file-role">{{ roleByPath.get(path) }}</span>
+                  <span v-if="reviewState(path) === 'current'" class="walk-file-read">przeczytany</span>
+                </li>
+              </ul>
+            </div>
+            <p class="walk-entry-rest">
+              Poza przejściem zostaje {{ walkOutsideCount }} {{ walkOutsideCount === 1 ? 'plik' : 'plików' }}<template v-if="walkOutsideNoiseCount">, w tym {{ walkOutsideNoiseCount }} {{ walkOutsideNoiseCount === 1 ? 'zaklasyfikowany' : 'zaklasyfikowanych' }} jako szum</template>.
+            </p>
+            <div class="walk-actions">
+              <button type="button" class="walk-primary" :disabled="walkPick.length === 0" @click="startWalkthrough()">Rozpocznij przejście ({{ walkPick.length }})</button>
+              <button type="button" @click="view = 'tree'">Pełne drzewo plików</button>
+            </div>
+          </template>
+        </section>
+
+        <!-- US-P6. One question, one decision, and the walkthrough has an end. -->
+        <section v-else-if="view === 'done'" class="walk-done" aria-label="Domknięcie przejścia">
+          <h3>Przejście zamknięte</h3>
+          <p class="walk-done-counts">
+            Przeczytane: <strong>{{ walkReadCount }}</strong> z {{ walkPaths.length }} ·
+            Pominięte: <strong>{{ walkSkippedPaths.length }}</strong> ·
+            Poza ścieżką: <strong>{{ walkOutsideCount }}</strong>
+          </p>
+          <div v-if="walkSkippedPaths.length" class="walk-skipped">
+            <h4>Pominięte pliki</h4>
+            <ul class="walk-file-list">
+              <li v-for="path in walkSkippedPaths" :key="path">
+                <button type="button" class="critical-open" :title="path" @click="returnToSkipped(path)">{{ fileName(path) }}<small>{{ fileDirectory(path) }}</small></button>
+              </li>
+            </ul>
+          </div>
+          <div class="walk-debug">
+            <label class="debug-label" for="walk-debug-answer">Gdzie zacząłbyś szukać, gdyby to nie zadziałało?</label>
+            <textarea id="walk-debug-answer" v-model="debugAnswer" class="debug-answer" rows="3" :maxlength="2000"></textarea>
+            <div class="debug-actions">
+              <button type="button" :disabled="debugSaving" @click="saveDebugAnswer">{{ debugSaving ? 'Zapisywanie…' : 'Zapisz odpowiedź' }}</button>
+              <span v-if="debugSaved" class="muted" role="status">Zapisano.</span>
+              <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
+            </div>
+            <ul v-if="showDebugHint" class="debug-hint">
+              <li v-for="file in criticalProposal" :key="file.path"><code>{{ file.path }}</code> — {{ file.why }}</li>
+            </ul>
+          </div>
+          <div class="walk-actions">
+            <button type="button" class="walk-primary" @click="leaveWalkthrough">Zejdź do pozostałych plików</button>
+            <button type="button" @click="backToList">Zakończ ten PR</button>
+          </div>
+        </section>
+
         <!-- Writing switched off in the backend: the actions are not disabled but absent,
              because a row of five greyed-out buttons is noise, not information. -->
-        <div class="pr-workspace" :class="{ 'pr-workspace--focus': focusMode, 'pr-workspace--readonly': !commentsEnabled }">
+        <div v-else class="pr-workspace" :class="{ 'pr-workspace--focus': focusMode, 'pr-workspace--walk': view === 'walk', 'pr-workspace--readonly': !commentsEnabled }">
           <div class="file-list-pane">
             <div class="file-list-head">
               <div class="file-review-heading">
@@ -1442,6 +1781,7 @@ onMounted(async () => {
                 <button type="button" :aria-pressed="!onlyUnreviewed" :class="{ active: !onlyUnreviewed }" @click="onlyUnreviewed = false">Wszystkie</button>
                 <button type="button" :aria-pressed="onlyUnreviewed" :class="{ active: onlyUnreviewed }" @click="onlyUnreviewed = true">Nieobejrzane</button>
               </div>
+              <button v-if="walkWorthwhile" class="walk-enter-button" type="button" @click="enterWalkthrough">Prowadź mnie przez PR</button>
               <button class="next-file-button" type="button" :disabled="!nextUnreviewedPath" @click="openNextUnreviewed">Następny nieobejrzany →</button>
               <p v-if="matchingFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
               <p v-else-if="!nextUnreviewedPath && remainingCount > 0" class="file-list-hint">{{ unreviewedMatches.length === 0 ? 'Brak nieobejrzanych plików w wynikach wyszukiwania.' : 'To ostatni nieobejrzany plik. Oznacz go po przejrzeniu.' }}</p>
@@ -1456,6 +1796,27 @@ onMounted(async () => {
           </div>
 
           <div ref="diffPanel" class="diff-panel">
+            <!-- US-P4. Position in the path, not in the Azure DevOps file list: the
+                 walkthrough counts what it walks. -->
+            <div v-if="view === 'walk'" class="walk-bar">
+              <span class="walk-progress">Plik {{ walkPosition + 1 }} z {{ walkPaths.length }}</span>
+              <progress class="walk-progress-bar" :value="walkPosition" :max="walkPaths.length"
+                aria-label="Postęp przejścia" />
+              <span class="walk-bar-file" :title="walkFilePath">{{ fileName(walkFilePath) }}<small>{{ fileDirectory(walkFilePath) }}</small></span>
+              <span v-if="roleByPath.get(walkFilePath)" class="walk-bar-role">{{ roleByPath.get(walkFilePath) }}</span>
+              <button type="button" class="walk-bar-exit" @click="leaveWalkthrough">Pełne drzewo</button>
+            </div>
+            <!-- The explanation never holds the diff back: when it is not here yet the zone
+                 says so and the code renders regardless (US-P5). -->
+            <details v-if="view === 'walk'" class="walk-explanation" open>
+              <summary>Wyjaśnienie pliku</summary>
+              <p v-if="explanation" class="walk-explanation-text">{{ explanation.sentences.join(' ') }}</p>
+              <p v-else-if="explanationHint(walkFilePath)" class="notice error" role="alert">
+                {{ explanationHint(walkFilePath) }}
+                <button class="checklist-retry" type="button" :disabled="explanationLoading" @click="explainFile">Ponów</button>
+              </p>
+              <p v-else class="muted" role="status">Wyjaśnienie w drodze…</p>
+            </details>
             <section v-if="commentsOpen" class="comments-view" aria-label="Komentarze pull requesta">
               <div class="comments-head">
                 <h3>Komentarze</h3>
@@ -1741,6 +2102,17 @@ onMounted(async () => {
               <p v-if="!details.description" class="muted">Brak opisu.</p>
               <div v-else class="description markdown-body" v-html="descriptionHtml" />
               <p class="diff-placeholder">Wybierz plik z listy, aby zobaczyć jego diff.</p>
+            </div>
+
+            <!-- US-P4 zone 4: reachable without scrolling the diff, so the end of a file is
+                 always one click away. -->
+            <div v-if="view === 'walk'" class="walk-actions walk-actions--sticky">
+              <button type="button" class="walk-primary" @click="walkAdvance(true)">
+                {{ walkPosition + 1 >= walkPaths.length ? 'Przeczytane · zakończ przejście' : 'Przeczytane, dalej (m)' }}
+              </button>
+              <button type="button" @click="walkAdvance(false)">Pomiń</button>
+              <button type="button" :disabled="walkPosition === 0" @click="walkBack">← Wstecz</button>
+              <button type="button" @click="leaveWalkthrough">Wyjdź z przejścia</button>
             </div>
           </div>
 

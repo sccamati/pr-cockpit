@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PRCockpit.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using PRCockpit.Infrastructure.Persistence;
 namespace PRCockpit.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(PrCockpitContext))]
-    partial class PrCockpitContextModelSnapshot : ModelSnapshot
+    [Migration("20260920090158_AddExplanationBlobId")]
+    partial class AddExplanationBlobId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -166,16 +169,9 @@ namespace PRCockpit.Infrastructure.Persistence.Migrations
                     b.Property<int>("PullRequestId")
                         .HasColumnType("int");
 
-                    b.Property<string>("HeadCommitSha")
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)");
-
                     b.Property<string>("PathsJson")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("Position")
-                        .HasColumnType("int");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("datetimeoffset");

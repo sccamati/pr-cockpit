@@ -15,8 +15,8 @@ public sealed class FileExplanationStore(PrCockpitContext context, IConfiguratio
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<StoredFileExplanation?> GetAsync(
-        string project, string repositoryId, int pullRequestId, string path, string? headCommitSha,
-        CancellationToken ct)
+        string project, string repositoryId, int pullRequestId, string path,
+        string? blobId, string? headCommitSha, CancellationToken ct)
     {
         var organization = ValidateKey(project, repositoryId, pullRequestId, path);
         var row = await context.FileExplanations
@@ -25,9 +25,10 @@ public sealed class FileExplanationStore(PrCockpitContext context, IConfiguratio
                 entry.Organization == organization && entry.Project == project &&
                 entry.RepositoryId == repositoryId && entry.PullRequestId == pullRequestId &&
                 entry.FilePath == path, ct);
-        // A row from another head describes a file that has since changed, so it is not an
-        // answer to the current question. Treat it as absent and let it be overwritten.
-        if (row is null || row.HeadCommitSha != headCommitSha) return null;
+        // A row describing other content is not an answer to the current question. Treat it
+        // as absent and let it be overwritten.
+        if (row is null) return null;
+        if (!ContentFreshness.IsCurrent(row.BlobId, blobId, row.HeadCommitSha, headCommitSha)) return null;
 
         try
         {
@@ -43,7 +44,8 @@ public sealed class FileExplanationStore(PrCockpitContext context, IConfiguratio
     }
 
     public async Task<StoredFileExplanation> SaveAsync(
-        string project, string repositoryId, int pullRequestId, FileExplanation result, CancellationToken ct)
+        string project, string repositoryId, int pullRequestId, FileExplanation result,
+        string? blobId, CancellationToken ct)
     {
         var organization = ValidateKey(project, repositoryId, pullRequestId, result.Path);
         var savedAt = DateTimeOffset.UtcNow;
@@ -65,6 +67,7 @@ public sealed class FileExplanationStore(PrCockpitContext context, IConfiguratio
             context.FileExplanations.Add(row);
         }
 
+        row.BlobId = blobId;
         row.HeadCommitSha = result.HeadCommitSha;
         row.ResponseJson = JsonSerializer.Serialize(result, JsonOptions);
         row.SavedAt = savedAt;

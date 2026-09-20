@@ -29,16 +29,19 @@ public interface ISummaryStore
 
 /// <summary>
 /// One explanation per file, so reopening a file costs no model run. Keyed by path; the
-/// head commit is a column, and a row from an older head is simply regenerated over.
+/// file's blob id and the head commit are columns, and a row describing other content is
+/// simply regenerated over. Staleness follows <see cref="ContentFreshness"/>, so one
+/// commit no longer throws away the explanations of files nobody touched (US-P2).
 /// </summary>
 public interface IFileExplanationStore
 {
     Task<StoredFileExplanation?> GetAsync(
-        string project, string repositoryId, int pullRequestId, string path, string? headCommitSha,
-        CancellationToken ct);
+        string project, string repositoryId, int pullRequestId, string path,
+        string? blobId, string? headCommitSha, CancellationToken ct);
 
     Task<StoredFileExplanation> SaveAsync(
-        string project, string repositoryId, int pullRequestId, FileExplanation result, CancellationToken ct);
+        string project, string repositoryId, int pullRequestId, FileExplanation result,
+        string? blobId, CancellationToken ct);
 }
 
 /// <summary>Which files were read, and the order the reviewer wants to read them in.</summary>
@@ -50,7 +53,7 @@ public interface IReviewProgressStore
         string project, string repositoryId, int pullRequestId, FileReviewUpdate update, CancellationToken ct);
 
     Task<ReadingPathState> SetReadingPathAsync(
-        string project, string repositoryId, int pullRequestId, IReadOnlyList<string>? paths, CancellationToken ct);
+        string project, string repositoryId, int pullRequestId, ReadingPathUpdate update, CancellationToken ct);
 
     Task<IReadOnlyList<FileReviewProgress>> GetProgressAsync(
         string project, string repositoryId, CancellationToken ct);

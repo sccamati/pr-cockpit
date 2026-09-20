@@ -60,6 +60,7 @@ public sealed class PrCockpitContext(DbContextOptions<PrCockpitContext> options)
             });
             ScopedColumns(entity);
             entity.Property(row => row.FilePath).HasMaxLength(MaxPathLength).IsRequired();
+            entity.Property(row => row.BlobId).HasMaxLength(ShaLength);
             entity.Property(row => row.HeadCommitSha).HasMaxLength(ShaLength);
             entity.Property(row => row.ResponseJson).IsRequired();
         });
@@ -69,6 +70,7 @@ public sealed class PrCockpitContext(DbContextOptions<PrCockpitContext> options)
             entity.ToTable("pr_reading_paths");
             ScopedKey(entity);
             entity.Property(row => row.PathsJson).IsRequired();
+            entity.Property(row => row.HeadCommitSha).HasMaxLength(ShaLength);
         });
     }
 

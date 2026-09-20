@@ -7,5 +7,12 @@ namespace PRCockpit.Infrastructure.Persistence.Entities;
 public sealed class PrReadingPathRow : PullRequestScopedRow
 {
     public string PathsJson { get; set; } = "";
+
+    /// <summary>How far the walkthrough of this path got, so it can be resumed (US-P7).</summary>
+    public int Position { get; set; }
+
+    /// <summary>The pull request's head when the path was chosen, for "it changed since".</summary>
+    public string? HeadCommitSha { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; }
 }
