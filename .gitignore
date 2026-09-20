@@ -36,3 +36,7 @@ TestResults/
 
 # Unused binary from the initial Vite scaffold
 frontend/src/assets/hero.png
+
+# Local agent tooling
+.claude/
+.codegraph/

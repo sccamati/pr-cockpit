@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
   setThreadStatus: vi.fn(),
   editComment: vi.fn(),
   deleteComment: vi.fn(),
+  config: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -127,6 +128,7 @@ beforeEach(() => {
   api.fileReviews.mockResolvedValue({ files: [], readingPath: [], updatedAt: null })
   api.fileReviewProgress.mockResolvedValue([])
   api.commentThreads.mockResolvedValue([])
+  api.config.mockResolvedValue({ commentsEnabled: true })
   api.setReadingPath.mockImplementation(async (_project, _repository, _id, paths) => ({ paths, updatedAt: null }))
   api.setFileReviewed.mockImplementation(async (_project, _repository, _id, update) => ({
     entry: update.reviewed
@@ -364,6 +366,63 @@ describe('PR review', () => {
     await wrapper.findAll('.thread-location')[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    wrapper.unmount()
+  })
+
+  it('opens a thread from the comments view with its date, and counts it in the header', async () => {
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/second.cs', rightLine: 42, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Jan', content: 'Czy to na pewno tutaj?', commentType: 'text', publishedAt: '2026-09-01T12:00:00Z' }] },
+      { id: 2, status: 'fixed', filePath: '/src/first.cs', rightLine: 3, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Anna', content: 'Poprawione.', commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    // The header carries the unresolved count, because the rail is gone in focus mode.
+    expect(wrapper.find('.pr-header-comments').text()).toContain('1')
+
+    await wrapper.find('.pr-header-comments').trigger('click')
+    expect(wrapper.find('.comments-view').exists()).toBe(true)
+    expect(wrapper.find('.thread-date').text()).not.toBe('')
+
+    // The view sits in the same panel as the diff, so it has to close for the file to show.
+    const location = wrapper.findAll('.comments-view .thread-location').find(item => item.text().startsWith('second.cs'))!
+    await location.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.comments-view').exists()).toBe(false)
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    wrapper.unmount()
+  })
+
+  it('hides every write action when the backend has comments switched off', async () => {
+    api.config.mockResolvedValue({ commentsEnabled: false })
+    api.commentThreads.mockResolvedValue([
+      { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+        comments: [{ id: 1, author: 'Jan', content: 'Do poprawy.', commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.pr-workspace').classes()).toContain('pr-workspace--readonly')
+    await wrapper.find('.comments-open').trigger('click')
+    expect(wrapper.find('.comments-off').exists()).toBe(true)
+    expect(wrapper.find('.thread-new').attributes('disabled')).toBeDefined()
+
+    // Reading is untouched, and a line with no thread no longer offers a box that can only fail.
+    expect(wrapper.text()).toContain('Do poprawy.')
+    await wrapper.find('.comments-close').trigger('click')
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+    wrapper.findComponent({ name: 'MonacoDiff' }).vm.$emit('openLine', 11)
+    await flushPromises()
+    expect(wrapper.find('.zone-card--draft').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -853,6 +912,27 @@ describe('Skróty klawiszowe', () => {
     await buttons[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+    wrapper.unmount()
+  })
+
+  it('peels one layer at a time on Escape instead of leaving the PR', async () => {
+    api.commentThreads.mockResolvedValue([])
+    const wrapper = await openFirstFile()
+    wrapper.findComponent({ name: 'MonacoDiff' }).vm.$emit('openLine', 11)
+    await flushPromises()
+    const draft = wrapper.find('.zone-card--draft textarea')
+    expect(draft.exists()).toBe(true)
+
+    // From inside the draft box, because that is where the key is reached for.
+    press('Escape', draft.element)
+    await flushPromises()
+    expect(wrapper.find('.zone-card--draft').exists()).toBe(false)
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+
+    // Only once nothing is left to close does Escape leave the pull request.
+    press('Escape')
+    await flushPromises()
+    expect(wrapper.find('.pr-row').exists()).toBe(true)
     wrapper.unmount()
   })
 

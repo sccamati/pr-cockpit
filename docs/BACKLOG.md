@@ -306,12 +306,33 @@ Status: zaimplementowane. Prośba użytkownika po obejrzeniu B-20.
 - Treść komentarza to **Markdown**, renderowany tym samym sanityzowanym torem co opis PR (`markdown-it` z `html:false` + DOMPurify). Surowy tekst zamieniał każdy pogrubiony nagłówek i fragment kodu w szum. Znaczniki narzędziowe w rodzaju `<!--review-swarm-->` są usuwane przed renderem, bo przy `html:false` markdown-it by je wypisał. W szynie zostaje jedna linia podglądu ze zdjętą interpunkcją Markdowna.
 - Otwarcie komentarza **przewija diff do jego linii** (`setPosition` + `revealLineInCenter`), inaczej rozmowa zajmowała miejsce, w którym był kod, a linia znikała pod zgięciem.
 - **Komentarze renderują się pomiędzy liniami kodu** (Monaco *view zones*), tak jak w Azure DevOps. Kontener tworzy `MonacoDiff` i oddaje go przez zdarzenie `zones`; treść wjeżdża tam Vue'owym `<Teleport>`, więc odpowiadanie i resolve to zwykły Vue, a nie ręcznie budowany DOM. Wysokość strefy bierze `ResizeObserver` z kontenera. Strefy dodajemy i usuwamy pojedynczo, nigdy hurtowym resetem, i odtwarzamy je po `onDidUpdateDiff`, bo diff editor przelicza wtedy własne strefy (wyrównanie i linie usunięte w widoku w linii). To **odwrócenie zalecenia z PLAN.md §4.5 wariant C** — na prośbę użytkownika, świadomie.
-- Blok jest wyrównany do kodu, nie wcięty w prawo. Zwija się kliknięciem w **cały nagłówek** (caret to podpowiedź, nie jedyny cel), a „Ukryj wszystkie” i przełącznik w pasku wyjmują komentarze z kodu na całą sesję — wracasz do nich przełącznikiem albo żetonem nad diffem. Każdy blok zwija się osobno do jednej linii z podglądem, więc plik z czterema długimi komentarzami nie zamienia się w ścianę tekstu. Plik bez diffu tekstowego (binarny, za duży) nie ma edytora, więc tam zostaje blok dokowany nad diffem.
+- **Blok był nieklikalny.** Monaco dokłada `.view-lines` **po** `.view-zones` (`view.js`), a warstwa linii to bezwzględnie pozycjonowany prostokąt na całą treść — malowała się na komentarzu i przechwytywała każde kliknięcie, stąd kursor tekstowy nad przyciskami. Strefa i tak jest `position:absolute`, więc wystarczyło `z-index: 2` na `.comment-zone`. Testy mockują Monaco, więc **tego nie potwierdza żaden test** — dowodem jest kolejność `appendChild` w źródle Monaco i sprawdzenie w przeglądarce.
+- Blok jest wyrównany do kodu, nie wcięty w prawo. Zwija się kliknięciem w **cały nagłówek** (caret to podpowiedź, nie jedyny cel), a przełącznik „Ukryj komentarze” w pasku wyjmuje je z kodu na całą sesję — wracasz do nich przełącznikiem albo żetonem nad diffem. Każdy blok zwija się osobno do jednej linii z podglądem, więc plik z czterema długimi komentarzami nie zamienia się w ścianę tekstu. Plik bez diffu tekstowego (binarny, za duży) nie ma edytora, więc tam zostaje blok dokowany nad diffem.
 - Wyjaśnienie AI pliku jest teraz **zwijane** (`<details>`) i ma „Ukryj” — czyta się je raz, a trzymało górę panelu przez cały plik.
-- Blok rozmowy nad diffem **nigdy nie ucina treści** — ma własny pasek przewijania i natywne `resize: vertical`, więc to użytkownik decyduje, ile panelu mu oddać. Przycinanie z „Pokaż całość” zostało tylko w widoku listy komentarzy, gdzie kilkanaście długich wątków jest nieczytelne.
+- **Nic nigdzie nie jest ucinane.** Blok rozmowy nad diffem ma własny pasek przewijania i natywne `resize: vertical`. Przycinanie z „Pokaż całość” w widoku listy komentarzy zostało usunięte — rozwijanie każdego wątku z osobna kosztowało więcej niż oszczędzało (informacja zwrotna użytkownika, 20 wrz 2026).
 - Przy kilku komentarzach w pliku blok ma nawigację `‹ ›` i licznik „n z m”, a żetony nad diffem przewijają do swojej linii.
 
-**Nadal niesprawdzony zapis:** `AzureDevOps:AllowComments` nie jest ustawiony, więc założenie wątku, odpowiedź i zmiana statusu kończą się kontrolowanym 503, nie docierając do Azure DevOps.
+**Zapis włączony, nadal niesprawdzony na żywym PR:** `AzureDevOps:AllowComments=true` ustawione w User Secrets 20 wrz 2026 — bez niego CSS `.pr-workspace--readonly` chowa „Odpowiedz”, „Rozwiąż”, „Edytuj” i „Usuń”, co wyglądało jak brak funkcji. Samo wysłanie wątku, odpowiedzi i zmiany statusu do Azure DevOps nadal nie zostało potwierdzone przeciw prawdziwemu PR.
+
+## Wdrożone — pięć poprawek z przeglądu UX
+
+### B-23 — Martwy klik, ukryte liczby, daty, `Esc` i wyłącznik
+
+Status: zaimplementowane we frontendzie. Wynik przeglądu UX na prośbę użytkownika; wybrał pięć pozycji z listy znalezisk.
+
+**Kliknięcie lokalizacji w widoku komentarzy nic nie robiło.** `openThread` wołało `openFile`, ale widok komentarzy zajmuje **ten sam** panel co diff, więc plik wczytywał się za nim. `showChangesSinceComment` robiło to poprawnie od początku — różnica była jedną linią. Teraz widok się zamyka, a wątek otwiera się przy swoim kodzie.
+
+**Szyna liczyła wszystkie wątki, reszta aplikacji nierozwiązane.** Szyna mówi teraz „N nierozwiązanych z M", tak samo jak widok. Do nagłówka PR doszedł licznik `💬 N` wchodzący w widok komentarzy — nagłówek jest jedynym paskiem, który zostaje na ekranie w trybie skupienia, więc bez tego nierozwiązany wątek znikał razem z szyną.
+
+**Daty komentarzy były pobierane od B-18 i nigdy nie pokazywane.** `publishedDate` szło przez mapper aż do typu `PrComment` we froncie i kończyło w niczym. Przy etykiecie „kod zmienił się po tym komentarzu" wiek wpisu jest drugą połową tej informacji.
+
+**`Esc` wychodził z całego PR-a jednym naciśnięciem** — razem z otwartą edycją, szkicem i rozmową. Teraz odkleja po jednej warstwie: pomoc → potwierdzenie usunięcia → edycja → szkic → rozmowa → widok komentarzy → tryb skupienia → lista. Klawisz działa też **wewnątrz pola szkicu**, bo tam się po niego sięga; w każdym innym polu tylko zdejmuje focus.
+
+**`AzureDevOps:AllowComments` poznawało się z 503 po napisaniu komentarza.** Doszło `GET /api/config` z jedną flagą. Gdy pisanie jest wyłączone, akcje zapisu **znikają** zamiast się wyszarzać (wraz z `+` na marginesie), a nad listą stoi zdanie mówiące, czego brakuje. Sonda nie może wywrócić aplikacji: każdy błąd zostawia pisanie włączone, bo prawdziwą bramką jest backend.
+
+**Zweryfikowane:** 59 testów frontendu (doszły trzy: otwarcie pliku z widoku komentarzy zamyka widok i pokazuje diff wraz z datą i licznikiem w nagłówku; `Esc` kasuje szkic i zostaje w PR, a drugi wychodzi; przy wyłączonym pisaniu nie ma żadnej akcji zapisu, a czytanie działa). `npm run build` przechodzi.
+
+**Niesprawdzone:** backendu nie przebudowano w tej zmianie — działał proces `PRCockpit.Api`, który trzyma DLL-e, a kod backendu i tak nie był ruszany. Wygląd licznika w nagłówku i dat przy komentarzach nie był oglądany w przeglądarce.
 
 ## Później — do osobnej decyzji
 

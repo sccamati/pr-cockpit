@@ -38,6 +38,11 @@ const onlyActiveThreads = ref(false)
 const draft = ref<{ target: string; text: string } | null>(null)
 const commentSaving = ref(false)
 const commentError = ref('')
+// AzureDevOps:AllowComments is off by default and enforced in the backend. Asking for it
+// once turns "503 after the comment is written" into a disabled button with a reason.
+// It defaults to true and stays true when the probe fails: the backend is the real gate,
+// this only saves the typing.
+const commentsEnabled = ref(true)
 const threadsLoading = ref(false)
 const threadsError = ref('')
 let threadsRequestId = 0
@@ -292,6 +297,7 @@ function toggleComments() {
 }
 
 function startDraft(target: string) {
+  if (!commentsEnabled.value) return
   draft.value = { target, text: '' }
   commentError.value = ''
 }
@@ -387,6 +393,9 @@ function openLineComments(line: number) {
     next.delete(line)
     collapsedZones.value = next
   } else {
+    // Nothing to read here and nothing that could be written: clicking an empty line with
+    // writing switched off would open a draft box that can only fail.
+    if (!commentsEnabled.value) return
     inlineThreadId.value = null
     draft.value = { target: `file:${selectedFilePath.value}:${line}`, text: '' }
   }
@@ -398,24 +407,6 @@ function openLineComments(line: number) {
 function revealCommentLine(line: number | null | undefined) {
   if (!line) return
   void nextTick(() => diffView.value?.revealLine?.(line))
-}
-
-// A review comment can be two screens of Markdown. Long ones are clamped with a toggle,
-// because the code is the thing on screen that must not be pushed away.
-const longCommentChars = 500
-const expandedComments = ref(new Set<string>())
-const commentKey = (threadId: number, commentId: number) => `${threadId}:${commentId}`
-function isLongComment(content: string | null): boolean {
-  return (content?.length ?? 0) > longCommentChars
-}
-function isExpanded(threadId: number, commentId: number): boolean {
-  return expandedComments.value.has(commentKey(threadId, commentId))
-}
-function toggleComment(threadId: number, commentId: number) {
-  const key = commentKey(threadId, commentId)
-  const next = new Set(expandedComments.value)
-  if (!next.delete(key)) next.add(key)
-  expandedComments.value = next
 }
 
 // Comment blocks are rendered by Monaco as zones between the code; these are the
@@ -432,10 +423,6 @@ const zoneLines = computed(() => {
   if (lineDraft.value) lines.push(lineDraft.value)
   return [...new Set(lines)].sort((a, b) => a - b)
 })
-function hideComments() {
-  showComments.value = false
-  inlineThreadId.value = null
-}
 function threadAtLine(line: number): PrCommentThread | null {
   return threadsInFile.value.find(thread => thread.rightLine === line) ?? null
 }
@@ -545,12 +532,13 @@ function commentOnCursorLine() {
   openLineComments(line)
 }
 
-function openThread(thread: PrCommentThread) {
-  // Read-only for now: jumping to the file is the whole interaction. Anchoring inside the
-  // editor is stage 4C, and nothing here writes to Azure DevOps.
-  if (thread.filePath && details.value?.changedFiles.some(file => file.path === thread.filePath)) {
-    void openFile(thread.filePath)
-  }
+async function openThread(thread: PrCommentThread) {
+  if (!thread.filePath || !details.value?.changedFiles.some(file => file.path === thread.filePath)) return
+  // The comments view sits in the same panel as the diff, so leaving it open would load
+  // the file behind it and nothing on screen would change.
+  commentsOpen.value = false
+  await openFile(thread.filePath)
+  openThreadInFile(thread)
 }
 const noiseFiles = computed(() => filteredFiles.value.filter(file => file.category))
 const codeFiles = computed(() => filteredFiles.value.filter(file => !file.category))
@@ -799,7 +787,6 @@ function resetThreads() {
   commentError.value = ''
   snippets.value = {}
   snippetsLoading.value = false
-  expandedComments.value = new Set()
 }
 
 async function loadThreads(project: string, repository: string, id: number) {
@@ -1285,6 +1272,19 @@ function markAndAdvance() {
   openNextUnreviewed()
 }
 
+// Esc peels one layer at a time. Leaving the pull request is the last of them — one key
+// that drops the edit, the draft, the conversation and the whole PR at once is a trap.
+function escapeLayer() {
+  if (helpDialog.value?.open) closeHelp()
+  else if (deleting.value !== null) deleting.value = null
+  else if (editing.value) editing.value = null
+  else if (draft.value) { draft.value = null; commentError.value = '' }
+  else if (inlineThreadId.value !== null) closeInlineComments()
+  else if (commentsOpen.value) commentsOpen.value = false
+  else if (focusMode.value) focusMode.value = false
+  else backToList()
+}
+
 function toggleHelp() {
   const dialog = helpDialog.value
   if (!dialog) return
@@ -1321,7 +1321,15 @@ const shortcuts: Record<string, () => void> = {
 function handleKey(event: KeyboardEvent) {
   if (event.ctrlKey || event.metaKey || event.altKey) return
   const target = event.target as HTMLElement | null
-  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) {
+    // Esc has to work from inside the draft box — that is where it is reached for. Any
+    // other field just gives the key back to the page.
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    target.blur()
+    if (target.closest('.comment-draft')) escapeLayer()
+    return
+  }
   if (event.key === '?') {
     event.preventDefault()
     toggleHelp()
@@ -1330,8 +1338,7 @@ function handleKey(event: KeyboardEvent) {
   if (!details.value) return
   if (event.key === 'Escape') {
     event.preventDefault()
-    if (helpDialog.value?.open) closeHelp()
-    else backToList()
+    escapeLayer()
     return
   }
   const action = shortcuts[event.key]
@@ -1345,6 +1352,11 @@ onMounted(() => window.addEventListener('keydown', handleKey, { capture: true })
 onBeforeUnmount(() => window.removeEventListener('keydown', handleKey, { capture: true }))
 
 onMounted(loadProjects)
+onMounted(async () => {
+  // Swallows everything: the backend enforces the switch either way, so a failed probe
+  // must not cost more than an offer to write that then fails.
+  try { commentsEnabled.value = (await api.config()).commentsEnabled } catch { /* leave it on */ }
+})
 </script>
 
 <template>
@@ -1392,11 +1404,20 @@ onMounted(loadProjects)
           <span class="pr-header-meta">{{ details.sourceBranch }} → {{ details.targetBranch }}</span>
           <span class="pr-header-meta">{{ details.author }}</span>
           <span v-if="checklist" class="pr-header-progress">Checklista {{ checklistCompleted }} / 6</span>
+          <!-- The rail is hidden in focus mode, so the header is the only place an
+               unresolved conversation can stay visible. -->
+          <button v-if="threads.length" type="button" class="pr-header-comments"
+            :class="{ 'pr-header-comments--open': activeThreadCount > 0 }"
+            :title="`${activeThreadCount} nierozwiązanych z ${threads.length} · widok komentarzy (c)`"
+            :aria-label="`Komentarze: ${activeThreadCount} nierozwiązanych z ${threads.length}`"
+            @click="toggleComments">💬 {{ activeThreadCount }}</button>
           <button class="shortcut-button" type="button" aria-label="Skróty klawiszowe" title="Skróty klawiszowe (?)"
             @click="toggleHelp">?</button>
         </div>
 
-        <div class="pr-workspace" :class="{ 'pr-workspace--focus': focusMode }">
+        <!-- Writing switched off in the backend: the actions are not disabled but absent,
+             because a row of five greyed-out buttons is noise, not information. -->
+        <div class="pr-workspace" :class="{ 'pr-workspace--focus': focusMode, 'pr-workspace--readonly': !commentsEnabled }">
           <div class="file-list-pane">
             <div class="file-list-head">
               <div class="file-review-heading">
@@ -1449,9 +1470,12 @@ onMounted(loadProjects)
                   <button type="button" :aria-pressed="!onlyActiveThreads" :class="{ active: !onlyActiveThreads }" @click="onlyActiveThreads = false">Wszystkie</button>
                   <button type="button" :aria-pressed="onlyActiveThreads" :class="{ active: onlyActiveThreads }" @click="onlyActiveThreads = true">Aktywne</button>
                 </div>
-                <button type="button" class="thread-new" @click="startDraft('new')">Nowy komentarz do PR</button>
+                <button type="button" class="thread-new" :disabled="!commentsEnabled" @click="startDraft('new')">Nowy komentarz do PR</button>
               </div>
               <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
+              <p v-if="!commentsEnabled" class="muted comments-off">
+                Pisanie komentarzy jest wyłączone w backendzie (<code>AzureDevOps:AllowComments</code>). Czytanie działa normalnie.
+              </p>
 
               <div v-if="draft?.target === 'new'" class="comment-draft">
                 <label class="debug-label" for="thread-draft">Treść komentarza</label>
@@ -1483,7 +1507,7 @@ onMounted(loadProjects)
                   </div>
                   <p v-else-if="thread.filePath && snippetsLoading" class="muted snippet-loading">Wczytywanie kodu…</p>
                   <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
-                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
+                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
                     <div v-if="editing && editing.commentId === comment.id && editing.threadId === thread.id" class="comment-draft">
                       <textarea v-model="editing.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Edycja komentarza"></textarea>
                       <div class="debug-actions">
@@ -1492,11 +1516,7 @@ onMounted(loadProjects)
                       </div>
                     </div>
                     <template v-else>
-                      <div v-if="comment.content" class="thread-content markdown-body"
-                        :class="{ 'thread-content--clamped': isLongComment(comment.content) && !isExpanded(thread.id, comment.id) }"
-                        v-html="renderComment(comment.content)" />
-                      <button v-if="comment.content && isLongComment(comment.content)" type="button" class="comment-expand"
-                        @click="toggleComment(thread.id, comment.id)">{{ isExpanded(thread.id, comment.id) ? 'Zwiń' : 'Pokaż całość' }}</button>
+                      <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
                       <p v-if="!comment.content" class="thread-content muted">(komentarz usunięty)</p>
                       <div v-if="comment.isMine && comment.content" class="comment-own-actions">
                         <template v-if="deleting === comment.id">
@@ -1589,9 +1609,7 @@ onMounted(loadProjects)
                 <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
                 <template v-if="inlineThread">
                   <div v-for="comment in inlineThread.comments" :key="comment.id" class="thread-comment">
-                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
-                    <!-- Never clamped here: the block scrolls and can be resized, so the
-                         whole comment is always reachable without a second click. -->
+                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
                     <div v-if="comment.content" class="thread-content markdown-body" v-html="renderComment(comment.content)" />
                     <p v-else class="thread-content muted">(komentarz usunięty)</p>
                   </div>
@@ -1650,16 +1668,15 @@ onMounted(loadProjects)
                     <div class="zone-head" role="button" tabindex="0" :aria-expanded="!collapsedZones.has(zone.line)"
                       @click="toggleZone(zone.line)" @keydown.enter.prevent="toggleZone(zone.line)" @keydown.space.prevent="toggleZone(zone.line)">
                       <span class="zone-toggle">{{ collapsedZones.has(zone.line) ? '▸' : '▾' }}</span>
-                      <span class="thread-author">{{ threadAtLine(zone.line)!.comments[0]?.author ?? 'Nieznany autor' }}</span>
+                      <span class="thread-author">{{ threadAtLine(zone.line)!.comments[0]?.author ?? 'Nieznany autor' }}</span><time v-if="threadAtLine(zone.line)!.comments[0]?.publishedAt" class="thread-date" :datetime="threadAtLine(zone.line)!.comments[0]!.publishedAt!">{{ formatDate(threadAtLine(zone.line)!.comments[0]!.publishedAt!) }}</time>
                       <span v-if="threadAtLine(zone.line)!.status && threadStatusLabels[threadAtLine(zone.line)!.status!]" class="thread-status">{{ threadStatusLabels[threadAtLine(zone.line)!.status!] }}</span>
                       <span v-if="threadAtLine(zone.line)!.comments.length > 1" class="thread-status">{{ threadAtLine(zone.line)!.comments.length }} wpisy</span>
                       <span v-if="collapsedZones.has(zone.line)" class="zone-preview">{{ commentPreview(threadAtLine(zone.line)!.comments[0]?.content ?? '') }}</span>
-                      <button type="button" class="zone-hide" @click.stop="hideComments">Ukryj wszystkie</button>
                     </div>
                     <template v-if="!collapsedZones.has(zone.line)">
                       <p v-if="commentError && inlineThreadId === threadAtLine(zone.line)!.id" class="notice error" role="alert">{{ commentError }}</p>
                       <div v-for="comment in threadAtLine(zone.line)!.comments" :key="comment.id" class="thread-comment">
-                        <span v-if="comment.id !== threadAtLine(zone.line)!.comments[0]?.id" class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
+                        <span v-if="comment.id !== threadAtLine(zone.line)!.comments[0]?.id" class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
                         <div v-if="editing && editing.commentId === comment.id" class="comment-draft">
                           <textarea v-model="editing.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Edycja komentarza"></textarea>
                           <div class="debug-actions">
@@ -1765,7 +1782,7 @@ onMounted(loadProjects)
             </details>
 
             <details class="rail-block threads-section" :open="threads.length > 0">
-              <summary>Komentarze<span> · {{ threads.length }}</span></summary>
+              <summary>Komentarze<span v-if="threads.length"> · {{ activeThreadCount }} nierozwiązanych z {{ threads.length }}</span></summary>
               <p v-if="threadsLoading" class="muted" role="status">Wczytywanie komentarzy…</p>
               <p v-else-if="threadsError" class="notice error" role="alert">{{ threadsError }}
                 <button class="checklist-retry" type="button" @click="loadThreads(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
