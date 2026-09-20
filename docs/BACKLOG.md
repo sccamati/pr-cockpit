@@ -222,6 +222,24 @@ Status: zaimplementowane w wersji minimalnej. Etap 3, punkt 3.5 z [PLAN.md](PLAN
 
 **Niesprawdzone:** czy pytanie faktycznie zmienia sposób czytania PR. To ocena użytkownika po kilku prawdziwych PR-ach, nie test.
 
+## Wdrożone — wątki Azure DevOps do odczytu
+
+### B-18 — Komentarze PR, tylko odczyt
+
+Status: zaimplementowane. Etap 4, podetap 4A z [PLAN.md](PLAN.md). **Zakres PAT bez zmian** — listowanie wątków mieści się w `vso.code`, który PAT już ma, a `SendAsync` nadal wysyła wyłącznie `GET`.
+
+**Zakres:** `GET .../pull-requests/{id}/threads` przez `IAzureDevOpsClient.GetCommentThreadsAsync`. Backend odfiltrowuje wątki systemowe, zanim cokolwiek wyjdzie do frontendu. W szynie kontekstu doszedł blok „Komentarze” z lokalizacją (`plik:linia` albo „Cały PR”), statusem i treścią; kliknięcie lokalizacji otwiera plik. Ładowanie ma własny licznik `threadsRequestId`, zgodnie z regułą stale-guard.
+
+**Mapper jest celowo inny niż pozostałe:** surowy wyłącznie na `id`, tolerancyjny na resztę. Azure DevOps emituje wątki systemowe bez pola `status` i komentarze miękko skasowane bez `content` — jeden taki wpis w liście zamieniłby całą listę w 500. Wątek uznajemy za systemowy, gdy wszystkie jego komentarze mają `commentType: "system"` albo gdy nie ma w nim żadnego komentarza.
+
+**Treść komentarzy renderujemy jako zwykły tekst**, nie Markdown. To proza pisana przez inne osoby; render byłby kolejną powierzchnią do sanityzacji, a niczego tu nie dodaje.
+
+**Nadal obowiązuje [PLAN.md](PLAN.md) §4.7:** wątki **nie** trafiają do kontekstu AI. `PrContext` jedzie do adaptera w całości, a komentarze to najbardziej podatny na wstrzyknięcie tekst w systemie.
+
+**Zweryfikowane:** 85 testów backendu (doszły dwa: lista z wątkiem systemowym i skasowanym komentarzem nie wywraca odczytu, oraz wątek bez `status` i bez `threadContext` mapuje się poprawnie) i 39 testów frontendu (doszedł jeden: lista wątków, wątek bez pliku nie da się kliknąć, kliknięcie lokalizacji otwiera plik).
+
+**Niesprawdzone — do potwierdzenia na prawdziwym PR:** semantyka `offset`, czy `pullRequestThreadContext.changeTrackingId` w ogóle przychodzi, `iterationContext` przy diffie względem bazy scalenia oraz czy wykrywanie wątków systemowych po `commentType` wystarcza. Właśnie po to 4A idzie przed 4B — te niewiadome rozstrzygną się przez **czytanie**, zanim cokolwiek zostanie wysłane.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.

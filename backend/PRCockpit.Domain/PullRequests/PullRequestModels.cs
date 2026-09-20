@@ -16,6 +16,22 @@ public record ChangedFile(string Path, string ChangeType, string? OriginalPath, 
 public record Commit(string Id, string Message, string Author, DateTimeOffset? AuthoredAt);
 public record FileDiff(string Path, string? OriginalPath, string Kind, string? OriginalText, string? ModifiedText);
 
+/// <summary>
+/// One comment in a pull request thread. Everything except the id is optional because
+/// Azure DevOps really does omit it: a soft-deleted comment arrives without content.
+/// </summary>
+public record PrComment(
+    int Id, string? Author, string? Content, string? CommentType, DateTimeOffset? PublishedAt);
+
+/// <summary>
+/// A comment thread, anchored to a file and line when it has a thread context. System
+/// threads (votes, merge attempts, reviewer changes) are marked rather than dropped here,
+/// so the filtering decision stays with the caller.
+/// </summary>
+public record PrCommentThread(
+    int Id, string? Status, string? FilePath, int? RightLine, int? LeftLine,
+    bool IsSystem, IReadOnlyList<PrComment> Comments);
+
 public record PullRequestSummary(
     int Id,
     string Title,

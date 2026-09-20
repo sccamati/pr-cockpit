@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type C
 import FileTree from './FileTree.vue'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
 import { renderDescription } from './description'
-import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -28,6 +28,10 @@ const summaryReadError = ref('')
 const summarySavedAt = ref<string | null>(null)
 const checklist = ref<ChecklistState | null>(null)
 const checklistLoading = ref(false)
+const threads = ref<PrCommentThread[]>([])
+const threadsLoading = ref(false)
+const threadsError = ref('')
+let threadsRequestId = 0
 const checklistSaving = ref<ChecklistItem | null>(null)
 // PRODUCT.md §9: the point is a few seconds of active thinking, not a grade. Nothing here
 // checks the answer, and leaving it empty costs nothing.
@@ -133,6 +137,22 @@ const criticalProposal = computed(() => {
 const showProposal = computed(() =>
   criticalProposal.value.length > 0 && !proposalDismissed.value && criticalPaths.value.length === 0)
 const roleByPath = computed(() => new Map(criticalProposal.value.map(file => [file.path, file.role])))
+const threadStatusLabels: Record<string, string> = {
+  active: 'aktywny', fixed: 'naprawiony', wontFix: 'nie naprawimy',
+  closed: 'zamknięty', pending: 'oczekuje', byDesign: 'zgodne z projektem', unknown: '',
+}
+function threadLocation(thread: PrCommentThread): string {
+  if (!thread.filePath) return 'Cały PR'
+  const line = thread.rightLine ?? thread.leftLine
+  return line ? `${fileName(thread.filePath)}:${line}` : fileName(thread.filePath)
+}
+function openThread(thread: PrCommentThread) {
+  // Read-only for now: jumping to the file is the whole interaction. Anchoring inside the
+  // editor is stage 4C, and nothing here writes to Azure DevOps.
+  if (thread.filePath && details.value?.changedFiles.some(file => file.path === thread.filePath)) {
+    void openFile(thread.filePath)
+  }
+}
 const noiseFiles = computed(() => filteredFiles.value.filter(file => file.category))
 const codeFiles = computed(() => filteredFiles.value.filter(file => !file.category))
 const expandAll = computed(() => fileSearch.value.trim().length > 0)
@@ -360,6 +380,27 @@ function resetChecklist() {
   showDebugHint.value = false
 }
 
+function resetThreads() {
+  ++threadsRequestId
+  threads.value = []
+  threadsLoading.value = false
+  threadsError.value = ''
+}
+
+async function loadThreads(project: string, repository: string, id: number) {
+  const current = ++threadsRequestId
+  threadsLoading.value = true
+  threadsError.value = ''
+  try {
+    const result = await api.commentThreads(project, repository, id)
+    if (current === threadsRequestId) threads.value = result
+  } catch (cause) {
+    if (current === threadsRequestId) threadsError.value = message(cause)
+  } finally {
+    if (current === threadsRequestId) threadsLoading.value = false
+  }
+}
+
 function resetChecklistProgress() {
   checklistProgress.value = {}
   progressLoading.value = false
@@ -583,6 +624,7 @@ async function openPullRequest(id: number) {
   resetSummary()
   resetChecklist()
   resetFileReviews()
+  resetThreads()
   details.value = null
   error.value = ''
   loading.value = true
@@ -593,6 +635,7 @@ async function openPullRequest(id: number) {
       void loadChecklist(projectId.value, repositoryId.value, id)
       void loadSavedSummary(projectId.value, repositoryId.value, id)
       void loadFileReviews(projectId.value, repositoryId.value, id)
+      void loadThreads(projectId.value, repositoryId.value, id)
     }
   } catch (cause) {
     if (current === requestId) error.value = message(cause)
@@ -1036,6 +1079,29 @@ onMounted(loadProjects)
                 </label>
               </div>
               <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
+            </details>
+
+            <details class="rail-block threads-section" :open="threads.length > 0">
+              <summary>Komentarze<span> · {{ threads.length }}</span></summary>
+              <p v-if="threadsLoading" class="muted" role="status">Wczytywanie komentarzy…</p>
+              <p v-else-if="threadsError" class="notice error" role="alert">{{ threadsError }}
+                <button class="checklist-retry" type="button" @click="loadThreads(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
+              </p>
+              <p v-else-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
+              <ul v-else class="thread-list" aria-label="Komentarze PR">
+                <li v-for="thread in threads" :key="thread.id" class="thread">
+                  <button class="thread-location" type="button" :title="thread.filePath ?? 'Cały PR'"
+                    :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
+                  <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
+                  <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
+                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span>
+                    <!-- Plain text on purpose: this is prose written by other people, and
+                         rendering it as Markdown would be one more thing to sanitise. -->
+                    <p v-if="comment.content" class="thread-content">{{ comment.content }}</p>
+                    <p v-else class="thread-content muted">(komentarz usunięty)</p>
+                  </div>
+                </li>
+              </ul>
             </details>
 
             <details class="rail-block debug-check" :open="remainingCount === 0">

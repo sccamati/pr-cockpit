@@ -120,6 +120,19 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         return await GetFileDiffAtCommitsAsync(project, repositoryId, file, baseCommit, sourceCommit, ct);
     }
 
+    public async Task<IReadOnlyList<PrCommentThread>> GetCommentThreadsAsync(
+        string project, string repositoryId, int pullRequestId, CancellationToken ct)
+    {
+        if (pullRequestId <= 0) throw new AzureDevOpsException("Invalid pull request ID.", 400);
+        var (json, _) = await GetAsync(
+            $"{PullRequestPath(project, repositoryId)}/{pullRequestId}/threads?{ApiVersion}", ct);
+        using (json)
+            return Values(json.RootElement).EnumerateArray()
+                .Select(AzureDevOpsMapper.CommentThread)
+                .Where(thread => !thread.IsSystem)
+                .ToArray();
+    }
+
     public Task<FileDiff> GetFileDiffAsync(
         string project, string repositoryId, PullRequestDetails details, string filePath, CancellationToken ct)
     {

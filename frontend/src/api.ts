@@ -31,6 +31,25 @@ export interface CSharpHovers {
   modifiedTokens: CSharpSemanticToken[]
 }
 
+// Everything except id is optional on purpose — the backend maps Azure DevOps threads
+// tolerantly, because a system thread or a deleted comment must not break the list.
+export interface PrComment {
+  id: number
+  author: string | null
+  content: string | null
+  commentType: string | null
+  publishedAt: string | null
+}
+export interface PrCommentThread {
+  id: number
+  status: string | null
+  filePath: string | null
+  rightLine: number | null
+  leftLine: number | null
+  isSystem: boolean
+  comments: PrComment[]
+}
+
 export interface PullRequestSummary {
   id: number
   title: string
@@ -151,6 +170,8 @@ export const api = {
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
   fileDiff: (project: string, repository: string, id: number, path: string) =>
     get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}`),
+  commentThreads: (project: string, repository: string, id: number) =>
+    get<PrCommentThread[]>(`${location(project, repository)}/pull-requests/${id}/threads`),
   csharpHovers: (originalText: string, modifiedText: string, signal?: AbortSignal) =>
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>

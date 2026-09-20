@@ -443,6 +443,57 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal("line", diff.ModifiedText);
     }
 
+    // Azure DevOps mixes system threads and soft-deleted comments into the same list. One
+    // of those must never take the whole list down, which is why this mapper is tolerant.
+    [Fact]
+    public async Task ReadsHumanThreadsAndSurvivesSystemThreadsAndDeletedComments()
+    {
+        string? requested = null;
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            requested = request.RequestUri!.PathAndQuery;
+            Assert.Equal(HttpMethod.Get, request.Method);
+            return Json("""
+                {"value":[
+                  {"id":1,"status":"active",
+                   "threadContext":{"filePath":"/src/invoices.cs","rightFileStart":{"line":42,"offset":1}},
+                   "comments":[
+                     {"id":1,"author":{"displayName":"Jan"},"content":"Czy to na pewno tutaj?","commentType":"text","publishedDate":"2026-09-01T12:00:00Z"},
+                     {"id":2,"author":{"displayName":"Anna"},"commentType":"text"}]},
+                  {"id":2,"comments":[{"id":1,"commentType":"system","content":"Jan voted 10"}]},
+                  {"id":3,"comments":[]}
+                ]}
+                """);
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        var threads = await Client(http).GetCommentThreadsAsync("proj", "repo", 123, CancellationToken.None);
+
+        Assert.Contains("/threads?", requested);
+        var thread = Assert.Single(threads);
+        Assert.Equal(1, thread.Id);
+        Assert.Equal("/src/invoices.cs", thread.FilePath);
+        Assert.Equal(42, thread.RightLine);
+        Assert.Equal(2, thread.Comments.Count);
+        // The soft-deleted comment keeps its place in the conversation, without content.
+        Assert.Null(thread.Comments[1].Content);
+    }
+
+    [Fact]
+    public void ReadsAThreadWithNoStatusAndNoContextWithoutFailing()
+    {
+        using var json = JsonDocument.Parse("""
+            {"id":7,"comments":[{"id":1,"commentType":"text","content":"Ogólna uwaga."}]}
+            """);
+
+        var thread = AzureDevOpsMapper.CommentThread(json.RootElement);
+
+        Assert.Equal(7, thread.Id);
+        Assert.Null(thread.Status);
+        Assert.Null(thread.FilePath);
+        Assert.False(thread.IsSystem);
+    }
+
     private static AzureDevOpsClient Client(HttpClient http)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

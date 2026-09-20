@@ -22,6 +22,12 @@ public interface IAzureDevOpsClient
         string project, string repositoryId, int pullRequestId, string path, CancellationToken ct);
 
     /// <summary>
+    /// The pull request's comment threads, read only. System threads are left out.
+    /// </summary>
+    Task<IReadOnlyList<PrCommentThread>> GetCommentThreadsAsync(
+        string project, string repositoryId, int pullRequestId, CancellationToken ct);
+
+    /// <summary>
     /// Serves a diff from an already-fetched pull request, so building a context package
     /// does not refetch the iteration and change list once per file.
     /// </summary>

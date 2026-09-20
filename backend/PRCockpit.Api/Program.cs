@@ -57,6 +57,10 @@ api.MapGet($"{PullRequests}/{{pullRequestId:int}}", async (
     string project, string repositoryId, int pullRequestId, IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.GetPullRequestAsync(project, repositoryId, pullRequestId, ct)));
 
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/threads", async (
+    string project, string repositoryId, int pullRequestId, IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.GetCommentThreadsAsync(project, repositoryId, pullRequestId, ct)));
+
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/diff", async (
     string project, string repositoryId, int pullRequestId, string path,
     IAzureDevOpsClient client, CancellationToken ct) =>

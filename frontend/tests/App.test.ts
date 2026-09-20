@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   setReadingPath: vi.fn(),
   setDebugNote: vi.fn(),
   fileReviewProgress: vi.fn(),
+  commentThreads: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
@@ -86,6 +87,7 @@ beforeEach(() => {
   }))
   api.fileReviews.mockResolvedValue({ files: [], readingPath: [], updatedAt: null })
   api.fileReviewProgress.mockResolvedValue([])
+  api.commentThreads.mockResolvedValue([])
   api.setReadingPath.mockImplementation(async (_project, _repository, _id, paths) => ({ paths, updatedAt: null }))
   api.setFileReviewed.mockImplementation(async (_project, _repository, _id, update) => ({
     entry: update.reviewed
@@ -288,6 +290,37 @@ describe('PR review', () => {
     expect((wrapper.find('#debug-answer').element as HTMLTextAreaElement).value).toBe('Od kolejki wysyłki.')
     expect(wrapper.text()).toContain('Zapisano')
     expect(wrapper.findAll('.checklist-item input').every(box => !(box.element as HTMLInputElement).checked)).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('lists comment threads and jumps to the file a thread is anchored to', async () => {
+    api.commentThreads.mockResolvedValue([
+      {
+        id: 1, status: 'active', filePath: '/src/second.cs', rightLine: 42, leftLine: null, isSystem: false,
+        comments: [
+          { id: 1, author: 'Jan', content: 'Czy to na pewno tutaj?', commentType: 'text', publishedAt: null },
+          { id: 2, author: 'Anna', content: null, commentType: 'text', publishedAt: null },
+        ],
+      },
+      { id: 2, status: null, filePath: null, rightLine: null, leftLine: null, isSystem: false,
+        comments: [{ id: 1, author: 'Jan', content: 'Ogólna uwaga.', commentType: 'text', publishedAt: null }] },
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    const locations = wrapper.findAll('.thread-location')
+    expect(locations.map(item => item.text())).toEqual(['second.cs:42', 'Cały PR'])
+    // A deleted comment keeps its place instead of vanishing from the conversation.
+    expect(wrapper.text()).toContain('(komentarz usunięty)')
+    // A thread with no file has nothing to jump to.
+    expect(locations[1]!.attributes('disabled')).toBeDefined()
+
+    await locations[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
     wrapper.unmount()
   })
 
