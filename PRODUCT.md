@@ -150,12 +150,14 @@ Risk nie blokuje merge — pomaga jedynie określić, gdzie warto poświęcić w
 
 Każdy PR ma prostą checklistę:
 
-* [ ] AI Review
-* [ ] Quality
-* [ ] Understand
-* [ ] Architecture
-* [ ] Debug
-* [ ] Ready
+* [ ] `aiReview` — „Review AI"
+* [ ] `quality` — „Jakość"
+* [ ] `understand` — „Rozumiem zmianę"
+* [ ] `architecture` — „Architektura"
+* [ ] `debug` — „Diagnoza"
+* [ ] `ready` — „Gotowe"
+
+Kolejność jest tą listą. Klucze idą do API i bazy, etykiety są tekstem UI, więc po polsku.
 
 Status checklisty zapisujemy w aplikacji.
 

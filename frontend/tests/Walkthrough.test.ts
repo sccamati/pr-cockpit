@@ -252,7 +252,7 @@ describe('tryb wszystkich plików', () => {
     await flushPromises()
 
     expect(api.setReadingPath).toHaveBeenCalledWith('project', 'repo-a', 123, fullOrder, 0, HEAD)
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 9')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 1 z 9')
     wrapper.unmount()
   })
 
@@ -312,7 +312,7 @@ describe('duży PR dostaje dłuższą propozycję', () => {
 
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 11')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 1 z 11')
     wrapper.unmount()
   })
 
@@ -343,7 +343,7 @@ describe('US-P4 — przejście plik po pliku', () => {
   it('counts along the path, not along the Azure DevOps file list', async () => {
     const wrapper = await startWalk()
 
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 6')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 1 z 6')
     expect(wrapper.find('.walk-bar-file').attributes('title')).toBe('/src/a.cs')
     expect(wrapper.find('.walk-bar-role').text()).toBe('Rola 1.')
     // The rail and the tree are gone; the diff has the window.
@@ -360,7 +360,7 @@ describe('US-P4 — przejście plik po pliku', () => {
 
     expect(api.setFileReviewed).toHaveBeenCalledWith('project', 'repo-a', 123,
       expect.objectContaining({ path: '/src/a.cs', reviewed: true }))
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 2 z 6')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 2 z 6')
     expect(api.setReadingPath).toHaveBeenLastCalledWith('project', 'repo-a', 123, paths.slice(0, 6), 1, HEAD)
     wrapper.unmount()
   })
@@ -372,12 +372,12 @@ describe('US-P4 — przejście plik po pliku', () => {
     await flushPromises()
     await wrapper.findAll('.walk-actions--sticky button')[1]!.trigger('click')   // b.cs skipped
     await flushPromises()
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 3 z 6')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 3 z 6')
     expect(api.setFileReviewed).toHaveBeenCalledTimes(1)
 
     await wrapper.findAll('.walk-actions--sticky button')[2]!.trigger('click')   // back to b.cs
     await flushPromises()
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 2 z 6')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 2 z 6')
     expect(api.setFileReviewed).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
@@ -387,13 +387,15 @@ describe('US-P4 — przejście plik po pliku', () => {
     await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
     await flushPromises()
 
-    await wrapper.find('.walk-bar-exit').trigger('click')
+    const exit = wrapper.findAll('.walk-actions--sticky button')
+      .find(button => button.text().includes('Wyjdź'))!
+    await exit.trigger('click')
     expect(wrapper.find('.pr-workspace').classes()).not.toContain('pr-workspace--walk')
     expect(wrapper.findAll('.changed-files li').length).toBeGreaterThan(0)
 
     await wrapper.find('.walk-enter-button').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.walk-resume').text()).toContain('plik 2 z 6')
+    expect(wrapper.find('.walk-resume').text()).toContain('krok 2 z 6')
     wrapper.unmount()
   })
 })
@@ -412,10 +414,12 @@ describe('US-P5 — wyjaśnienie pliku tylko na prośbę', () => {
     await flushPromises()
     expect(api.explainFile).not.toHaveBeenCalled()
 
-    await wrapper.find('.walk-explanation .explain-button').trigger('click')
+    await wrapper.find('.explain-button').trigger('click')
     await flushPromises()
     expect(api.explainFile.mock.calls.map(call => call[3])).toEqual(['/src/b.cs'])
     expect(wrapper.find('.walk-explanation-text').text()).toBe('Wyjaśnienie /src/b.cs.')
+    // Once on the screen, not twice: the diff panel's own block stays out of the walkthrough.
+    expect(wrapper.find('.file-explanation').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -423,7 +427,7 @@ describe('US-P5 — wyjaśnienie pliku tylko na prośbę', () => {
     const wrapper = await openPr()
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
-    await wrapper.find('.walk-explanation .explain-button').trigger('click')
+    await wrapper.find('.explain-button').trigger('click')
     await flushPromises()
 
     api.explainFile.mockClear()
@@ -445,14 +449,15 @@ describe('US-P5 — wyjaśnienie pliku tylko na prośbę', () => {
     const wrapper = await openPr()
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
-    await wrapper.find('.walk-explanation .explain-button').trigger('click')
+    await wrapper.find('.explain-button').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.walk-explanation [role="alert"]').text()).toContain('AI CLI timed out.')
     await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
     await flushPromises()
-    // The next file starts clean: no error carried over, and still nothing bought.
-    expect(wrapper.find('.walk-explanation .explain-button').exists()).toBe(true)
+    // The next file starts clean: no error carried over, no panel, and still nothing bought.
+    expect(wrapper.find('.walk-explanation').exists()).toBe(false)
+    expect(wrapper.find('.explain-button').exists()).toBe(true)
     wrapper.unmount()
   })
 })
@@ -484,7 +489,7 @@ describe('US-P6 — domknięcie', () => {
     // One action returns to a file that was skipped.
     await wrapper.find('.walk-skipped .critical-open').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 3 z 6')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 3 z 6')
     wrapper.unmount()
   })
 })
@@ -497,11 +502,11 @@ describe('US-P7 — wznowienie', () => {
 
     const wrapper = await openPr()
 
-    expect(wrapper.find('.walk-resume').text()).toContain('plik 5 z 6')
+    expect(wrapper.find('.walk-resume').text()).toContain('krok 5 z 6')
     expect(wrapper.find('.walk-changed').exists()).toBe(false)
     await wrapper.find('.walk-resume .walk-primary').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 5 z 6')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 5 z 6')
     expect(wrapper.find('.walk-bar-file').attributes('title')).toBe('/src/e.cs')
     wrapper.unmount()
   })
@@ -547,7 +552,7 @@ describe('US-P7 — wznowienie', () => {
     const wrapper = await openPr()
 
     // Two files left, so the resume offer counts two and points at the second.
-    expect(wrapper.find('.walk-resume').text()).toContain('plik 2 z 2')
+    expect(wrapper.find('.walk-resume').text()).toContain('krok 2 z 2')
     await wrapper.find('.walk-resume .walk-primary').trigger('click')
     await flushPromises()
     expect(wrapper.find('.walk-bar-file').attributes('title')).toBe('/src/b.cs')

@@ -74,7 +74,6 @@ button { cursor: pointer; }
 .topbar--details { padding-inline: max(28px, calc((100vw - 1920px) / 2 + 28px)); }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; letter-spacing: -.03em; }
 .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; background: var(--brand-mark); color: #142437; font-size: 12px; font-weight: 800; }
-.topbar-caption { color: var(--topbar-muted); font-size: 13px; }
 main { max-width: 1140px; margin: 0 auto; padding: 48px 28px 80px; }
 main.main--details { max-width: 1920px; padding: 12px 28px; }
 .intro { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 32px; }
@@ -130,7 +129,9 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .checklist-item:has(input:disabled) { opacity: .65; cursor: wait; }
 .checklist-item input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
 .checklist-retry { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--border-button); border-radius: 6px; background: var(--surface); color: var(--text-strong); }
-.summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+/* Szyna jest jednym przewijanym słupkiem: bez position: sticky tekst Summary zaczyna się
+   w środku zdania, bez nagłówka nad nim. To samo niżej dla sekcji <details> szyny. */
+.summary-heading { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px 0; background: var(--surface); }
 .summary-heading .muted { margin-bottom: 0; font-size: 13px; }
 .summary-button { flex: none; min-height: 40px; padding: 0 16px; border: 0; border-radius: 7px; background: var(--accent); color: #ffffff; font-weight: 700; }
 .summary-button:hover:not(:disabled) { background: var(--accent-strong); }
@@ -178,25 +179,32 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .file-list-pane, .diff-panel { min-width: 0; min-height: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
 .file-list-pane { display: flex; flex-direction: column; padding: 12px 0 0; background: var(--surface); }
 .file-search-label { padding: 0 12px 6px; color: var(--text-label); font-size: 12px; font-weight: 700; }
-.file-search { height: 38px; margin: 0 12px 12px; padding: 0 10px; border: 1px solid var(--border-control); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.file-search { height: 38px; min-width: 0; margin: 0 12px 12px; padding: 0 10px; border: 1px solid var(--border-control); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
 .file-search:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
-.iteration-filter { height: 38px; margin: 0 12px 10px; padding: 0 8px; border: 1px solid var(--border-control); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+/* min-width: 0, bo bez niego szerokość najdłuższej opcji rozpycha select poza panel,
+   a panel ma overflow: hidden — strzałka znikała za krawędzią. */
+.iteration-filter { height: 38px; min-width: 0; margin: 0 12px 10px; padding: 0 8px; border: 1px solid var(--border-control); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
 .iteration-filter:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
 .file-filter { display: flex; margin: 0 12px 10px; border: 1px solid var(--border-control); border-radius: 6px; overflow: hidden; }
 .file-filter button { flex: 1; min-width: 0; padding: 7px 4px; border: 0; background: var(--surface); color: var(--text-soft); font-size: 12px; }
 .file-filter button + button { border-left: 1px solid var(--border-control); }
 .file-filter button.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
-.next-file-button { margin: 0 12px 10px; padding: 8px; border: 1px solid var(--border-button); border-radius: 6px; background: var(--surface); color: var(--text-strong); font-size: 12px; font-weight: 700; }
+/* Prymarne CTA kolumny to "Prowadź mnie przez PR"; ten jest skrótem, nie drugim CTA. */
+.next-file-button { margin: 0 12px 10px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); font-size: 12px; font-weight: 700; text-align: left; }
+.next-file-button:hover:not(:disabled) { background: var(--accent-soft); }
+.next-file-button:disabled { color: var(--text-muted); cursor: not-allowed; }
 .file-list-hint { margin: 0 12px 10px; color: var(--text-muted); font-size: 12px; }
 .file-list-empty { margin: 0; padding: 12px; color: var(--text-muted); }
-.reviewed-badge--stale { background: var(--warn-bg); color: var(--warn-text); }
+.reviewed-badge--stale { padding: 2px 6px; border-radius: 5px; background: var(--warn-bg); color: var(--warn-text); }
 .diff-panel { display: flex; flex-direction: column; scroll-margin-top: 16px; background: var(--surface-muted); }
 .diff-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; padding: 10px 14px; border-bottom: 1px solid var(--line-strong); background: var(--surface); }
 .diff-toolbar-title { min-width: 0; }
 .diff-toolbar-title h4, .diff-toolbar-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-toolbar-title h4 { margin: 0; font-size: 14px; }
 .diff-toolbar-title span { margin-top: 3px; color: var(--text-muted); font-family: Consolas, 'Courier New', monospace; font-size: 11px; }
-.review-check { display: flex; align-items: center; gap: 6px; flex: none; color: var(--text-strong); font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.review-check { display: flex; align-items: center; gap: 7px; flex: none; padding: 6px 12px; border: 1px solid var(--border-button); border-radius: 6px; background: var(--surface); color: var(--text-strong); font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.review-check:hover:has(input:not(:disabled)) { border-color: var(--accent); }
+.review-check:has(input:checked) { border-color: var(--ok-line); background: var(--ok-bg); color: var(--ok); }
 .review-check:has(input:disabled) { opacity: .55; cursor: not-allowed; }
 .review-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .diff-placeholder { margin: auto; padding: 20px; color: var(--text-muted); text-align: center; }
@@ -217,22 +225,22 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .shortcut-button { flex: none; width: 32px; height: 32px; border: 1px solid var(--border-button); border-radius: 50%; background: var(--surface); color: var(--text-strong); font-weight: 800; }
 
 .pr-workspace { display: grid; gap: 14px;
-  grid-template-columns: clamp(240px, 17vw, 300px) minmax(0, 1fr) clamp(280px, 21vw, 360px);
+  grid-template-columns: clamp(240px, 19vw, 360px) minmax(0, 1fr) clamp(280px, 21vw, 360px);
   height: calc(100vh - var(--chrome-height) - var(--pr-header-height) - 40px); }
-.pr-workspace--focus { grid-template-columns: clamp(240px, 17vw, 300px) minmax(0, 1fr); }
+.pr-workspace--focus { grid-template-columns: clamp(240px, 19vw, 360px) minmax(0, 1fr); }
 .pr-workspace--focus .context-rail { display: none; }
 
 .file-list-head { padding: 0 12px 10px; border-bottom: 1px solid var(--line); }
 .file-list-head h3 { margin: 0; font-size: 13px; }
 .file-list-head .file-review-heading span { font-size: 12px; }
 
-.context-rail { min-width: 0; min-height: 0; overflow-y: auto; padding: 4px 14px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
+.context-rail { min-width: 0; min-height: 0; overflow-y: auto; padding: 0 14px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
 .context-rail .details-section { padding-top: 14px; border-top: 0; }
 .context-rail .checklist-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .context-rail .metadata { grid-template-columns: 1fr; gap: 10px; padding: 10px 0; }
 .context-rail h4 { margin: 16px 0 6px; font-size: 13px; }
 .rail-block { padding: 12px 0; border-top: 1px solid var(--line); }
-.rail-block > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-strong); }
+.rail-block > summary { position: sticky; top: 0; z-index: 1; padding: 2px 0; background: var(--surface); cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-strong); }
 .rail-block > summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
 .rail-block > summary span { color: var(--accent); font-weight: 700; }
 .rail-block .muted { margin: 8px 0 0; font-size: 12px; }
@@ -247,7 +255,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .diff-actions-label { color: var(--text-muted); font-size: 11px; font-weight: 700; }
 .diff-actions-label + button { margin-left: 2px; }
 .diff-actions-label:not(:first-child) { margin-left: 8px; }
-.diff-actions button { min-width: 30px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--border-control); border-radius: 5px; background: var(--surface); color: var(--text-strong); font-size: 12px; }
+.diff-actions button { min-width: 30px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--text-strong); font-size: 12px; }
 .diff-layout-toggle { font-weight: 700; }
 .diff-layout-toggle[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
@@ -289,7 +297,10 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 /* --- Changed files as a folder tree -------------------------------------- */
 .changed-files { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid var(--line); }
 .noise-section { flex: 0 0 auto; max-height: 40%; overflow-y: auto; border-top: 1px solid var(--line); }
-.file-role { margin: 0 0 2px 10px; font-size: 12px; color: var(--text-muted); font-style: italic; }
+/* Opis ma tylko część plików i łamie się na dwie linie, więc w drzewie podwajał liczbę
+   wierszy. Zostaje przy pliku, na którym stoisz. */
+.file-role { display: none; margin: 0 0 2px 10px; font-size: 12px; color: var(--text-muted); font-style: italic; }
+.tree-files li:has(.file-button.selected) .file-role { display: block; }
 .critical-proposal { border: 1px dashed var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
 .critical-proposal-heading { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
 .critical-proposal-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
@@ -366,7 +377,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .comment-add-glyph::before { content: '+'; display: block; font-size: 14px; line-height: 22px; text-align: center; color: var(--accent); font-weight: 700; }
 .diff-since { margin: 0 12px 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .thread-moved { margin: 6px 0 0; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.thread-moved-dot { color: var(--accent); font-size: 10px; margin-left: 6px; }
+.thread-moved-flag { color: var(--warn-text); }
 .thread-since { font-size: 12px; }
 /* A review comment can be two screens of Markdown. It is never truncated — the block
    scrolls inside itself and `resize` lets you give it as much of the panel as you want,
@@ -393,7 +404,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .zone-preview { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comment-own-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .comment-own-actions button { font-size: 11px; padding: 1px 6px; }
-.comment-delete { border-color: var(--danger, #b3261e); color: var(--danger, #b3261e); font-weight: 600; }
+.comment-delete { border-color: var(--error-line); background: var(--error-bg); color: var(--error-text); font-weight: 700; }
 .inline-comments-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
 .inline-close { margin-left: auto; }
 .tree-comments { font-size: 11px; color: var(--text-muted); }
@@ -405,7 +416,8 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .file-thread-chip--resolved { opacity: .6; }
 .file-thread-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .thread--resolved { opacity: .65; }
-.thread-resolve { font-weight: 600; }
+.thread-resolve { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.comment-remove { color: var(--error-text); }
 .thread-snippet { position: relative; margin: 6px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
 .thread-snippet pre { margin: 0; padding: 6px 8px; overflow-x: auto; }
 .thread-snippet code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; line-height: 18px; }
@@ -446,9 +458,13 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .file-button.selected .file-name { color: var(--accent); }
 .file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, 'Courier New', monospace; font-size: 12.5px; font-weight: 600; }
 .file-badges { display: flex; flex: none; gap: 5px; align-items: center; }
-.change-type { padding: 2px 6px; border-radius: 5px; background: var(--surface-chip); color: var(--text-label); font-size: 11px; white-space: nowrap; }
-.reviewed-badge { padding: 2px 6px; border-radius: 5px; background: var(--ok-soft); color: var(--ok); font-size: 11px; font-weight: 700; }
-.critical-toggle { flex: none; width: 28px; height: 28px; margin: 0 6px 0 0; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-faint); font-size: 15px; line-height: 1; }
+/* Jedna litera, całe słowo w title: przy 93 plikach nazwa potrzebuje tej szerokości. */
+.change-type { flex: none; min-width: 17px; padding: 2px 4px; border-radius: 5px; background: var(--surface-chip); color: var(--text-label); font-size: 11px; font-weight: 700; text-align: center; }
+/* Obejrzany plik gaśnie, zamiast zapalać kolejną zieleń — w drzewie zieleń zostaje
+   zaznaczeniu. Woła tylko wariant --stale, bo tam jest co zrobić. */
+.reviewed-badge { flex: none; color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.file-button.reviewed .file-name { color: var(--text-muted); font-weight: 500; }
+.critical-toggle { flex: none; width: 28px; height: 28px; margin: 0 6px 0 0; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: 15px; line-height: 1; }
 .critical-toggle:hover:not(:disabled) { color: var(--accent); background: var(--accent-soft); }
 .critical-toggle.active { color: var(--accent); }
 .previous-path { flex-basis: 100%; margin: 0; padding: 0 12px 6px 12px; color: var(--text-muted); overflow-wrap: anywhere; font-size: 11px; }
@@ -467,7 +483,6 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
   .file-review-heading { align-items: flex-start; flex-direction: column; }
   .commit-list li { flex-direction: column; gap: 4px; }
   .diff-toolbar { align-items: flex-start; flex-direction: column; }
-  .topbar-caption { display: none; }
   main { padding: 28px 16px 50px; }
   main.main--details { padding: 12px 16px; }
   .topbar--details { padding-inline: 16px; }
@@ -585,14 +600,15 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .walk-resume p { margin: 0 0 6px; }
 .walk-changed { margin: 6px 0; }
 
+/* Pasek przejścia stoi nad paskiem pliku i mówi to samo: krok, nazwę i rolę. Pozycja w
+   liście Azure DevOps i druga nazwa pliku byłyby tu dwoma licznikami o tym samym
+   mianowniku i tą samą ścieżką dwa razy. */
+.pr-workspace--walk .diff-position, .pr-workspace--walk .diff-toolbar-title { display: none; }
 .walk-bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--surface-muted); }
 .walk-progress { flex: none; color: var(--accent); font-weight: 800; font-size: 13px; }
-.walk-progress-bar { flex: none; width: 120px; height: 6px; }
 .walk-bar-file { flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
 .walk-bar-role { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 12px; }
-.walk-bar-exit { flex: none; }
 .walk-explanation { margin: 8px 12px 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--surface-muted); border-radius: 0 6px 6px 0; }
-.walk-explanation summary { font-size: 12px; color: var(--text-muted); cursor: pointer; }
 .walk-explanation-text { margin: 4px 0 0; font-size: 13px; }
 .walk-done-counts { margin: 0; font-size: 14px; }
 .walk-skipped { margin-top: 14px; }

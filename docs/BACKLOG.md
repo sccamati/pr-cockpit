@@ -702,6 +702,34 @@ wyjściowym, bo działający `PRCockpit.Api` trzymał `backend/*/bin` — wynik 
 sprawdzono, czy Azure DevOps zwraca dla `$compareTo=N` dokładnie to, czego oczekujemy, przy
 PR z rebasem albo z wymuszonym pushem — iteracje przestają wtedy być prostym ciągiem.
 
+## Wdrożone — przegląd UX widoku PR na PR o 93 plikach
+
+### B-24 — Sprzeczne liczniki, waga „Obejrzałem”, czytelność drzewa
+
+Status: zaimplementowane we frontendzie. Źródło: przegląd trzech zrzutów ekranu (drzewo, komentarz w diffie, przejście) na prośbę użytkownika; z 21 znalezisk wybrał wszystkie, z „Obejrzałem” jako checkboxem w skórce przycisku i z polonizacją etykiet checklisty.
+
+**Dwa różne „Plik X z 93” stały jednocześnie na jednym ekranie.** Pasek przejścia liczył kroki ścieżki, pasek pliku — pozycję w liście Azure DevOps: ta sama etykieta, ten sam mianownik, inna liczba. Pasek przejścia mówi teraz `Krok X z N`, a w trybie przejścia (`.pr-workspace--walk`) pozycja w drzewie i nazwa pliku z paska narzędzi są ukryte, bo pasek wyżej mówi jedno i drugie. Razem z tym zniknął `<progress>` przejścia — 120 px na 93 kroki to 1,3 px na krok, więc przez pierwsze kilkanaście plików wyglądał na zepsuty, a przy kroku 1 pokazywał 0% obok napisu „1 z 93”.
+
+**Wyjście z przejścia było dwa razy, pod dwiema nazwami.** „Pełne drzewo” w pasku i „Wyjdź z przejścia” w stopce wołały to samo `leaveWalkthrough`. Zostało to w stopce, przy „dalej” i „Pomiń”.
+
+**Panel wyjaśnienia renderował się zawsze**, a w stanie pustym był nagłówkiem i jednym przyciskiem dublującym akcję stojącą linijkę niżej, w pasku. Teraz istnieje tylko wtedy, gdy jest w nim treść albo błąd; prosi się z paska albo klawiszem `e`.
+
+**Pasek nad diffem przestawiał się między plikami.** „Ukryj komentarze” było pod `v-if`, więc „Skomentuj linię” i „Wyjaśnij ten plik” przeskakiwały w poziomie na każdym pliku z komentarzem — w narzędziu, po którym chodzi się 93 razy, to koszt pamięci mięśniowej. Przycisk jest teraz zawsze, wyłączony przy zerze.
+
+**Najważniejsza akcja wyglądała na najmniej ważną.** „Obejrzałem” był gołym checkboxem na skraju paska, a „Wyjaśnij ten plik” przyciskiem. Semantyka została (`<label>` z `<input type="checkbox">`, więc testy klawiatury i oznaczania są nietknięte), zmienił się wygląd: ramka, tło, a po zaznaczeniu zielone `--ok-bg`. Ramki pozostałych przycisków paska przygasły do `--line-strong`; kolory tekstu zostały, żeby nie zejść poniżej kontrastu.
+
+**Przy 93 plikach nazwy plików były nieczytelne** — `clients.…` obok `clients.test…`. Kompaktowanie łańcuchów folderów było już zrobione; szerokość zjadały odznaki. Typ zmiany jest jedną literą z całym słowem w `title`, obejrzany plik gaśnie zamiast zapalać zieloną odznakę (zieleń w drzewie znaczy teraz tylko „zaznaczony”), opis roli pokazuje się wyłącznie przy pliku, na którym stoisz, a pierwsza kolumna workspace'u ma górny kres 360 px zamiast 300 px. Liczniki `92/92` dostały `title`, bo dwie liczby bez etykiety mówią dopiero po zgadnięciu.
+
+**W karcie komentarza data pierwszego wpisu była dwa razy** — w nagłówku karty i pod nim; strażnik `v-if` był tylko przy autorze, nie przy `<time>`. „Rozwiąż” jest teraz akcją główną wątku, a „Usuń” w kolorze błędu (`--error-text` zamiast nieistniejącego tokenu `--danger` z zapasowym hexem). Lista wątków w szynie dostała autora i liczbę wpisów, bo dwa wątki z tym samym zdaniem były nieodróżnialne, a nieopisana kropka „●” zmieniła się w chip „kod się zmienił”.
+
+**Reszta pojedynczych poprawek:** wyłączony „Następny nieobejrzany” wyglądał klikalnie (brakowało reguły `:disabled`; jest też mniej prymarny od „Prowadź mnie przez PR” — jedno CTA na kolumnę); strzałka selecta „Pokaż zmiany” wychodziła za panel z `overflow: hidden` (brak `min-width: 0` na elemencie flex); gwiazdka ścieżki czytania miała ~2,3:1 kontrastu jako element interaktywny; ucięta nazwa gałęzi nie miała `title`; nagłówki sekcji szyny są przyklejone, bo przewinięte Summary zaczynało się w środku zdania; licznik checklisty został tylko w nagłówku PR (w trybie skupienia szyna jest ukryta); etykiety checklisty są po polsku — klucze idą do API i bazy, więc zmieniły się same napisy.
+
+**Odrzucone z przeglądu:** zarzut, że karta komentarza wtapia się w zielone tło diffu — `.zone-card` ma własny margines, tło i akcentowaną krawędź, więc nie potwierdził się w kodzie. Zwijanie nagłówka PR przy przewijaniu — wymaga JS za ~90 px diffu, a usunięcie dubli w trybie przejścia dało podobny odzysk. Przestawienie kolejności checklisty — pinuje ją PRODUCT.md §6.
+
+**Zweryfikowane:** 100 testów frontendu przechodzi. `Walkthrough.test.ts` poprawiony w 16 miejscach (licznik na „Krok”, wyjście z przejścia w stopce, prośba o wyjaśnienie z paska); `App.test.ts` **bez zmian** — to był warunek: gdyby pękł, znaczyłoby, że zmiana wyszła poza CSS i atrybuty. `npm run build` (`vue-tsc --noEmit` + vite) przechodzi.
+
+**Niesprawdzone:** backend nietknięty, ale `dotnet test` nie przebiegł — działający proces `PRCockpit.Api` trzyma DLL-e i build się nie kopiuje (ten sam przypadek co w B-23). Żaden test frontendu nie stosuje CSS ani nie rysuje layoutu, więc czytelność drzewa przy 93 plikach, waga „Obejrzałem”, lepkie nagłówki szyny i kontrast przygaszonych elementów w obu motywach są do potwierdzenia w przeglądarce.
+
 ## Później — do osobnej decyzji
 
 - **Dalszy Understand PR:** główny flow i automatyczny wybór ważnych plików po sprawdzeniu Summary.
