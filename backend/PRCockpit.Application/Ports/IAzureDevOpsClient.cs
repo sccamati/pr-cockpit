@@ -68,4 +68,12 @@ public interface IAzureDevOpsClient
     Task<FileDiff> GetFileDiffSinceIterationAsync(
         string project, string repositoryId, int pullRequestId, string path, int iterationId,
         CancellationToken ct);
+
+    /// <summary>
+    /// Which files changed after a given iteration — the list behind the "changes since
+    /// update N" filter. Paths only: the caller already holds the full change list and needs
+    /// nothing from here but which of its rows to keep.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetChangedPathsSinceIterationAsync(
+        string project, string repositoryId, int pullRequestId, int iterationId, CancellationToken ct);
 }

@@ -66,6 +66,15 @@ const progressLoading = ref(false)
 const progressError = ref('')
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
+// "Changes since update N", the way Azure DevOps offers it. Azure DevOps groups commits into
+// iterations (one per push) and can only compare whole iterations, so this filter is per
+// iteration and labelled with the commit that ended it — a commit from the middle of a push
+// cannot be isolated without diffing commit to commit ourselves.
+const filterIteration = ref<number | null>(null)
+const filterPaths = ref<string[] | null>(null)
+const filterLoading = ref(false)
+const filterError = ref('')
+let filterRequestId = 0
 // Server-backed and therefore per-PR by construction: loaded when a PR opens, cleared
 // when it closes. The old tab-local dictionaries keyed by PR are gone, and so is the key.
 const fileReviews = ref<Record<string, FileReviewEntry>>({})
@@ -83,6 +92,12 @@ const sideBySide = ref(false)
 // ponytail: the brief calls these configuration. A one-person local tool has no settings
 // file, so they are named constants here; a settings screen is the upgrade path.
 const walkParallelPrefetch = 2 // US-P5: explanations generated at once
+// How far ahead of the cursor explanations are prepared. The whole path was the rule when
+// a path was a dozen files; walking all of an eighty-file pull request that way would buy
+// eighty explanations up front, most of them before the reader decides to stop. The key-file
+// path is shorter than this window anyway, so its behaviour does not change.
+// ponytail: a fixed window, not a rate limiter — raise it when waiting is the complaint.
+const walkPrefetchWindow = 10
 // Ten files is enough to open a pull request of twenty and far too few to open one of
 // eighty — at that size a ranking of ten is a sample, not a starting point. Both the
 // ranking and the walkthrough's default path therefore grow with the change. The ranking
@@ -97,6 +112,9 @@ function walkPathLength(changedFiles: number): number {
 }
 // 'tree' is everything that existed before the walkthrough; the other three are its screens.
 const view = ref<'tree' | 'entry' | 'walk' | 'done'>('tree')
+// 'key' walks the shortlist, 'all' walks every file of the pull request. Both follow the
+// same AI ordering — the mode only decides how much of it the path holds.
+const walkMode = ref<'key' | 'all'>('key')
 const walkPosition = ref(0)
 // The pull request head at the moment the path was chosen. Null means the path was built
 // in the rail rather than by a walkthrough, and no resume is offered for it.
@@ -151,11 +169,21 @@ const criticalPaths = computed(() => {
   return readingPath.value.filter(path => currentPaths.has(path))
 })
 const criticalPathSet = computed(() => new Set(criticalPaths.value))
+// What the rail lets you add by hand — the shortlist rule, not the length of the stored
+// path, which a walkthrough of the whole pull request makes as long as the pull request.
+const manualCriticalLimit = computed(() => criticalFileLimit(details.value?.changedFiles.length ?? 0))
+// ponytail: a flat cap on the rows the rail draws. The rail is a summary of the path;
+// the walkthrough is where a long one is read.
+const railPathPreview = 15
+const railCriticalPaths = computed(() => criticalPaths.value.slice(0, railPathPreview))
+const filterPathSet = computed(() => filterPaths.value && new Set(filterPaths.value))
 const matchingFiles = computed(() => {
   const search = fileSearch.value.trim().toLocaleLowerCase()
+  const since = filterPathSet.value
   return details.value?.changedFiles.filter(file =>
-    !search || file.path.toLocaleLowerCase().includes(search) ||
-    file.originalPath?.toLocaleLowerCase().includes(search)) ?? []
+    (!since || since.has(file.path)) &&
+    (!search || file.path.toLocaleLowerCase().includes(search) ||
+      file.originalPath?.toLocaleLowerCase().includes(search))) ?? []
 })
 const filteredFiles = computed(() => onlyUnreviewed.value
   ? matchingFiles.value.filter(file => !isReviewed(file.path))
@@ -171,7 +199,7 @@ function toTreeFile(file: ChangedFile): TreeFile {
     reviewed: isReviewed(file.path),
     stale: isStale(file.path),
     critical: isCritical(file.path),
-    criticalDisabled: !isCritical(file.path) && criticalPaths.value.length >= 10,
+    criticalDisabled: !isCritical(file.path) && criticalPaths.value.length >= manualCriticalLimit.value,
     selected: selectedFilePath.value === file.path,
     role: roleByPath.value.get(file.path) ?? null,
     comments: threadsByFile.value.get(file.path)?.total ?? 0,
@@ -191,6 +219,14 @@ const criticalProposal = computed(() => {
   return (summary.value?.criticalFiles ?? [])
     .filter(file => paths.get(file.path) && !paths.get(file.path)!.category)
     .slice(0, criticalFileLimit(details.value?.changedFiles.length ?? 0))
+})
+// The other half of the same ranking: every file of the pull request, in the order the AI
+// put them in, noise last because the backend sank it there. Noise is not filtered out the
+// way it is from the shortlist — "wszystkie pliki" means all of them, and a lockfile at the
+// end is one tick, not a detour. Empty when the saved Summary predates the field.
+const fullProposal = computed(() => {
+  const paths = new Set((details.value?.changedFiles ?? []).map(file => file.path))
+  return (summary.value?.readingOrder ?? []).filter(path => paths.has(path))
 })
 const showProposal = computed(() =>
   criticalProposal.value.length > 0 && !proposalDismissed.value && criticalPaths.value.length === 0)
@@ -579,7 +615,9 @@ async function openThread(thread: PrCommentThread) {
   // The comments view sits in the same panel as the diff, so leaving it open would load
   // the file behind it and nothing on screen would change.
   commentsOpen.value = false
-  await openFile(thread.filePath)
+  // The whole diff even when the iteration filter is on: a thread is anchored to a line of
+  // the full file, and a narrowed diff may not contain that line at all.
+  await openFile(thread.filePath, null)
   openThreadInFile(thread)
 }
 const noiseFiles = computed(() => filteredFiles.value.filter(file => file.category))
@@ -652,7 +690,7 @@ function toggleCritical(path: string) {
   if (!details.value?.changedFiles.some(file => file.path === path)) return
   const selected = criticalPaths.value
   if (selected.includes(path)) saveReadingPath(selected.filter(item => item !== path))
-  else if (selected.length < criticalFileLimit(details.value?.changedFiles.length ?? 0)) {
+  else if (selected.length < manualCriticalLimit.value) {
     saveReadingPath([...selected, path])
   }
 }
@@ -723,12 +761,15 @@ const walkChangedSincePicked = computed(() =>
   !same(walkHeadSha.value, details.value.headCommitSha))
 const walkReadCount = computed(() => walkPaths.value.filter(path => isReviewed(path)).length)
 const walkSkippedPaths = computed(() => walkPaths.value.filter(path => walkSkipped.value.includes(path)))
-// The entry screen's list: the ranking by default, minus what has already been read, cut
-// to the configured length. Once the user touches it, their version is the list.
-const walkDefaultPick = computed(() => criticalProposal.value
-  .filter(file => reviewState(file.path) !== 'current')
-  .slice(0, walkPathLength(details.value?.changedFiles.length ?? 0))
-  .map(file => file.path))
+// The entry screen's list: in 'key' mode the ranking, minus what has already been read, cut
+// to the configured length; in 'all' mode the whole pull request, because leaving files out
+// is the one thing that mode is not for. Once the user touches it, their version is the list.
+const walkDefaultPick = computed(() => walkMode.value === 'all'
+  ? fullProposal.value
+  : criticalProposal.value
+    .filter(file => reviewState(file.path) !== 'current')
+    .slice(0, walkPathLength(details.value?.changedFiles.length ?? 0))
+    .map(file => file.path))
 const walkPick = computed(() => walkPicked.value ?? walkDefaultPick.value)
 const walkPickSet = computed(() => new Set(walkPick.value))
 // On the entry screen "the rest" is measured against what is selected, because the path
@@ -738,11 +779,18 @@ const walkOutsideCount = computed(() =>
   Math.max(0, (details.value?.changedFiles.length ?? 0) - walkInsideSet.value.size))
 const walkOutsideNoiseCount = computed(() =>
   (details.value?.changedFiles ?? []).filter(file => file.category && !walkInsideSet.value.has(file.path)).length)
-// Every file the entry screen can offer: the ranking plus anything already in the path.
+// Every file the entry screen can offer: the proposal for this mode plus anything already
+// in the path, so unticking a file leaves the row on screen instead of making it vanish.
 const walkCandidates = computed(() => {
-  const paths = [...criticalProposal.value.map(file => file.path), ...walkPick.value]
-  return [...new Set(paths)]
+  const proposed = walkMode.value === 'all'
+    ? fullProposal.value
+    : criticalProposal.value.map(file => file.path)
+  return [...new Set([...proposed, ...walkPick.value])]
 })
+// 'all' mode needs an order the model produced; a Summary from before this feature has
+// none, and inventing one would hide that. The user is offered the recompute instead.
+const fullOrderMissing = computed(() =>
+  walkMode.value === 'all' && summary.value !== null && fullProposal.value.length === 0)
 
 function toggleWalkPick(path: string) {
   const current = walkPick.value
@@ -754,8 +802,17 @@ function toggleWalkPick(path: string) {
 function enterWalkthrough() {
   if (!walkWorthwhile.value) return
   walkPicked.value = null
+  walkMode.value = 'key'
   walkResumeDismissed.value = false
   view.value = 'entry'
+}
+
+// Switching mode drops the hand-edited selection, because it was a selection of the other
+// list. Staying on the mode you are already on changes nothing.
+function setWalkMode(mode: 'key' | 'all') {
+  if (walkMode.value === mode) return
+  walkMode.value = mode
+  walkPicked.value = null
 }
 
 function leaveWalkthrough() {
@@ -795,6 +852,9 @@ async function goToWalkIndex(index: number) {
     return
   }
   await openFile(paths[next]!)
+  // The window follows the cursor, so a long path pays for the next few files rather than
+  // for all of them at once.
+  void prefetchExplanations()
 }
 
 // The main action of the walkthrough: this file is read, show me the next one. Marking is
@@ -824,10 +884,19 @@ function returnToSkipped(path: string) {
   void goToWalkIndex(index)
 }
 
-function cancelPrefetch() {
+// Two different endings. Moving the window only stops new requests and lets whatever is in
+// flight finish: aborting cancels the request the backend is running, which kills a model
+// run that was already paid for, while letting it land means the backend stores it and the
+// next ask for that file costs nothing. Leaving the pull request or the walkthrough does
+// abort, because there the run itself is what nobody needs.
+function stopPrefetch(abort: boolean) {
   ++prefetchToken
-  prefetchAbort?.abort()
+  if (abort) prefetchAbort?.abort()
   prefetchAbort = null
+}
+
+function cancelPrefetch() {
+  stopPrefetch(true)
 }
 
 // US-P5: the explanations of the path are generated in the background in path order, so
@@ -836,13 +905,17 @@ function cancelPrefetch() {
 async function prefetchExplanations() {
   const id = details.value?.id
   if (!id) return
-  cancelPrefetch()
+  stopPrefetch(false)
   const token = prefetchToken
   const controller = prefetchAbort = new AbortController()
   const project = projectId.value
   const repository = repositoryId.value
-  // Files whose explanation is already in hand cost nothing and are not asked for again.
-  const queue = walkPaths.value.filter(path => !explanationCache.value[path])
+  // Only the window ahead of the cursor, and only files whose explanation is not in hand:
+  // every entry here is one paid call to the model, and a walkthrough of the whole pull
+  // request is abandoned far more often than it is finished.
+  const queue = walkPaths.value
+    .slice(walkPosition.value, walkPosition.value + walkPrefetchWindow)
+    .filter(path => !explanationCache.value[path])
   let cursor = 0
   const worker = async () => {
     while (cursor < queue.length && token === prefetchToken) {
@@ -946,6 +1019,11 @@ function resetDiff() {
   resetExplanation()
   fileSearch.value = ''
   onlyUnreviewed.value = false
+  ++filterRequestId
+  filterIteration.value = null
+  filterPaths.value = null
+  filterLoading.value = false
+  filterError.value = ''
 }
 
 function resetSummary() {
@@ -1355,9 +1433,46 @@ async function explainFile() {
   }
 }
 
-// Set while the diff on screen is a since-the-comment comparison rather than the whole
+// Set while the diff on screen is a since-an-iteration comparison rather than the whole
 // change, so the toolbar can say so and offer the way back.
 const diffSinceIteration = ref<number | null>(null)
+
+// Comparing the newest iteration with itself changes nothing, so it is not offered. Newest
+// first, because "since my last pass" is the reason anybody opens this list.
+const iterationChoices = computed(() => {
+  const iterations = details.value?.iterations ?? []
+  const titles = new Map((details.value?.commits ?? []).map(commit => [commit.id, commit.message]))
+  const last = iterations.reduce((highest, item) => Math.max(highest, item.id), 0)
+  return iterations.filter(item => item.id < last).reverse().map(item => ({
+    id: item.id,
+    label: `Po aktualizacji ${item.id}` +
+      (item.sourceCommitSha && titles.has(item.sourceCommitSha)
+        ? ` — ${titles.get(item.sourceCommitSha)}` : ''),
+  }))
+})
+
+async function setFilterIteration(value: number | null) {
+  const current = ++filterRequestId
+  filterIteration.value = value
+  filterPaths.value = null
+  filterError.value = ''
+  if (value === null || !details.value) return
+  const pullRequestId = details.value.id
+  filterLoading.value = true
+  try {
+    const paths = await api.changedPathsSince(projectId.value, repositoryId.value, pullRequestId, value)
+    if (current !== filterRequestId) return
+    filterPaths.value = paths
+  } catch (cause) {
+    // A filter that silently shows everything would be worse than none: say it failed and
+    // leave the list whole rather than pretending the narrowing happened.
+    if (current !== filterRequestId) return
+    filterIteration.value = null
+    filterError.value = message(cause)
+  } finally {
+    if (current === filterRequestId) filterLoading.value = false
+  }
+}
 
 async function showChangesSinceComment(thread: PrCommentThread) {
   if (!thread.filePath || thread.iterationId === null) return
@@ -1365,10 +1480,14 @@ async function showChangesSinceComment(thread: PrCommentThread) {
   await openFile(thread.filePath, thread.iterationId)
 }
 
-async function openFile(path: string, sinceIteration?: number) {
+// sinceIteration: a number compares against that iteration, null asks for the whole diff
+// however the filter is set, and leaving it out follows the filter — so every existing
+// caller keeps working and the tree gets the narrowed diff for free.
+async function openFile(path: string, sinceIteration?: number | null) {
   if (!details.value) return
   const current = ++diffRequestId
-  diffSinceIteration.value = sinceIteration ?? null
+  const since = sinceIteration === undefined ? filterIteration.value : sinceIteration
+  diffSinceIteration.value = since
   const pullRequestId = details.value.id
   selectedFilePath.value = path
   inlineThreadId.value = null
@@ -1390,7 +1509,7 @@ async function openFile(path: string, sinceIteration?: number) {
     diffPanel.value?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
   }
   try {
-    const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path, sinceIteration)
+    const result = await api.fileDiff(projectId.value, repositoryId.value, pullRequestId, path, since ?? undefined)
     if (current !== diffRequestId) return
     if (result.kind === 'text') {
       const component = await import('./MonacoDiff.vue')
@@ -1734,8 +1853,25 @@ onMounted(async () => {
 
           <template v-else>
             <div class="walk-entry-files">
+              <!-- Dwa tryby tej samej kolejności: skrót i całość. Kolejność w obu układa AI. -->
+              <div class="walk-mode" role="group" aria-label="Zakres przejścia">
+                <button type="button" class="walk-mode-option" :class="{ 'walk-mode--on': walkMode === 'key' }"
+                  :aria-pressed="walkMode === 'key'" @click="setWalkMode('key')">
+                  Kluczowe pliki<small>{{ criticalProposal.length }}</small>
+                </button>
+                <button type="button" class="walk-mode-option" :class="{ 'walk-mode--on': walkMode === 'all' }"
+                  :aria-pressed="walkMode === 'all'" @click="setWalkMode('all')">
+                  Wszystkie pliki<small>{{ fullProposal.length || details?.changedFiles.length || 0 }}</small>
+                </button>
+              </div>
               <h3>Proponowana ścieżka ({{ walkPick.length }})</h3>
-              <p v-if="walkCandidates.length === 0" class="muted">
+              <!-- Summary sprzed tej funkcji nie ma kolejności całego PR. Zmyślanie jej
+                   byłoby gorsze niż powiedzenie tego wprost i policzenie na żądanie. -->
+              <p v-if="fullOrderMissing" class="notice" role="status">
+                To Summary powstało, zanim doszła kolejność całego PR — mam ranking, ale nie mam ułożonych wszystkich plików.
+                <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
+              </p>
+              <p v-else-if="walkCandidates.length === 0" class="muted">
                 Ranking nie wskazał plików. Wejdź w pełne drzewo albo dodaj pliki ręcznie ze ścieżki w prawej szynie.
               </p>
               <ul v-else class="walk-file-list">
@@ -1824,6 +1960,20 @@ onMounted(async () => {
                 <button type="button" :aria-pressed="!onlyUnreviewed" :class="{ active: !onlyUnreviewed }" @click="onlyUnreviewed = false">Wszystkie</button>
                 <button type="button" :aria-pressed="onlyUnreviewed" :class="{ active: onlyUnreviewed }" @click="onlyUnreviewed = true">Nieobejrzane</button>
               </div>
+              <template v-if="iterationChoices.length">
+                <label class="file-search-label" for="iteration-filter">Pokaż zmiany</label>
+                <select id="iteration-filter" class="iteration-filter" :value="filterIteration ?? ''"
+                  :disabled="filterLoading"
+                  @change="setFilterIteration(($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))">
+                  <option value="">Z całego PR</option>
+                  <option v-for="choice in iterationChoices" :key="choice.id" :value="choice.id">{{ choice.label }}</option>
+                </select>
+                <p v-if="filterError" class="notice error" role="alert">{{ filterError }}</p>
+                <p v-else-if="filterLoading" class="file-list-hint" role="status">Sprawdzam, co się zmieniło…</p>
+                <p v-else-if="filterPaths" class="file-list-hint" role="status">
+                  {{ filterPaths.length === 0 ? 'Po tej aktualizacji nic się nie zmieniło.' : `Zmienione po aktualizacji ${filterIteration}: ${filterPaths.length} z ${details.changedFiles.length}. Diff pokazuje tylko te zmiany.` }}
+                </p>
+              </template>
               <button v-if="walkWorthwhile" class="walk-enter-button" type="button" @click="enterWalkthrough">Prowadź mnie przez PR</button>
               <button class="next-file-button" type="button" :disabled="!nextUnreviewedPath" @click="openNextUnreviewed">Następny nieobejrzany →</button>
               <p v-if="matchingFiles.length === 0" class="file-list-empty">Nie znaleziono plików.</p>
@@ -1981,8 +2131,8 @@ onMounted(async () => {
                 <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
               </div>
               <p v-if="diffSinceIteration" class="notice diff-since" role="status">
-                Pokazuję wyłącznie zmiany od iteracji {{ diffSinceIteration }} — czyli to, co dopisano po komentarzu.
-                <button type="button" class="checklist-retry" @click="openFile(selectedFilePath)">Pokaż cały diff</button>
+                Pokazuję wyłącznie zmiany od iteracji {{ diffSinceIteration }} — czyli to, co dopisano później.
+                <button type="button" class="checklist-retry" @click="openFile(selectedFilePath, null)">Pokaż cały diff</button>
               </p>
               <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
               <!-- Every thread in this file, so comments are visible on arrival instead of
@@ -2240,8 +2390,8 @@ onMounted(async () => {
             </details>
 
             <details class="rail-block critical-section" :open="criticalPaths.length > 0 || showProposal">
-              <summary>Ścieżka kluczowych plików<span> · {{ criticalPaths.length }} / 10</span></summary>
-              <p class="muted">Wybierz do 10 plików i ustaw kolejność czytania. Zapisuje się lokalnie.</p>
+              <summary>Ścieżka kluczowych plików<span> · {{ criticalPaths.length }} / {{ manualCriticalLimit }}</span></summary>
+              <p class="muted">Wybierz do {{ manualCriticalLimit }} plików i ustaw kolejność czytania. Zapisuje się lokalnie.</p>
               <div v-if="showProposal" class="critical-proposal">
                 <p class="critical-proposal-heading">Propozycja AI ({{ criticalProposal.length }})</p>
                 <ol class="critical-proposal-list" aria-label="Propozycja ścieżki czytania">
@@ -2256,8 +2406,10 @@ onMounted(async () => {
                 </div>
               </div>
               <p v-else-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian po lewej.</p>
+              <!-- Po przejściu całego PR ścieżka ma tyle pozycji, ile PR ma plików. Szyna
+                   jest podsumowaniem, nie drugim widokiem przejścia — pokazuje początek. -->
               <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
-                <li v-for="(path, index) in criticalPaths" :key="path">
+                <li v-for="(path, index) in railCriticalPaths" :key="path">
                   <button class="critical-open" type="button" :title="path" @click="openCriticalFile(path)"><span class="critical-order">{{ index + 1 }}</span><span>{{ path }}</span></button>
                   <div class="critical-actions">
                     <button type="button" :disabled="index === 0" :aria-label="`Przesuń ${path} w górę`" @click="moveCritical(path, -1)">↑</button>
@@ -2266,6 +2418,9 @@ onMounted(async () => {
                   </div>
                 </li>
               </ol>
+              <p v-if="criticalPaths.length > railCriticalPaths.length" class="muted critical-more">
+                …i {{ criticalPaths.length - railCriticalPaths.length }} dalszych plików — całą ścieżkę widać w przejściu.
+              </p>
             </details>
 
             <details class="rail-block">

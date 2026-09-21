@@ -493,6 +493,51 @@ Jeśli wróci, w logu backendu stanie teraz linia Warning z treścią odpowiedzi
 powie, co się dzieje. Gdyby przyczyną okazały się dwa oddzielne obiekty JSON w jednej
 odpowiedzi albo limit 16 384 znaków wyjścia, `extractJson` tego nie załatwia.
 
+## Wdrożone — dwa zakresy przejścia i kolejność czytania całego PR
+
+Status: zaimplementowane, pokryte testami. Prośba użytkownika z 21 wrz 2026.
+
+**Ranking układał ważnością, nie kolejnością czytania.** „Most important first" w instrukcji
+dawało listę od najważniejszego, a to co innego niż kolejność, w której zmiana daje się
+zrozumieć. Instrukcja prosi teraz o kolejność, która idzie za samą zmianą: od miejsca, gdzie
+się zaczyna, przez to, czego dotyka, do skutków. Kierunek wybiera model z tego PR — zmiana
+backendowa zwykle domena → dostęp do danych → endpoint → UI, zmiana zaczynająca się od guzika
+odwrotnie. Świadomie **nie** ma tu sztywnej listy warstw po nazwach katalogów: recenzowane
+repozytoria mają różne układy i heurystyka po ścieżkach zgadywałaby tam, gdzie kontekst wie.
+
+**Nie było trybu na cały PR.** Alternatywą dla ścieżki było drzewo, czyli ta sama ściana
+osiemdziesięciu plików. Summary zwraca teraz drugie pole, `readingOrder` — każdy zmieniony
+plik dokładnie raz, w tej samej logice narracyjnej, szum na końcu. Ekran wejścia dostał
+przełącznik dwóch zakresów: „Kluczowe pliki" (jak dotąd) i „Wszystkie pliki". Oba czytają
+tę samą odpowiedź modelu, więc przełączenie nie kosztuje ani jednego wywołania.
+
+**`readingOrder` jest polem wersji 2, nie wersją 3.** Bump unieważniłby każde zapisane
+wyjaśnienie pliku w każdym PR — oba magazyny odrzucają zapis o innej wersji schematu —
+a każde z nich to opłacone wywołanie modelu. Ceną jest to, że Summary sprzed tej zmiany nie
+ma kolejności całego PR; tryb „wszystkie pliki" mówi to wprost i proponuje przeliczenie,
+zamiast pokazać kolejność, której nie dostał.
+
+**Prefetch dostał okno.** Wyjaśnienia ścieżki powstawały dla całej ścieżki naraz — przy
+ścieżce na cały PR znaczyłoby to osiemdziesiąt wywołań modelu przy starcie przejścia, które
+porzuca się po dziesiątym pliku. Teraz kupowane jest okno dziesięciu plików przed kursorem,
+przesuwane przy każdym kroku. Przesunięcie okna nie przerywa żądania w locie (jest opłacone,
+ma dolecieć do pamięci); abort został tam, gdzie wyniku nikt nie przeczyta — przy wyjściu
+z PR albo z przejścia. Ścieżka kluczowych plików jest krótsza od okna, więc jej to nie dotyka.
+
+**Przy okazji, bo ścieżka urosła:** `MaxReadingPath` w magazynie podniesiony z 25 do 2000
+(ta sama strona listy zmian, której używa klient Azure DevOps), trzy zaszyte „10" w szynie
+zamienione na `criticalFileLimit`, a lista ścieżki w szynie rysuje pierwsze 15 pozycji
+i mówi, ile zostało — po przejściu całego PR miałaby ich tyle, ile PR ma plików.
+
+**Zweryfikowane:** 133 testy backendu (doszły 4: kolejność modelu zachowana, luki dopisane,
+szum na końcu, odrzucenia poza kontraktem, ścieżka dłuższa od skrótu), 99 frontendu (doszło 5:
+pełna lista w kolejności, zapis pełnej ścieżki, powrót do skrótu, brak kolejności → prośba
+o przeliczenie, okno prefetchu). Oba buildy przechodzą.
+
+**Niesprawdzone:** nic z tego nie było widziane w przeglądarce ani na prawdziwym PR.
+W szczególności nie wiadomo, czy model faktycznie zwraca **wszystkie** ścieżki przy PR o 80+
+plikach i czy jego kolejność jest lepsza od kolejności listy zmian — walidacja pilnuje
+kontraktu, nie jakości. Nie zmierzono też, ile tokenów dokłada `readingOrder` do odpowiedzi.
 ## Wdrożone — czytelniejsza podpowiedź i ranking skalowany rozmiarem PR
 
 Status: zaimplementowane, pokryte testami. Dwie uwagi użytkownika z 20 wrz 2026.
@@ -525,6 +570,63 @@ Oba buildy przechodzą.
 **Niesprawdzone:** nie widziałem nowej podpowiedzi ani dłuższej propozycji w przeglądarce,
 i nie sprawdzono, czy model faktycznie zwraca 21 sensownych plików przy PR tej wielkości —
 limit pozwala, ale o jakości listy decyduje model.
+
+## Wdrożone — dwie pułapki w dokumentacji zamknięte (NIESP-09, NIESP-10)
+
+Status: zaimplementowane. Dwie najtańsze pozycje z przeglądu 20 wrz 2026.
+
+- **NIESP-09.** `README.md` kazał pisać własny adapter na `schemaVersion: 1` i pokazywał
+  odpowiedź bez `criticalFiles`, a `SummaryContract.SchemaVersion` wynosi **2** i odrzuca
+  taką odpowiedź jako „niepoprawny wynik”. Instrukcja opisuje teraz wersję 2, oba zadania
+  (`summary` i `file`), listę `criticalFiles` z regułą liczebności (jeden plik na cztery
+  zmienione, od 10 do 25) i mówi wprost, że wersja 1 jest odrzucana. Kontrakt **nie** został
+  wydzielony jako wersjonowany załącznik — przy jednym adapterze referencyjnym nie ma czego
+  wersjonować osobno.
+- **NIESP-10.** `docs/ARCHITECTURE.md` twierdził „bez edycji i bez kasowania”, choć jedno
+  i drugie działa dla własnych komentarzy. Zapis wymienia je w zakresie i mówi, że o pokazaniu
+  akcji decyduje `isMine`.
+
+Oba wpisy w `docs/specs/pr-cockpit.md` §15 są oznaczone jako zamknięte z rozstrzygnięciem.
+
+## Wdrożone — filtr „co przyszło po aktualizacji N”
+
+Status: zaimplementowane, pokryte testami. Prośba użytkownika: tak, jak to działa na Azure
+DevOps. Domyka pętlę, której narzędzie dotąd nie obsługiwało — **drugiego przejścia po PR,
+po poprawkach**: filtr zawęża drzewo do plików tkniętych po wybranej aktualizacji, a otwarty
+z niego plik pokazuje wyłącznie to, co w nim dopisano.
+
+**Per iteracja, nie per commit — świadomie.** Azure DevOps grupuje commity w iteracje (jedna
+na push) i porównuje wyłącznie całe iteracje. Commita ze środka pushu nie da się odseparować
+bez liczenia diffu commit-do-commita u siebie, czyli bez drugiego, własnego mechanizmu diffu.
+Lista rozwijana pokazuje więc aktualizacje, opisane tytułem commita zamykającego każdą z nich
+— a to i tak odpowiada na pytanie, dla którego się tam sięga („co przyszło od mojego ostatniego
+przejścia”).
+
+**Koszt: jeden parametr, jeden endpoint, jedna lista rozwijana.** `$compareTo` w wywołaniu
+`/iterations/{id}/changes` było zaszyte na 0; teraz jest parametrem, a `0` nadal znaczy „cały
+PR”. `GET .../changed-paths?sinceIteration=N` zwraca **same ścieżki** — przeglądarka ma już
+wiersze ze zmianami i potrzebuje tylko wiedzieć, które zostawić. Diff od iteracji istniał od
+B-21 („co się zmieniło po tym komentarzu”), więc `openFile` bierze numer iteracji z filtru
+i nic nowego po stronie diffu nie powstało.
+
+**Decyzje przy krawędziach:** wybór ostatniej iteracji zwraca pustą listę bez żądania o zmiany
+(porównanie najnowszego pushu z samym sobą nie jest błędem wartym 404); iteracja spoza PR to
+404, iteracja ≤ 0 to 400. Błąd filtru **kasuje filtr i mówi o tym** — filtr, który po cichu
+pokazuje wszystko, kłamie gorzej niż jego brak. Spóźniona lista z poprzedniego PR jest
+odrzucana własnym licznikiem żądań, jak reszta ładowań. Skok do wątku komentarza zawsze
+otwiera pełny diff, bo wątek jest zakotwiczony w linii całego pliku, której w zawężonym diffie
+może nie być.
+
+**Zweryfikowane:** 129 testów backendu (doszły 4: `$compareTo` trafia do wywołania, ostatnia
+iteracja nie wywołuje żądania o zmiany, dwa przypadki odmowy) i 94 frontendu (doszły 3:
+zawężenie drzewa i diffu wraz z powrotem do pełnego diffu, błąd filtru, spóźniona odpowiedź).
+`npm run build` przechodzi. Backend zbudowany i przetestowany z przekierowanym katalogiem
+wyjściowym, bo działający `PRCockpit.Api` trzymał `backend/*/bin` — wynik ten sam, ale
+`dotnet test PRCockpit.slnx` bez uruchomionego backendu nie był tu uruchomiony.
+
+**Niesprawdzone:** nie widziane w przeglądarce ani na prawdziwym PR. W szczególności nie
+sprawdzono, czy Azure DevOps zwraca dla `$compareTo=N` dokładnie to, czego oczekujemy, przy
+PR z rebasem albo z wymuszonym pushem — iteracje przestają wtedy być prostym ciągiem.
 
 ## Później — do osobnej decyzji
 

@@ -112,6 +112,12 @@ api.MapGet($"{PullRequests}/{{pullRequestId:int}}/diff", async (
         ? client.GetFileDiffAsync(project, repositoryId, pullRequestId, path, ct)
         : client.GetFileDiffSinceIterationAsync(project, repositoryId, pullRequestId, path, sinceIteration.Value, ct)));
 
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/changed-paths", async (
+    string project, string repositoryId, int pullRequestId, int sinceIteration,
+    IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.GetChangedPathsSinceIterationAsync(
+        project, repositoryId, pullRequestId, sinceIteration, ct)));
+
 api.MapPost("/csharp/hovers", async (CSharpHoverRequest request, ICSharpHoverAnalyzer analyzer) =>
     await Execute(() => Task.FromResult(analyzer.Build(request))));
 

@@ -91,6 +91,9 @@ export interface SummaryResponse {
   summary: string
   sentences: string[]
   criticalFiles: CriticalFile[]
+  // The whole pull request in reading order, noise last. Missing on a Summary generated
+  // before the field existed, which is exactly what the full walkthrough checks for.
+  readingOrder?: string[] | null
   baseCommitSha: string | null
   headCommitSha: string | null
   contextReport: {
@@ -212,6 +215,10 @@ export const api = {
   fileDiff: (project: string, repository: string, id: number, path: string, sinceIteration?: number) =>
     get<FileDiff>(`${location(project, repository)}/pull-requests/${id}/diff?path=${encodeURIComponent(path)}` +
       (sinceIteration ? `&sinceIteration=${sinceIteration}` : '')),
+  // Which files an iteration and everything after it touched — the list behind the
+  // "changes since update N" filter. Paths only; the rows themselves are already here.
+  changedPathsSince: (project: string, repository: string, id: number, sinceIteration: number) =>
+    get<string[]>(`${location(project, repository)}/pull-requests/${id}/changed-paths?sinceIteration=${sinceIteration}`),
   commentThreads: (project: string, repository: string, id: number) =>
     get<PrCommentThread[]>(`${location(project, repository)}/pull-requests/${id}/threads`),
   createThread: (project: string, repository: string, id: number, thread: { content: string; filePath: string | null; line: number | null }) =>

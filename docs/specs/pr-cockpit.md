@@ -1120,21 +1120,26 @@ tokenu bez restartu), czy zostawić obecne zachowanie jako świadome.
 
 ### Dokumentacja
 
-**NIESP-09 — Dokumentacja opisuje starszą wersję kontraktu wyniku AI.**
-*Obserwacja:* instrukcja dla osoby pisującej własny program analizujący podaje wersję
-kontraktu **1** i przykład odpowiedzi bez listy plików krytycznych; system przyjmuje wyłącznie
-wersję **2** z tą listą.
-*Skutek:* program napisany według tej instrukcji zostanie odrzucony jako „niepoprawny wynik".
-**→ Decyzja:** aktualizacja dokumentacji wraz z opublikowaniem kontraktu jako wersjonowanego
-załącznika (patrz §16, pytanie 6).
+**NIESP-09 — Dokumentacja opisuje starszą wersję kontraktu wyniku AI.** **[ZAMKNIĘTE
+20 wrz 2026]**
+*Obserwacja (stan sprzed poprawki):* instrukcja dla osoby pisującej własny program analizujący
+podawała wersję kontraktu **1** i przykład odpowiedzi bez listy plików krytycznych; system
+przyjmuje wyłącznie wersję **2** z tą listą.
+*Skutek:* program napisany według tej instrukcji był odrzucany jako „niepoprawny wynik".
+*Rozstrzygnięcie:* `README.md` opisuje teraz wersję **2**, oba zadania (`summary` i `file`),
+listę `criticalFiles` wraz z regułą liczebności (jeden plik na cztery zmienione, od 10 do 25)
+i mówi wprost, że wersja 1 jest odrzucana. Kontrakt nadal nie jest osobnym, wersjonowanym
+załącznikiem — przy jednym adapterze referencyjnym w repozytorium nie ma czego wersjonować
+osobno; wraca to, gdy powstanie drugi adapter pisany przez kogoś innego.
 
 **NIESP-10 — Dokumentacja architektury opisuje zakres komentarzy sprzed edycji i usuwania.**
-*Obserwacja:* zapis „zakres to założenie wątku, odpowiedź i status — bez edycji i bez
-kasowania" nie odpowiada już stanowi aplikacji: edycja i usunięcie **własnych** komentarzy
-działają.
-*Skutek:* czytelnik dokumentacji buduje błędny obraz zakresu produktu.
-**→ Decyzja:** doprecyzować regułę: zapis dotyczy tylko **własnych** komentarzy, usunięcie jest
-miękkie (komentarz zostaje w wątku bez treści), a obie akcje wymagają dwóch kroków.
+**[ZAMKNIĘTE 20 wrz 2026]**
+*Obserwacja (stan sprzed poprawki):* zapis „zakres to założenie wątku, odpowiedź i status —
+bez edycji i bez kasowania" nie odpowiadał stanowi aplikacji: edycja i usunięcie **własnych**
+komentarzy działają.
+*Skutek:* czytelnik dokumentacji budował błędny obraz zakresu produktu.
+*Rozstrzygnięcie:* `docs/ARCHITECTURE.md` wymienia edycję i skasowanie własnego komentarza
+w zakresie i mówi, że to `isMine` decyduje o pokazaniu akcji.
 
 ---
 

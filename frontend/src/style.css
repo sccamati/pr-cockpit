@@ -180,6 +180,8 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .file-search-label { padding: 0 12px 6px; color: var(--text-label); font-size: 12px; font-weight: 700; }
 .file-search { height: 38px; margin: 0 12px 12px; padding: 0 10px; border: 1px solid var(--border-control); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
 .file-search:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.iteration-filter { height: 38px; margin: 0 12px 10px; padding: 0 8px; border: 1px solid var(--border-control); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+.iteration-filter:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
 .file-filter { display: flex; margin: 0 12px 10px; border: 1px solid var(--border-control); border-radius: 6px; overflow: hidden; }
 .file-filter button { flex: 1; min-width: 0; padding: 7px 4px; border: 0; background: var(--surface); color: var(--text-soft); font-size: 12px; }
 .file-filter button + button { border-left: 1px solid var(--border-control); }
@@ -547,6 +549,16 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .walk-entry-summary { margin-bottom: 16px; }
 .walk-entry-files h3 { margin-top: 4px; }
 .walk-entry-rest { margin: 10px 0 0; color: var(--text-muted); font-size: 13px; }
+
+/* Dwa zakresy tej samej ścieżki. Liczba przy nazwie mówi, na co się zgadzasz. */
+.walk-mode { display: flex; gap: 6px; margin: 0 0 4px; }
+.walk-mode-option { display: flex; align-items: baseline; gap: 6px; }
+.walk-mode-option small { color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.walk-mode--on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.walk-mode--on small { color: inherit; }
+
+/* Ścieżka po przejściu całego PR bywa długa; szyna pokazuje początek i tak mówi. */
+.critical-more { margin: 8px 0 0; font-size: 12px; }
 
 .walk-file-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
 .walk-file-list li { display: flex; align-items: baseline; gap: 10px; padding: 5px 8px; border-radius: 6px; background: var(--surface-muted); }

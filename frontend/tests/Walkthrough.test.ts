@@ -49,11 +49,16 @@ const ranking = [
   { path: '/package-lock.json', role: 'Zależności.', why: 'Zmiana wersji.' },
 ]
 
-function summary(criticalFiles = ranking) {
+// The other half of the same answer: every file of the pull request in reading order, as
+// the backend hands it back — the model's order kept, the lockfile sunk to the end.
+const fullOrder = ['/src/c.cs', '/src/a.cs', '/src/b.cs', '/src/d.cs', '/src/e.cs',
+  '/src/f.cs', '/src/g.cs', '/src/h.cs', '/package-lock.json']
+
+function summary(criticalFiles = ranking, readingOrder: string[] | undefined = fullOrder) {
   return {
     schemaVersion: 2, summary: 'Zmieniono przepływ faktur.',
     sentences: ['Zmieniono przepływ faktur.'],
-    baseCommitSha: 'a'.repeat(40), headCommitSha: HEAD, criticalFiles,
+    baseCommitSha: 'a'.repeat(40), headCommitSha: HEAD, criticalFiles, readingOrder,
     contextReport: { changedFiles: 9, includedFiles: 9, includedDiffCharacters: 20, wasLimited: false, omittedFiles: [] },
   }
 }
@@ -222,6 +227,60 @@ describe('US-P3 — ekran wejścia', () => {
 
 // Ten named files open a pull request of twenty and only sample one of eighty, so both
 // the ranking and the default path grow with the change.
+// Tryb "wszystkie pliki": ta sama kolejność od AI, tylko bez skracania do skrótu.
+describe('tryb wszystkich plików', () => {
+  async function switchToAll() {
+    const wrapper = await openPr()
+    await wrapper.findAll('.walk-mode-option')[1]!.trigger('click')
+    return wrapper
+  }
+
+  it('offers every file of the pull request in the order the model gave, noise last', async () => {
+    const wrapper = await switchToAll()
+
+    const offered = wrapper.findAll('.walk-file-path').map(node => node.attributes('title'))
+    expect(offered).toEqual(fullOrder)
+    // Nothing is left out of a mode whose whole point is leaving nothing out.
+    expect(pickedPaths(wrapper)).toEqual(fullOrder)
+    expect(wrapper.find('.walk-entry-rest').text()).toContain('Poza przejściem zostaje 0')
+    wrapper.unmount()
+  })
+
+  it('writes the whole pull request as the reading path once started', async () => {
+    const wrapper = await switchToAll()
+    await wrapper.find('.walk-actions .walk-primary').trigger('click')
+    await flushPromises()
+
+    expect(api.setReadingPath).toHaveBeenCalledWith('project', 'repo-a', 123, fullOrder, 0, HEAD)
+    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 9')
+    wrapper.unmount()
+  })
+
+  it('goes back to the shortlist when the mode is switched back', async () => {
+    const wrapper = await switchToAll()
+    await wrapper.findAll('.walk-mode-option')[0]!.trigger('click')
+
+    expect(pickedPaths(wrapper)).toEqual(paths.slice(0, 6))
+    wrapper.unmount()
+  })
+
+  // A Summary paid for before this feature existed has a ranking but no order of the whole
+  // pull request. Making one up would look the same on screen and be a different thing.
+  it('asks for a recompute instead of inventing an order the Summary does not have', async () => {
+    // Exactly what a row written before this feature reads back as: a ranking, no order.
+    const { readingOrder: _missing, ...older } = summary()
+    api.savedSummary.mockResolvedValue({ result: older, savedAt: '2026-09-01T12:00:00Z' })
+
+    const wrapper = await switchToAll()
+
+    expect(wrapper.find('.walk-entry-files .notice').text()).toContain('zanim doszła kolejność całego PR')
+    expect(wrapper.findAll('.walk-file-pick input')).toHaveLength(0)
+    expect(api.setReadingPath).not.toHaveBeenCalled()
+    expect(api.generateSummary).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
 describe('duży PR dostaje dłuższą propozycję', () => {
   const many = Array.from({ length: 84 }, (_unused, index) => `/src/file${index}.cs`)
 
@@ -238,7 +297,7 @@ describe('duży PR dostaje dłuższą propozycję', () => {
     api.savedSummary.mockResolvedValue({
       result: summary(many.slice(0, 21).map((path, index) => ({
         path, role: `Rola ${index + 1}.`, why: `Powód ${index + 1}.`,
-      }))),
+      })), many),
       savedAt: '2026-09-01T12:00:00Z',
     })
   })
@@ -254,6 +313,25 @@ describe('duży PR dostaje dłuższą propozycję', () => {
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
     expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 11')
+    wrapper.unmount()
+  })
+
+  // Every explanation is a paid model run, and a walkthrough of 84 files is abandoned far
+  // more often than it is finished, so only the window ahead of the cursor is bought.
+  it('buys explanations for the window ahead, not for the whole pull request', async () => {
+    const wrapper = await openPr()
+    await wrapper.findAll('.walk-mode-option')[1]!.trigger('click')
+    await wrapper.find('.walk-actions .walk-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 84')
+    expect(api.explainFile.mock.calls.map(call => call[3])).toEqual(many.slice(0, 10))
+
+    api.explainFile.mockClear()
+    await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
+    await flushPromises()
+    // One step forward buys one more file, not another ten.
+    expect(api.explainFile.mock.calls.map(call => call[3])).toEqual([many[10]])
     wrapper.unmount()
   })
 })

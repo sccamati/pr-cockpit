@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   setReadingPath: vi.fn(),
   setDebugNote: vi.fn(),
   fileReviewProgress: vi.fn(),
+  changedPathsSince: vi.fn(),
   commentThreads: vi.fn(),
   createThread: vi.fn(),
   replyToThread: vi.fn(),
@@ -89,6 +90,12 @@ const details = {
     { id: 'bbbbbbbbb', message: 'Add tests', author: 'Jan', authoredAt: null },
   ],
   workItems: [],
+}
+
+// Two pushes: the "changes since update N" filter only exists when there is more than one.
+const withIterations = {
+  ...details,
+  iterations: [{ id: 1, sourceCommitSha: 'aaaaaaaaa' }, { id: 2, sourceCommitSha: 'bbbbbbbbb' }],
 }
 
 beforeEach(() => {
@@ -837,6 +844,86 @@ describe('PR review', () => {
     expect(wrapper.find('.summary-section [role="alert"]').text()).toContain('AI CLI timed out.')
     // The tree is still there, which is what "the proposal is unavailable" has to mean.
     expect(wrapper.findAll('.changed-files li').length).toBeGreaterThan(0)
+    wrapper.unmount()
+  })
+
+  it('narrows the tree and the diff to the files changed after an iteration', async () => {
+    api.pullRequest.mockResolvedValue(withIterations)
+    api.changedPathsSince.mockResolvedValue(['/src/second.cs'])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    // Only iteration 1 is offered: comparing the newest iteration with itself shows nothing.
+    const options = wrapper.findAll('#iteration-filter option')
+    expect(options.map(option => option.text())).toEqual([
+      'Z całego PR', expect.stringContaining('Po aktualizacji 1'),
+    ])
+    expect(options[1]!.text()).toContain('First change')
+
+    await wrapper.find('#iteration-filter').setValue('1')
+    await flushPromises()
+    expect(api.changedPathsSince).toHaveBeenCalledWith('project', 'repo-a', 123, 1)
+    expect(wrapper.findAll('.changed-files li')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Zmienione po aktualizacji 1: 1 z 3')
+
+    // Opening from the narrowed tree shows what arrived after that iteration, not the whole file.
+    await wrapper.findAll('.changed-files li button')[0]!.trigger('click')
+    await flushPromises()
+    expect(api.fileDiff).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/second.cs', 1)
+    expect(wrapper.find('.diff-since').text()).toContain('od iteracji 1')
+
+    // ...and the way back to the whole diff stays one click away, filter still on.
+    await wrapper.find('.diff-since button').trigger('click')
+    await flushPromises()
+    expect(api.fileDiff).toHaveBeenLastCalledWith('project', 'repo-a', 123, '/src/second.cs', undefined)
+    expect(wrapper.findAll('.changed-files li')).toHaveLength(1)
+
+    await wrapper.find('#iteration-filter').setValue('')
+    await flushPromises()
+    expect(wrapper.findAll('.changed-files li')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('leaves the list whole and says so when the iteration filter fails', async () => {
+    api.pullRequest.mockResolvedValue(withIterations)
+    api.changedPathsSince.mockRejectedValue(new Error('That iteration is no longer available.'))
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('#iteration-filter').setValue('1')
+    await flushPromises()
+
+    expect(wrapper.find('.file-list-pane [role="alert"]').text())
+      .toContain('That iteration is no longer available.')
+    expect(wrapper.findAll('.changed-files li')).toHaveLength(3)
+    expect((wrapper.find('#iteration-filter').element as HTMLSelectElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('drops a late path list from the iteration filter of the previous PR', async () => {
+    let resolveOld!: (value: unknown) => void
+    api.changedPathsSince.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    api.pullRequests.mockResolvedValue([details, { ...details, id: 456, title: 'Another PR' }])
+    api.pullRequest.mockImplementation(async (_project, _repo, id) => ({ ...withIterations, id }))
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.findAll('.pr-row')[0]!.trigger('click')
+    await flushPromises()
+    await wrapper.find('#iteration-filter').setValue('1')
+    await wrapper.find('.back-button').trigger('click')
+    await wrapper.findAll('.pr-row')[1]!.trigger('click')
+    await flushPromises()
+    resolveOld(['/src/second.cs'])
+    await flushPromises()
+
+    expect(wrapper.findAll('.changed-files li')).toHaveLength(3)
+    expect((wrapper.find('#iteration-filter').element as HTMLSelectElement).value).toBe('')
     wrapper.unmount()
   })
 })

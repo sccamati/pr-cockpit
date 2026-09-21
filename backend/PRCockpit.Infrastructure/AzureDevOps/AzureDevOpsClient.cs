@@ -352,6 +352,33 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             file with { ChangeType = "edit" }, since.SourceCommitSha, details.HeadCommitSha, ct);
     }
 
+    public async Task<IReadOnlyList<string>> GetChangedPathsSinceIterationAsync(
+        string project, string repositoryId, int pullRequestId, int iterationId, CancellationToken ct)
+    {
+        if (pullRequestId <= 0) throw new AzureDevOpsException("Invalid pull request ID.", 400);
+        if (iterationId <= 0) throw new AzureDevOpsException("Invalid iteration.", 400);
+
+        var prPath = $"{PullRequestPath(project, repositoryId)}/{pullRequestId}";
+        var (iterations, _) = await GetAsync($"{prPath}/iterations?{ApiVersion}", ct);
+        int lastId;
+        using (iterations)
+        {
+            var latest = Values(iterations.RootElement).EnumerateArray()
+                .OrderByDescending(item => item.GetProperty("id").GetInt32()).FirstOrDefault();
+            if (latest.ValueKind == JsonValueKind.Undefined)
+                throw new AzureDevOpsException("This pull request has no file changes.", 404);
+            lastId = latest.GetProperty("id").GetInt32();
+        }
+        // Asking Azure DevOps to compare the last iteration with a later one is not an error
+        // worth a page: nothing arrived after the newest push, and an empty list says exactly
+        // that. Only iterations that never existed are refused.
+        if (iterationId > lastId) throw new AzureDevOpsException("That iteration is no longer available.", 404);
+        if (iterationId == lastId) return [];
+
+        var files = await GetChangedFilesAsync(prPath, lastId, ct, iterationId);
+        return files.Select(file => file.Path).ToArray();
+    }
+
     private async Task<FileDiff> GetFileDiffAtCommitsAsync(
         string project, string repositoryId, ChangedFile file,
         string baseCommit, string sourceCommit, CancellationToken ct)
@@ -434,14 +461,19 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
 
     private sealed record FileContent(string Kind, string Text);
 
+    /// <summary>
+    /// The files an iteration changed. <paramref name="compareTo"/> is the iteration to compare
+    /// against: 0 is the merge base, so the default is the whole pull request, and any other
+    /// iteration narrows it to what arrived after that push.
+    /// </summary>
     private async Task<IReadOnlyList<ChangedFile>> GetChangedFilesAsync(
-        string path, int iterationId, CancellationToken ct)
+        string path, int iterationId, CancellationToken ct, int compareTo = 0)
     {
         var files = new List<ChangedFile>();
         var skip = 0;
         while (true)
         {
-            var (json, _) = await GetAsync($"{path}/iterations/{iterationId}/changes?$top=2000&$skip={skip}&$compareTo=0&{ApiVersion}", ct);
+            var (json, _) = await GetAsync($"{path}/iterations/{iterationId}/changes?$top=2000&$skip={skip}&$compareTo={compareTo}&{ApiVersion}", ct);
             using (json)
             {
                 foreach (var entry in json.RootElement.GetProperty("changeEntries").EnumerateArray())

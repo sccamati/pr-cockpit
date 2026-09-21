@@ -42,13 +42,21 @@ dotnet user-secrets set "Ai:Summary:Model" "your-model-id" --project backend/PRC
 
 Optional settings are `Ai:Summary:Arguments:0`, `Ai:Summary:Arguments:1`, etc. (each is a separate literal argument) and `Ai:Summary:TimeoutSeconds` (default 120, allowed 1–300). The executable is started directly, without a shell, in the backend's application directory. Its path and arguments must come from trusted backend configuration. The adapter itself is responsible for invoking the chosen model; the backend never sends it a repository path or grants it repository tools.
 
-The program receives one JSON object on standard input with `task: "summary"`, `schemaVersion: 1`, the configured `model`, a fixed `instruction`, and the bounded `context` from Azure DevOps. It must write **only** a JSON object to standard output:
+The program receives one JSON object on standard input with `task`, `schemaVersion: 2`, the configured `model`, a fixed `instruction`, and the bounded `context` from Azure DevOps. It must write **only** a JSON object to standard output. `task` is `"summary"` for the whole pull request:
 
 ```json
-{"schemaVersion":1,"sentences":["Pierwsze zdanie.","Drugie zdanie."]}
+{"schemaVersion":2,"sentences":["Pierwsze zdanie.","Drugie zdanie."],
+ "criticalFiles":[{"path":"/src/Foo.cs","role":"Nowy walidator.","why":"Tu jest reguła, którą zmienia ten PR."}],
+ "readingOrder":["/src/Foo.cs","/src/Bar.cs","/package-lock.json"]}
 ```
 
-The response needs 2–5 nonempty sentences, each at most 500 characters. Put diagnostics on standard error, keep secrets out of output, and treat PR descriptions, commit titles and code as data rather than commands. Without a configured executable, the Summary action returns a configuration error. Results are validated and then stored in the same local database as the checklist, so reopening a pull request shows the saved Summary without running the model again. The UI displays how many diffs were included and which files were omitted. A real model and Azure DevOps connection are needed to verify summary quality.
+or `"file"`, when the context holds exactly one file and the answer explains that file:
+
+```json
+{"schemaVersion":2,"sentences":["To zdanie opisuje jeden plik."]}
+```
+
+A summary needs 2–5 nonempty sentences, a file explanation 1–3, each at most 500 characters. `criticalFiles` is the reading proposal — the files that alone explain the change, in the order they should be read; an empty list or a missing field is allowed. Every `path` must be copied exactly from `context.changedFiles` — an invented or repeated path fails the whole response — and `role` and `why` are nonempty, at most 200 characters each. The list may hold at most one file per four changed ones, never fewer than 10 and never more than 25; the same number is put into the `instruction`, so following the instruction keeps you inside the limit. `readingOrder` is the same ordering applied to the whole pull request: every path from `context.changedFiles` exactly once, paths only, including the files whose text was omitted. The same allowlist applies — an invented or repeated path fails the whole response, and so does a list longer than the pull request — but anything you leave out is appended by the backend rather than refused, and files classified as noise are moved to the end whatever order you gave them. An empty or missing `readingOrder` means the backend orders the pull request itself. Anything else, including `schemaVersion: 1`, is rejected as an invalid result. Put diagnostics on standard error, keep secrets out of output, and treat PR descriptions, commit titles and code as data rather than commands. Without a configured executable, the Summary action returns a configuration error. Results are validated and then stored in the same local database as the checklist, so reopening a pull request shows the saved Summary without running the model again. The UI displays how many diffs were included and which files were omitted. A real model and Azure DevOps connection are needed to verify summary quality.
 
 ## PR checklist storage
 

@@ -167,13 +167,26 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task RejectsAnOversizeReadingPath()
     {
-        var paths = Enumerable.Range(0, SummaryContract.MaxCriticalFiles + 1)
-            .Select(index => $"/file{index}.cs").ToArray();
+        var paths = Enumerable.Range(0, 2001).Select(index => $"/file{index}.cs").ToArray();
 
         var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
             Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(paths), CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
+    }
+
+    // Walking the whole pull request is a reading path too, so the store has to hold one
+    // that is longer than the shortlist ever gets.
+    [Fact]
+    public async Task HoldsAReadingPathLongerThanTheShortlist()
+    {
+        var paths = Enumerable.Range(0, SummaryContract.MaxCriticalFiles * 4)
+            .Select(index => $"/file{index}.cs").ToArray();
+
+        await Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(paths), CancellationToken.None);
+
+        var state = await Store().GetAsync("proj", "repo", 7, CancellationToken.None);
+        Assert.Equal(paths, state.ReadingPath.Paths);
     }
 
     [Fact]

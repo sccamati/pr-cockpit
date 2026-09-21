@@ -700,6 +700,64 @@ public sealed class AzureDevOpsClientTests
         if (expected == 503) Assert.Contains("PR threads (read & write)", error.Message);
     }
 
+    [Fact]
+    public async Task ChangedPathsSinceIterationComparesTheLastIterationWithTheChosenOne()
+    {
+        var visited = new List<string>();
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            visited.Add(path);
+            if (path.Contains("/iterations?")) return Json("""{"value":[{"id":1},{"id":2},{"id":3}]}""");
+            if (path.Contains("/iterations/3/changes"))
+                return Json("""
+                    {"changeEntries":[
+                      {"item":{"path":"/src/fixed.cs"},"changeType":"edit"},
+                      {"item":{"path":"/src","isFolder":true},"changeType":"edit"}
+                    ],"nextSkip":0}
+                    """);
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var paths = await Client(http)
+            .GetChangedPathsSinceIterationAsync("Project A", "repo", 123, 1, CancellationToken.None);
+
+        Assert.Equal(["/src/fixed.cs"], paths);
+        Assert.Contains(visited, path => path.Contains("/iterations/3/changes") && path.Contains("$compareTo=1"));
+    }
+
+    [Fact]
+    public async Task ChangedPathsSinceTheLastIterationIsEmptyWithoutAskingForChanges()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Json("""{"value":[{"id":1},{"id":2}]}""");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        Assert.Empty(await Client(http)
+            .GetChangedPathsSinceIterationAsync("Project A", "repo", 123, 2, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(0, 400)]
+    [InlineData(3, 404)]
+    public async Task ChangedPathsRefusesAnIterationThisPullRequestNeverHad(int iterationId, int expected)
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Json("""{"value":[{"id":1},{"id":2}]}""");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var error = await Assert.ThrowsAsync<AzureDevOpsException>(() => Client(http)
+            .GetChangedPathsSinceIterationAsync("Project A", "repo", 123, iterationId, CancellationToken.None));
+
+        Assert.Equal(expected, error.StatusCode);
+    }
+
     // The regression guard for stage 4B: unlocking writes must not turn any read into one.
     [Fact]
     public async Task EveryReadPathStillSendsGet()

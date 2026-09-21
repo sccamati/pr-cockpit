@@ -193,6 +193,65 @@ public class SummaryRunnerTests
         Assert.Equal(502, error.StatusCode);
     }
 
+    // The whole pull request in reading order: the model's order is kept, whatever it left
+    // out is filled in by us, and noise lands last however it was listed.
+    [Fact]
+    public async Task ReadingOrderKeepsTheModelsOrderFillsTheGapsAndSinksTheNoise()
+    {
+        var analyzer = new FakeAnalyzer(new SummaryDraft(2, ["One.", "Two."], null,
+            ["/package-lock.json", "/src/c.cs", "/src/a.cs"]));
+
+        var result = await SummaryRunner.RunAsync(WideContext(), analyzer, CancellationToken.None);
+
+        Assert.Equal(["/src/c.cs", "/src/a.cs", "/src/b.cs", "/package-lock.json"], result.ReadingOrder);
+    }
+
+    // No order from the model is not an empty walkthrough: it is our own order, in the
+    // order the change list arrived, so "all files" still means all files.
+    [Fact]
+    public async Task AMissingOrEmptyReadingOrderStillCoversThePullRequest()
+    {
+        foreach (var draft in new[]
+        {
+            new SummaryDraft(2, ["One.", "Two."]),
+            new SummaryDraft(2, ["One.", "Two."], null, []),
+        })
+        {
+            var result = await SummaryRunner.RunAsync(WideContext(), new FakeAnalyzer(draft), CancellationToken.None);
+            Assert.Equal(["/src/a.cs", "/src/b.cs", "/src/c.cs", "/package-lock.json"], result.ReadingOrder);
+        }
+    }
+
+    [Fact]
+    public async Task RejectsAReadingOrderOutsideTheContract()
+    {
+        IReadOnlyList<string>[] invalid =
+        [
+            ["/src/invented.cs"],                                      // not in the pull request
+            ["/src/a.cs", "/src/a.cs"],                                // the same file twice
+            ["/src/a.cs", "/src/b.cs", "/src/c.cs", "/package-lock.json", "/src/a.cs"], // longer than the PR
+        ];
+
+        foreach (var order in invalid)
+        {
+            var analyzer = new FakeAnalyzer(new SummaryDraft(2, ["One.", "Two."], null, order));
+            var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
+                SummaryRunner.RunAsync(WideContext(), analyzer, CancellationToken.None));
+            Assert.Equal(502, error.StatusCode);
+        }
+    }
+
+    private static PrContext WideContext() => new(
+        new PrContextMetadata(123, "Change", "Description", "Author", "Repo", "feature", "main",
+            "active", DateTimeOffset.Parse("2026-09-01T12:00:00Z"), [], [],
+            new string('a', 40), new string('b', 40)),
+        ["Change"],
+        [new ContextChangedFile("/src/a.cs", "edit", null, "old", "new", null),
+         new ContextChangedFile("/src/b.cs", "edit", null, "old", "new", null),
+         new ContextChangedFile("/src/c.cs", "edit", null, "old", "new", null),
+         new ContextChangedFile("/package-lock.json", "edit", null, null, null, "lockFile")],
+        new ContextBudget(20_000, 100_000), 12, false);
+
     private static PrContext Context() => new(
         new PrContextMetadata(123, "Change", "Description", "Author", "Repo", "feature", "main",
             "active", DateTimeOffset.Parse("2026-09-01T12:00:00Z"), [], [],
