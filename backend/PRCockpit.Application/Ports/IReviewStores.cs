@@ -44,6 +44,21 @@ public interface IFileExplanationStore
         string? blobId, CancellationToken ct);
 }
 
+/// <summary>
+/// The conversation about one file, one row per turn. Unlike every other store here this
+/// one appends — the history is the point — so there is no "overwrite the stale entry"
+/// rule and no blob id on the read: staleness is decided by the caller, which keeps an old
+/// turn on screen while leaving it out of the next prompt. Returned oldest first.
+/// </summary>
+public interface IFileQuestionStore
+{
+    Task<IReadOnlyList<FileQuestionTurn>> GetAsync(
+        string project, string repositoryId, int pullRequestId, string path, CancellationToken ct);
+
+    Task<FileQuestionTurn> SaveAsync(
+        string project, string repositoryId, int pullRequestId, FileQuestionTurn turn, CancellationToken ct);
+}
+
 /// <summary>Which files were read, and the order the reviewer wants to read them in.</summary>
 public interface IReviewProgressStore
 {

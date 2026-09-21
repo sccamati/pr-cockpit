@@ -20,6 +20,7 @@ public sealed class PrCockpitContext(DbContextOptions<PrCockpitContext> options)
     public DbSet<PrFileReviewRow> FileReviews => Set<PrFileReviewRow>();
     public DbSet<PrReadingPathRow> ReadingPaths => Set<PrReadingPathRow>();
     public DbSet<PrFileExplanationRow> FileExplanations => Set<PrFileExplanationRow>();
+    public DbSet<PrFileQuestionRow> FileQuestions => Set<PrFileQuestionRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -63,6 +64,21 @@ public sealed class PrCockpitContext(DbContextOptions<PrCockpitContext> options)
             entity.Property(row => row.BlobId).HasMaxLength(ShaLength);
             entity.Property(row => row.HeadCommitSha).HasMaxLength(ShaLength);
             entity.Property(row => row.ResponseJson).IsRequired();
+        });
+
+        modelBuilder.Entity<PrFileQuestionRow>(entity =>
+        {
+            entity.ToTable("pr_file_questions");
+            // The append table, so ScopedKey does not apply: an identity id, and the scope
+            // plus path become the index the one query it serves runs on, ordered by the id.
+            entity.HasKey(row => row.Id);
+            ScopedColumns(entity);
+            entity.Property(row => row.FilePath).HasMaxLength(MaxPathLength).IsRequired();
+            entity.Property(row => row.TurnJson).IsRequired();
+            entity.HasIndex(row => new
+            {
+                row.Organization, row.Project, row.RepositoryId, row.PullRequestId, row.FilePath,
+            });
         });
 
         modelBuilder.Entity<PrReadingPathRow>(entity =>

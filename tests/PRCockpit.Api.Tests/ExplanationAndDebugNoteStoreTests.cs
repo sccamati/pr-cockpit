@@ -86,6 +86,23 @@ public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
         Assert.Equal("Nowe.", Assert.Single(stored!.Result.Sentences));
     }
 
+    // The contrast with the test above: this store appends, because the history is the
+    // feature. A re-ask is another row, and the thread reads back in the order it was asked.
+    [Fact]
+    public async Task AppendsEveryTurnAndReadsThemOldestFirst()
+    {
+        var asked = DateTimeOffset.Parse("2026-09-01T12:00:00Z");
+        foreach (var (question, minute) in new[] { ("Pierwsze?", 0), ("Drugie?", 1), ("Trzecie?", 2) })
+            await Questions().SaveAsync("proj", "repo", 7,
+                new FileQuestionTurn(2, "/src/file.cs", question, null, ["Odpowiedź."], Blob, Sha,
+                    asked.AddMinutes(minute)), CancellationToken.None);
+
+        using var context = new PrCockpitContext(_options);
+        Assert.Equal(3, await context.FileQuestions.CountAsync());
+        var thread = await Questions().GetAsync("proj", "repo", 7, "/src/file.cs", CancellationToken.None);
+        Assert.Equal(["Pierwsze?", "Drugie?", "Trzecie?"], thread.Select(turn => turn.Question));
+    }
+
     [Fact]
     public async Task KeepsTheDebugAnswerAndClearsItOnBlank()
     {
@@ -117,6 +134,7 @@ public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
     }
 
     private FileExplanationStore Explanations() => new(Context(), Configuration());
+    private FileQuestionStore Questions() => new(Context(), Configuration());
     private ChecklistStore Checklists() => new(Context(), Configuration());
 
     private PrCockpitContext Context()

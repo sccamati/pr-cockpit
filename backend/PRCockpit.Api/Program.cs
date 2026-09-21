@@ -16,6 +16,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddScoped<PullRequestContextService>();
 builder.Services.AddScoped<SummaryService>();
 builder.Services.AddScoped<FileExplanationService>();
+builder.Services.AddScoped<FileQuestionService>();
 
 // No authentication, by decision (D-01) — so the port is not offered to the network.
 var remote = LocalOnly.RemoteAddresses(builder.Configuration);
@@ -140,6 +141,21 @@ api.MapPost($"{PullRequests}/{{pullRequestId:int}}/summary/file", async (
     string project, string repositoryId, int pullRequestId, FileExplanationRequest request,
     FileExplanationService explanations, CancellationToken ct) =>
     await Execute(() => explanations.ExplainAsync(project, repositoryId, pullRequestId, request.Path ?? "", ct)));
+
+// The question travels next to the path and for the same reason: both are user-supplied
+// text, and both are checked before Azure DevOps or the model see anything.
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/summary/ask", async (
+    string project, string repositoryId, int pullRequestId, FileQuestionRequest request,
+    FileQuestionService questions, CancellationToken ct) =>
+    await Execute(() => questions.AskAsync(project, repositoryId, pullRequestId,
+        request.Path ?? "", request.Question, request.Selection, ct)));
+
+// Reading a conversation back touches nothing but our own rows — no pull request to fetch
+// and no allowlist to apply — so it goes straight to the store, like the checklist read.
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/summary/ask", async (
+    string project, string repositoryId, int pullRequestId, string path,
+    IFileQuestionStore store, CancellationToken ct) =>
+    await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, path, ct)));
 
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/checklist", async (
     string project, string repositoryId, int pullRequestId, IChecklistStore store, CancellationToken ct) =>

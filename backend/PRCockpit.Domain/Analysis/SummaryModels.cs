@@ -36,6 +36,33 @@ public record StoredFileExplanation(FileExplanation Result, DateTimeOffset Saved
 /// <summary>The request body of the per-file explanation endpoint.</summary>
 public record FileExplanationRequest(string? Path);
 
+/// <summary>
+/// The request body of the per-file question endpoint. The two limits are constants rather
+/// than literals in the service because the browser enforces the same ones.
+/// </summary>
+public record FileQuestionRequest(string? Path, string? Question, string? Selection)
+{
+    public const int MaxQuestionLength = 1_000;
+    public const int MaxSelectionLength = 4_000;
+}
+
+/// <summary>
+/// One turn of the conversation about one file: what was asked, what came back, and which
+/// version of the file it was about. Stored whole as JSON like a Summary, so it is
+/// re-validated on read rather than trusted.
+/// </summary>
+public record FileQuestionTurn(
+    int SchemaVersion, string Path, string Question, string? Selection,
+    IReadOnlyList<string> Sentences, string? BlobId, string? HeadCommitSha, DateTimeOffset AskedAt);
+
+/// <summary>
+/// What the ask task needs on top of the one-file context. The history is assembled from
+/// what we stored — the client never sends it — so a forged "you previously said" cannot be
+/// slipped into the prompt.
+/// </summary>
+public record FileQuestion(
+    string Question, string? Selection, string? BlobId, IReadOnlyList<FileQuestionTurn> History);
+
 public sealed class SummaryAnalysisException(string message, int statusCode) : Exception(message)
 {
     public int StatusCode { get; } = statusCode;

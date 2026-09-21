@@ -100,6 +100,42 @@ public class SummaryRunnerTests
         Assert.Equal(502, error.StatusCode);
     }
 
+    [Fact]
+    public async Task AnswersAQuestionAboutOneFileAndCarriesTheHistoryToTheAdapter()
+    {
+        var analyzer = new FakeAnalyzer(new SummaryDraft(2, ["  Trzyma limity.  ", "Wywoływane raz."]));
+        var earlier = new FileQuestionTurn(2, "/src/file.cs", "Po co to?", null,
+            ["Bo tak."], null, null, DateTimeOffset.UtcNow);
+        var question = new FileQuestion("A ten fragment?", "var x = 1;", "blob-1", [earlier]);
+
+        var turn = await SummaryRunner.RunAskAsync(SingleFileContext(), question, analyzer, CancellationToken.None);
+
+        // The path is the context's, never the model's or the request's.
+        Assert.Equal("/src/file.cs", turn.Path);
+        Assert.Equal(new string('b', 40), turn.HeadCommitSha);
+        Assert.Equal("blob-1", turn.BlobId);
+        Assert.Equal("A ten fragment?", turn.Question);
+        Assert.Equal("var x = 1;", turn.Selection);
+        Assert.Equal(["Trzyma limity.", "Wywoływane raz."], turn.Sentences);
+        Assert.Same(earlier, Assert.Single(analyzer.ReceivedQuestion!.History));
+    }
+
+    [Theory]
+    [InlineData(2, 0)]
+    [InlineData(2, 7)]
+    [InlineData(1, 2)]
+    public async Task RejectsAnswersOutsideTheContract(int version, int count)
+    {
+        var analyzer = new FakeAnalyzer(new SummaryDraft(version,
+            Enumerable.Repeat("Zdanie.", count).ToArray()));
+
+        var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
+            SummaryRunner.RunAskAsync(SingleFileContext(),
+                new FileQuestion("Po co to?", null, null, []), analyzer, CancellationToken.None));
+
+        Assert.Equal(502, error.StatusCode);
+    }
+
     // The path in the result comes from the context, so a context that is not exactly one
     // file is a programming error here rather than something to guess around.
     [Fact]
@@ -306,6 +342,7 @@ public class SummaryRunnerTests
     {
         public int Calls { get; private set; }
         public PrContext? ReceivedContext { get; private set; }
+        public FileQuestion? ReceivedQuestion { get; private set; }
 
         public Task<SummaryDraft> AnalyzeAsync(PrContext context, CancellationToken ct)
         {
@@ -316,5 +353,11 @@ public class SummaryRunnerTests
 
         public Task<SummaryDraft> ExplainFileAsync(PrContext context, CancellationToken ct) =>
             AnalyzeAsync(context, ct);
+
+        public Task<SummaryDraft> AskFileAsync(PrContext context, FileQuestion question, CancellationToken ct)
+        {
+            ReceivedQuestion = question;
+            return AnalyzeAsync(context, ct);
+        }
     }
 }

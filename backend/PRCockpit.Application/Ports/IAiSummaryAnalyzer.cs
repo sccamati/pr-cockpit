@@ -17,4 +17,11 @@ public interface IAiSummaryAnalyzer
     /// configuration, so a second interface would buy nothing but another registration.
     /// </summary>
     Task<SummaryDraft> ExplainFileAsync(PrContext context, CancellationToken ct);
+
+    /// <summary>
+    /// The third task, for the reason the second one gives: same executable, same contract,
+    /// same configuration. The question, the snippet and the previous turns ride inside the
+    /// request's context — never folded into the instruction, which stays fixed text.
+    /// </summary>
+    Task<SummaryDraft> AskFileAsync(PrContext context, FileQuestion question, CancellationToken ct);
 }

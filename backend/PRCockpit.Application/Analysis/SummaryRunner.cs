@@ -60,6 +60,29 @@ public static class SummaryRunner
     }
 
     /// <summary>
+    /// The third task: an answer to a free-text question about one file. Same suspicion as
+    /// the explanation, with a wider sentence range — "why does this exist" can need more
+    /// room than "what does this file do" — and the path still comes from the context,
+    /// never from the model or from the request.
+    /// </summary>
+    public static async Task<FileQuestionTurn> RunAskAsync(
+        PrContext context, FileQuestion question, IAiSummaryAnalyzer analyzer, CancellationToken ct)
+    {
+        var file = context.ChangedFiles.Count == 1 ? context.ChangedFiles[0]
+            : throw new InvalidOperationException("A file question needs a context of exactly one file.");
+
+        var draft = await analyzer.AskFileAsync(context, question, ct);
+        if (draft.SchemaVersion != SummaryContract.SchemaVersion ||
+            draft.Sentences is not { Count: >= 1 and <= 6 } ||
+            draft.Sentences.Any(sentence => string.IsNullOrWhiteSpace(sentence) || sentence.Length > 500))
+            throw new SummaryAnalysisException("AI returned an invalid answer.", 502);
+
+        return new FileQuestionTurn(SummaryContract.SchemaVersion, file.Path, question.Question,
+            question.Selection, [.. draft.Sentences.Select(sentence => sentence.Trim())],
+            question.BlobId, context.PullRequest.HeadCommitSha, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
     /// A path the model invented would send the reader to a file that is not in the pull
     /// request, so the list is checked against the context we built rather than trusted.
     /// </summary>
