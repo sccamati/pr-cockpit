@@ -736,3 +736,50 @@ Status: zaimplementowane we frontendzie. Źródło: przegląd trzech zrzutów ek
 - **Komentarze Azure DevOps:** wątki PR, najpierw do odczytu (bez zmiany PAT), potem zapis za wyłącznikiem konfiguracyjnym.
 - **Quality i Architecture:** zgodnie z [PRODUCT.md](../PRODUCT.md), po potwierdzeniu podstawowego workflow.
 - **Lokalne repozytorium i zapis pozostałych analiz:** osobne etapy po Summary.
+
+## Wdrożone — runda po poprawkach
+
+### B-25 — Drugie czytanie PR-a: co się zmieniło od mojego przejścia
+
+Status: zaimplementowane we frontendzie, pokryte testami. Prośba użytkownika z 21 wrz 2026:
+„czy da się usprawnić cały cykl życia prki — pierwsze przeglądanie, a potem przeglądanie po
+poprawkach".
+
+**Dlaczego.** Cała mechanika drugiej rundy już istniała — filtr „Po aktualizacji N", diff od
+iteracji, nieaktualność markera po blob ID, flaga „kod zmienił się po tym komentarzu" — ale
+narzędzie nie pamiętało, **którą rundę już zrobiłeś**. Wchodząc na PR, który czytałeś wczoraj,
+dostawałeś to samo drzewo 93 plików co za pierwszym razem i musiałeś sam pamiętać numer
+iteracji, żeby wybrać go z dropdowna.
+
+**Zakres.** Trzeci zakres przejścia „Od mojego przejścia" liczony **per plik**: marker zwietrzały
+(niezgodny blob ID) albo brak markera. Oferowany tylko wtedy, gdy cokolwiek zostało przeczytane
+na **starszej** głowie — porzucone pierwsze przejście ma wszystkie markery na bieżącej głowie
+i rundą nie jest. Każdy plik otwiera się na zmianach od iteracji, na której był ostatnio
+oglądany (`headSha` markera → iteracja po `sourceCommitSha` → istniejące `sinceIteration`).
+Do tego trzeci filtr komentarzy „Moje nierozwiązane" i wejście w niego wprost z ekranu rundy.
+
+**Decyzja: runda z istniejących markerów, bez nowej kolumny.** Rozważona i odrzucona była
+osobna kolumna „runda zamknięta" stemplowana na ekranie domknięcia — dokładniejsza, ale to
+migracja, nowa trasa i brak działania wstecz dla PR-ów już czytanych. `pr_file_reviews`
+niesie `ReviewedHeadSha` od B-11 i to wystarcza.
+
+**Zero kosztu.** Żadnej zmiany w backendzie, w schemacie bazy ani w liczbie wywołań modelu:
+runda nie ma prawa uruchomić AI, kolejność bierze z drzewa zamiast z `readingOrder`, więc
+działa też dla PR bez zapisanego Summary. Nie doszło też żadne nowe żądanie do Azure DevOps —
+`changedPathsSince` nie jest w tej ścieżce wołane, bo markery odpowiadają na to samo pytanie
+dokładniej (per plik, nie per PR).
+
+**Świadomy sufit (`ponytail`):** bazą jest marker, więc plik, którego nigdy nie oznaczyłeś,
+dostaje pełny diff. Wyjście zapisane w kodzie: stempel rundy w bazie.
+
+**Zweryfikowane:** 106 testów frontendu (doszło 6: runda bierze plik zwietrzały i nieczytany
+a pomija niezmieniony i szum; porzucone pierwsze przejście nie jest rundą; plik otwiera się
+z `sinceIteration` ze swojego markera, a plik bez markera bez niego; runda działa bez Summary
+i nie woła modelu; filtr komentarzy pokazuje wyłącznie nierozwiązane wątki **założone** przeze
+mnie, z plikami po poprawce na górze; przy nieznanej tożsamości filtra nie ma). `npm run build`
+przechodzi. Backend nietknięty.
+
+**Niesprawdzone — do potwierdzenia na żywym PR:** czy `sourceCommitSha` iteracji rzeczywiście
+pokrywa się z `headSha` zapisanym w markerze dla wszystkich typów zmian; testy jadą na atrapie
+`src/api`. Nie oglądano też w przeglądarce wyglądu bloku rundy ani kolejności grup w filtrze
+„Moje nierozwiązane".

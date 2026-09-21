@@ -559,3 +559,84 @@ describe('US-P7 — wznowienie', () => {
     wrapper.unmount()
   })
 })
+
+
+// The second pass, after the author pushed fixes. Everything here is computed from markers
+// the browser already holds, so what is pinned hardest is that none of it calls the model.
+describe('runda po poprawkach', () => {
+  const ITERATIONS = [{ id: 1, sourceCommitSha: OTHER_HEAD }, { id: 2, sourceCommitSha: HEAD }]
+  const withIterations = { ...details, iterations: ITERATIONS }
+  // Read at the previous push: a.cs has moved since (its blob no longer matches), b.cs has not.
+  const markers = [
+    { path: '/src/a.cs', blobId: 'f'.repeat(40), headSha: OTHER_HEAD, updatedAt: '2026-09-01T12:00:00Z' },
+    { path: '/src/b.cs', blobId: '1'.repeat(40), headSha: OTHER_HEAD, updatedAt: '2026-09-01T12:00:00Z' },
+  ]
+
+  function withMarkers(files = markers) {
+    api.pullRequests.mockResolvedValue([withIterations])
+    api.pullRequest.mockResolvedValue(withIterations)
+    api.fileReviews.mockResolvedValue({ files, readingPath: readingPath(), updatedAt: null })
+  }
+
+  it('opens on what moved or was never read, and leaves an unchanged file out', async () => {
+    withMarkers()
+
+    const wrapper = await openPr()
+
+    expect(wrapper.find('.walk-round').exists()).toBe(true)
+    // a.cs is back because its content moved; b.cs is not, because it did not. The lockfile
+    // is noise and stays out of the default the way it does in every other mode.
+    expect(pickedPaths(wrapper)).toEqual(['/src/a.cs', ...paths.slice(2)])
+    expect(wrapper.find('.walk-round-counts').text()).toContain('1 plik')
+    expect(wrapper.find('.walk-entry').text()).not.toContain('package-lock.json')
+    expect(api.setReadingPath).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('is not offered for a first pass that is merely unfinished', async () => {
+    // Same markers, stamped at the head the pull request still has: nobody pushed anything,
+    // so there is no second round — just a first one left in the middle.
+    withMarkers([{ path: '/src/a.cs', blobId: '0'.repeat(40), headSha: HEAD, updatedAt: '2026-09-01T12:00:00Z' }])
+
+    const wrapper = await openPr()
+
+    expect(wrapper.find('.walk-round').exists()).toBe(false)
+    expect(pickedPaths(wrapper)).toEqual(paths.slice(1, 6))
+    wrapper.unmount()
+  })
+
+  it('opens each file on the changes that arrived after you last saw it', async () => {
+    withMarkers()
+
+    const wrapper = await openPr()
+    await wrapper.find('.walk-actions .walk-primary').trigger('click')
+    await flushPromises()
+
+    // a.cs was last seen at iteration 1, so the diff is asked for against iteration 1.
+    expect(api.fileDiff).toHaveBeenLastCalledWith('project', 'repo-a', 123, '/src/a.cs', 1)
+
+    await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
+    await flushPromises()
+    // c.cs has no marker, so there is nothing to measure from and the whole diff is asked for.
+    expect(api.fileDiff).toHaveBeenLastCalledWith('project', 'repo-a', 123, '/src/c.cs', undefined)
+    wrapper.unmount()
+  })
+
+  it('needs no Summary and never calls the model', async () => {
+    withMarkers()
+    api.savedSummary.mockResolvedValue(null)
+
+    const wrapper = await openPr()
+
+    expect(wrapper.find('.walk-round').exists()).toBe(true)
+    expect(pickedPaths(wrapper)).toEqual(['/src/a.cs', ...paths.slice(2)])
+    // The "no Summary yet" prompt belongs to the first pass; the round has nothing to buy.
+    expect(wrapper.find('.walk-no-summary').exists()).toBe(false)
+
+    await wrapper.find('.walk-actions .walk-primary').trigger('click')
+    await flushPromises()
+    expect(api.generateSummary).not.toHaveBeenCalled()
+    expect(api.explainFile).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})

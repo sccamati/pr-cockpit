@@ -1065,3 +1065,63 @@ describe('Skróty klawiszowe', () => {
     expect(() => press('m')).not.toThrow()
   })
 })
+
+
+// Closing a review round means going back to your own remarks, so the comments view can show
+// exactly those. "Mine" is the thread I started, not every thread I happen to have typed in.
+describe('moje nierozwiązane wątki', () => {
+  const mine = (id: number, path: string, status: string, isMine: boolean, iterationId: number | null = null) => ({
+    id, status, filePath: path, rightLine: 4, leftLine: null, isSystem: false, iterationId,
+    comments: [
+      { id: id * 10, author: isMine ? 'Ja' : 'Anna', content: `Uwaga ${id}.`, commentType: 'text', publishedAt: null, authorId: isMine ? 'ME' : 'ANNA', isMine },
+      { id: id * 10 + 1, author: 'Ja', content: 'Dopisek.', commentType: 'text', publishedAt: null, authorId: 'ME', isMine: true },
+    ],
+  })
+
+  it('shows only the unresolved threads I started, with the answered code first', async () => {
+    const withIterations = { ...details, iterations: [{ id: 1, sourceCommitSha: 'a'.repeat(40) }, { id: 2, sourceCommitSha: 'b'.repeat(40) }] }
+    api.pullRequests.mockResolvedValue([withIterations])
+    api.pullRequest.mockResolvedValue(withIterations)
+    api.commentThreads.mockResolvedValue([
+      mine(1, '/src/first.cs', 'active', true),                 // mine, open, code has not moved
+      mine(2, '/src/second.cs', 'fixed', true),                 // mine, already resolved
+      mine(3, '/tests/third.cs', 'active', false),              // somebody else's, though I replied in it
+      mine(4, '/src/second.cs', 'active', true, 1),             // mine, open, author pushed after it
+    ])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    await wrapper.findAll('.comments-toolbar .file-filter button')[2]!.trigger('click')
+
+    expect(wrapper.findAll('.thread--full')).toHaveLength(2)
+    // The file where the author already answered in code is the one to look at first.
+    expect(wrapper.findAll('.thread-group-head').map(head => head.text()))
+      .toEqual(['/src/second.cs', '/src/first.cs'])
+    wrapper.unmount()
+  })
+
+  it('does not offer the filter when the identity probe told us nothing', async () => {
+    // Nothing in this thread is mine, not even the reply, which is what a failed identity
+    // probe looks like from here.
+    api.commentThreads.mockResolvedValue([{
+      id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,
+      comments: [{ id: 10, author: 'Anna', content: 'Uwaga.', commentType: 'text', publishedAt: null, authorId: 'ANNA', isMine: false }],
+    }])
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    // Every comment would say "not mine", so the filter could only ever show an empty list.
+    expect(wrapper.findAll('.comments-toolbar .file-filter button')).toHaveLength(2)
+    wrapper.unmount()
+  })
+})

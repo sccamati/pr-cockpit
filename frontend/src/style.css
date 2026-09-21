@@ -570,6 +570,11 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .walk-entry, .walk-done { max-width: 900px; margin: 0 auto; padding: 18px 20px 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .walk-entry h3, .walk-done h3 { margin: 0 0 8px; }
 .walk-entry-summary { margin-bottom: 16px; }
+.walk-round { margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+.walk-round h3 { margin: 0 0 6px; }
+.walk-round-counts { margin: 0; }
+.walk-round-threads { margin-top: 8px; border-color: var(--accent); color: var(--accent); font-weight: 700; }
+
 .walk-entry-files h3 { margin-top: 4px; }
 .walk-entry-rest { margin: 10px 0 0; color: var(--text-muted); font-size: 13px; }
 

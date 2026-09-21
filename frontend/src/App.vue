@@ -36,7 +36,7 @@ type ReadableThread = Omit<PrCommentThread, 'comments'> & { comments: ReadableCo
 const threads = ref<ReadableThread[]>([])
 const commentsOpen = ref(false)
 const threadSearch = ref('')
-const onlyActiveThreads = ref(false)
+const threadFilter = ref<'all' | 'active' | 'mine'>('all')
 // Two steps, always. Enter never sends: a comment is visible to the whole team and cannot
 // be taken back, so the draft is written first and confirmed second.
 const draft = ref<{ target: string; text: string } | null>(null)
@@ -106,8 +106,10 @@ function walkPathLength(changedFiles: number): number {
 // 'tree' is everything that existed before the walkthrough; the other three are its screens.
 const view = ref<'tree' | 'entry' | 'walk' | 'done'>('tree')
 // 'key' walks the shortlist, 'all' walks every file of the pull request. Both follow the
-// same AI ordering — the mode only decides how much of it the path holds.
-const walkMode = ref<'key' | 'all'>('key')
+// same AI ordering — the mode only decides how much of it the path holds. 'round' is the
+// second pass after the author pushed fixes: only what moved since you last read it, in
+// tree order, and without a single call to the model.
+const walkMode = ref<'key' | 'all' | 'round'>('key')
 const walkPosition = ref(0)
 // The pull request head at the moment the path was chosen. Null means the path was built
 // in the rail rather than by a walkthrough, and no resume is offered for it.
@@ -262,10 +264,23 @@ const threadsByFile = computed(() => {
 const threadsInFile = computed(() => threads.value
   .filter(thread => thread.filePath === selectedFilePath.value)
   .sort((a, b) => (a.rightLine ?? 0) - (b.rightLine ?? 0)))
+// Azure DevOps marks the comment, not the thread, so a thread is mine when I started it —
+// its first comment. Answering inside somebody else's thread does not make closing it my job.
+function startedByMe(thread: PrCommentThread): boolean {
+  return thread.comments[0]?.isMine === true
+}
+// What a second pass has to close: my own remarks that nobody resolved.
+const myOpenThreads = computed(() =>
+  threads.value.filter(thread => !isResolved(thread) && startedByMe(thread)))
+// With the identity probe down every comment arrives as isMine: false, so the filter would be
+// an empty list with no explanation. Then it is not offered at all.
+const mineKnown = computed(() =>
+  threads.value.some(thread => thread.comments.some(comment => comment.isMine)))
 const visibleThreads = computed(() => {
   const search = threadSearch.value.trim().toLocaleLowerCase()
   return threads.value.filter(thread => {
-    if (onlyActiveThreads.value && isResolved(thread)) return false
+    if (threadFilter.value === 'active' && isResolved(thread)) return false
+    if (threadFilter.value === 'mine' && (isResolved(thread) || !startedByMe(thread))) return false
     if (!search) return true
     return thread.filePath?.toLocaleLowerCase().includes(search) ||
       thread.comments.some(comment =>
@@ -277,6 +292,9 @@ const visibleThreads = computed(() => {
 // order you read the pull request in, so a comment is where you expect it to be.
 const threadGroups = computed(() => {
   const order = new Map(orderedPaths.value.map((path, index) => [path, index]))
+  // Closing a remark starts with the ones the author answered in code, so in "mine" mode
+  // those files float to the top. Everywhere else the reading order is the only order.
+  const movedFirst = threadFilter.value === 'mine'
   const groups = new Map<string, ReadableThread[]>()
   for (const thread of visibleThreads.value) {
     const key = thread.filePath ?? ''
@@ -290,8 +308,11 @@ const threadGroups = computed(() => {
       label: path ? path : 'Bez pliku — cały PR',
       threads: items.sort((a, b) => (a.rightLine ?? a.leftLine ?? 0) - (b.rightLine ?? b.leftLine ?? 0)),
       rank: path ? order.get(path) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER,
+      moved: items.some(thread => movedSinceComment(thread)),
     }))
-    .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label))
+    .sort((a, b) =>
+      (movedFirst ? Number(b.moved) - Number(a.moved) : 0) ||
+      a.rank - b.rank || a.label.localeCompare(b.label))
 })
 
 // The few lines the comment is actually about. One diff per commented file, fetched once
@@ -363,6 +384,13 @@ function toggleComments() {
   draft.value = null
   commentError.value = ''
   void loadSnippets()
+}
+
+// From the round screen straight to the remarks waiting for an answer.
+function openMyThreads() {
+  threadFilter.value = 'mine'
+  if (commentsOpen.value) return
+  toggleComments()
 }
 
 function startDraft(target: string) {
@@ -748,15 +776,57 @@ const walkChangedSincePicked = computed(() =>
   !same(walkHeadSha.value, details.value.headCommitSha))
 const walkReadCount = computed(() => walkPaths.value.filter(path => isReviewed(path)).length)
 const walkSkippedPaths = computed(() => walkPaths.value.filter(path => walkSkipped.value.includes(path)))
+// The second pass. A file belongs to it when its marker went stale — positive evidence the
+// content moved — or when it has no marker at all, because an unread file is unread whichever
+// push brought it. Noise stays out of the default the way it stays out of the shortlist; it
+// can still be ticked on by hand. No AI here: the order is the tree's.
+const roundPaths = computed(() => {
+  const order = new Map(orderedPaths.value.map((path, index) => [path, index]))
+  return (details.value?.changedFiles ?? [])
+    .filter(file => !file.category && reviewState(file.path) !== 'current')
+    .map(file => file.path)
+    // A file hidden by the search box or the iteration filter keeps its place at the end
+    // instead of dropping out of the round — the round is about the pull request, not the
+    // current view of it.
+    .sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER))
+})
+const roundUnreadCount = computed(() => roundPaths.value.filter(path => !fileReviews.value[path]).length)
+// Something was read at an earlier head, so the pull request moved since you were here. An
+// unfinished first pass has every marker at the current head and is not a second round.
+const readAtOlderHead = computed(() => {
+  const head = details.value?.headCommitSha
+  if (!head) return false
+  return Object.values(fileReviews.value).some(entry => entry.headSha && !same(entry.headSha, head))
+})
+const roundAvailable = computed(() => readAtOlderHead.value && roundPaths.value.length > 0)
+
+// The iteration this file was last seen at, so the second pass opens on what arrived after
+// it instead of the whole diff again. Null asks for the whole diff: no marker, a head SHA
+// belonging to no iteration of this pull request, or the newest iteration, where the
+// comparison would be with itself and show nothing.
+// ponytail: the baseline is the marker, so a file you never marked has nothing to measure
+// from and gets the full diff. A per-PR round stamp in the database would close that.
+function roundSince(path: string): number | null {
+  const saved = fileReviews.value[path]?.headSha
+  if (!saved) return null
+  const match = (details.value?.iterations ?? []).find(item =>
+    item.sourceCommitSha && same(item.sourceCommitSha, saved))
+  if (!match || match.id >= lastIteration.value) return null
+  return match.id
+}
+
 // The entry screen's list: in 'key' mode the ranking, minus what has already been read, cut
 // to the configured length; in 'all' mode the whole pull request, because leaving files out
-// is the one thing that mode is not for. Once the user touches it, their version is the list.
-const walkDefaultPick = computed(() => walkMode.value === 'all'
-  ? fullProposal.value
-  : criticalProposal.value
+// is the one thing that mode is not for; in 'round' mode whatever moved since your last
+// pass. Once the user touches it, their version is the list.
+const walkDefaultPick = computed(() => {
+  if (walkMode.value === 'round') return roundPaths.value
+  if (walkMode.value === 'all') return fullProposal.value
+  return criticalProposal.value
     .filter(file => reviewState(file.path) !== 'current')
     .slice(0, walkPathLength(details.value?.changedFiles.length ?? 0))
-    .map(file => file.path))
+    .map(file => file.path)
+})
 const walkPick = computed(() => walkPicked.value ?? walkDefaultPick.value)
 const walkPickSet = computed(() => new Set(walkPick.value))
 // On the entry screen "the rest" is measured against what is selected, because the path
@@ -769,9 +839,11 @@ const walkOutsideNoiseCount = computed(() =>
 // Every file the entry screen can offer: the proposal for this mode plus anything already
 // in the path, so unticking a file leaves the row on screen instead of making it vanish.
 const walkCandidates = computed(() => {
-  const proposed = walkMode.value === 'all'
-    ? fullProposal.value
-    : criticalProposal.value.map(file => file.path)
+  const proposed = walkMode.value === 'round'
+    ? roundPaths.value
+    : walkMode.value === 'all'
+      ? fullProposal.value
+      : criticalProposal.value.map(file => file.path)
   return [...new Set([...proposed, ...walkPick.value])]
 })
 // 'all' mode needs an order the model produced; a Summary from before this feature has
@@ -787,16 +859,18 @@ function toggleWalkPick(path: string) {
 }
 
 function enterWalkthrough() {
-  if (!walkWorthwhile.value) return
+  // A second pass is worth the screen whatever the size of the pull request — the whole
+  // point is that it is shorter than the first one.
+  if (!walkWorthwhile.value && !roundAvailable.value) return
   walkPicked.value = null
-  walkMode.value = 'key'
+  walkMode.value = roundAvailable.value ? 'round' : 'key'
   walkResumeDismissed.value = false
   view.value = 'entry'
 }
 
 // Switching mode drops the hand-edited selection, because it was a selection of the other
 // list. Staying on the mode you are already on changes nothing.
-function setWalkMode(mode: 'key' | 'all') {
+function setWalkMode(mode: 'key' | 'all' | 'round') {
   if (walkMode.value === mode) return
   walkMode.value = mode
   walkPicked.value = null
@@ -808,6 +882,13 @@ function leaveWalkthrough() {
 
 // US-P3: accepting is what turns a proposal into a reading path, and the path is what the
 // walkthrough walks. Nothing here happens without the click.
+// In the second pass a file opens on the changes that arrived after you last saw it, so
+// what you read is the fix and not the whole file again. The bar above the diff says so and
+// offers the whole diff back. Every other mode keeps opening the full diff.
+function openWalkFile(path: string) {
+  return walkMode.value === 'round' ? openFile(path, roundSince(path)) : openFile(path)
+}
+
 async function startWalkthrough(paths: string[] = walkPick.value) {
   if (paths.length === 0) return
   walkSkipped.value = []
@@ -816,13 +897,13 @@ async function startWalkthrough(paths: string[] = walkPick.value) {
   view.value = 'walk'
   await saveReadingPath(paths, 0)
   const first = walkPaths.value[0]
-  if (first) await openFile(first)
+  if (first) await openWalkFile(first)
 }
 
 function resumeWalkthrough() {
   view.value = 'walk'
   const path = walkFilePath.value
-  if (path) void openFile(path)
+  if (path) void openWalkFile(path)
 }
 
 async function goToWalkIndex(index: number) {
@@ -834,7 +915,7 @@ async function goToWalkIndex(index: number) {
     view.value = 'done'
     return
   }
-  await openFile(paths[next]!)
+  await openWalkFile(paths[next]!)
 }
 
 // The main action of the walkthrough: this file is read, show me the next one. Marking is
@@ -996,7 +1077,7 @@ function resetThreads() {
   threadsError.value = ''
   commentsOpen.value = false
   threadSearch.value = ''
-  onlyActiveThreads.value = false
+  threadFilter.value = 'all'
   inlineThreadId.value = null
   draft.value = null
   editing.value = null
@@ -1079,6 +1160,14 @@ async function loadFileReviews(project: string, repository: string, id: number) 
     // US-P7: a walkthrough taken to its end is done with. Reopening the pull request lands
     // on the ordinary screen, with nothing offered to resume.
     if (walkHeadSha.value !== null && walkFinished.value) view.value = 'tree'
+    // The second pass can only be recognised from the markers, and openPullRequest picks the
+    // screen before they arrive — so the decision belongs here. A walkthrough already running
+    // is left alone.
+    if ((view.value === 'tree' || view.value === 'entry') && roundAvailable.value) {
+      walkPicked.value = null
+      walkMode.value = 'round'
+      view.value = 'entry'
+    }
     resumeAtFirstUnread()
   } catch (cause) {
     if (current === reviewRequestId) fileReviewError.value = message(cause)
@@ -1734,6 +1823,20 @@ onMounted(async () => {
         <!-- US-P3. Opening a pull request of 83 files on a tree of 83 files is the problem
              this screen exists for: one sentence, eight files, one decision. -->
         <section v-if="view === 'entry'" class="walk-entry" aria-label="Wejście w przejście">
+          <!-- Druga runda. Liczona z markerów, które już są w przeglądarce — bez AI,
+               bez dodatkowego pytania do Azure DevOps. -->
+          <div v-if="walkMode === 'round'" class="walk-round">
+            <h3>Runda po poprawkach</h3>
+            <p class="walk-round-counts">
+              Od Twojego czytania zmieniło się <strong>{{ stalePaths.length }}</strong>
+              {{ stalePaths.length === 1 ? 'plik' : 'plików' }}<template v-if="roundUnreadCount">,
+              a <strong>{{ roundUnreadCount }}</strong> {{ roundUnreadCount === 1 ? 'pliku' : 'plików' }} nie widziałeś w ogóle</template>.
+              Każdy otworzy się na zmianach od iteracji, na której go ostatnio oglądałeś.
+            </p>
+            <button v-if="myOpenThreads.length" type="button" class="walk-round-threads" @click="openMyThreads">
+              {{ myOpenThreads.length }} {{ myOpenThreads.length === 1 ? 'Twój wątek czeka' : 'Twoich wątków czeka' }} na domknięcie
+            </button>
+          </div>
           <div class="walk-entry-summary">
             <h3>Co się zmieniło</h3>
             <p v-if="summaryLoading || summaryReadLoading" class="notice" role="status">Przygotowuję propozycję ścieżki…</p>
@@ -1755,7 +1858,7 @@ onMounted(async () => {
             </p>
             <!-- Nothing saved for this pull request: the model runs when asked, not when
                  the screen opens. Every AI run is money, and it is the user's money. -->
-            <div v-else class="walk-no-summary">
+            <div v-else-if="walkMode !== 'round'" class="walk-no-summary">
               <p class="muted">Dla tego PR nie ma jeszcze Summary, więc nie ma propozycji ścieżki.</p>
               <button type="button" class="walk-primary" :disabled="summaryLoading" @click="generateSummary">Zaproponuj ścieżkę (uruchomi AI)</button>
             </div>
@@ -1786,8 +1889,12 @@ onMounted(async () => {
                   :aria-pressed="walkMode === 'all'" @click="setWalkMode('all')">
                   Wszystkie pliki<small>{{ fullProposal.length || details?.changedFiles.length || 0 }}</small>
                 </button>
+                <button v-if="roundAvailable" type="button" class="walk-mode-option" :class="{ 'walk-mode--on': walkMode === 'round' }"
+                  :aria-pressed="walkMode === 'round'" @click="setWalkMode('round')">
+                  Od mojego przejścia<small>{{ roundPaths.length }}</small>
+                </button>
               </div>
-              <h3>Proponowana ścieżka ({{ walkPick.length }})</h3>
+              <h3>{{ walkMode === 'round' ? 'Do przejrzenia w tej rundzie' : 'Proponowana ścieżka' }} ({{ walkPick.length }})</h3>
               <!-- Summary sprzed tej funkcji nie ma kolejności całego PR. Zmyślanie jej
                    byłoby gorsze niż powiedzenie tego wprost i policzenie na żądanie. -->
               <p v-if="fullOrderMissing" class="notice" role="status">
@@ -1812,7 +1919,7 @@ onMounted(async () => {
               Poza przejściem zostaje {{ walkOutsideCount }} {{ walkOutsideCount === 1 ? 'plik' : 'plików' }}<template v-if="walkOutsideNoiseCount">, w tym {{ walkOutsideNoiseCount }} {{ walkOutsideNoiseCount === 1 ? 'zaklasyfikowany' : 'zaklasyfikowanych' }} jako szum</template>.
             </p>
             <div class="walk-actions">
-              <button type="button" class="walk-primary" :disabled="walkPick.length === 0" @click="startWalkthrough()">Rozpocznij przejście ({{ walkPick.length }})</button>
+              <button type="button" class="walk-primary" :disabled="walkPick.length === 0" @click="startWalkthrough()">{{ walkMode === 'round' ? 'Rozpocznij rundę' : 'Rozpocznij przejście' }} ({{ walkPick.length }})</button>
               <button type="button" @click="view = 'tree'">Pełne drzewo plików</button>
             </div>
           </template>
@@ -1943,8 +2050,9 @@ onMounted(async () => {
                 <input id="thread-search" v-model="threadSearch" class="thread-search" type="search"
                   placeholder="Szukaj w treści, autorze lub ścieżce" autocomplete="off">
                 <div class="file-filter" role="group" aria-label="Filtr komentarzy">
-                  <button type="button" :aria-pressed="!onlyActiveThreads" :class="{ active: !onlyActiveThreads }" @click="onlyActiveThreads = false">Wszystkie</button>
-                  <button type="button" :aria-pressed="onlyActiveThreads" :class="{ active: onlyActiveThreads }" @click="onlyActiveThreads = true">Aktywne</button>
+                  <button type="button" :aria-pressed="threadFilter === 'all'" :class="{ active: threadFilter === 'all' }" @click="threadFilter = 'all'">Wszystkie</button>
+                  <button type="button" :aria-pressed="threadFilter === 'active'" :class="{ active: threadFilter === 'active' }" @click="threadFilter = 'active'">Aktywne</button>
+                  <button v-if="mineKnown" type="button" :aria-pressed="threadFilter === 'mine'" :class="{ active: threadFilter === 'mine' }" @click="threadFilter = 'mine'">Moje nierozwiązane</button>
                 </div>
                 <button type="button" class="thread-new" :disabled="!commentsEnabled" @click="startDraft('new')">Nowy komentarz do PR</button>
               </div>
