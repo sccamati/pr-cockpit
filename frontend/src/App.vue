@@ -1423,6 +1423,11 @@ async function openFile(path: string, sinceIteration?: number | null) {
   diffLoading.value = true
   await nextTick()
   if (current !== diffRequestId) return
+  // The file can be picked from anywhere — the keyboard, "next file", the walkthrough — so
+  // the tree follows the selection. 'nearest' means a click in the tree moves nothing.
+  // ponytail: optional call — jsdom has no scrollIntoView, and a missing scroll is not
+  // worth a stub in every test that opens a file.
+  document.querySelector('.file-button.selected')?.scrollIntoView?.({ behavior: scrollBehavior(), block: 'nearest' })
   if (window.matchMedia('(max-width: 900px)').matches) {
     diffPanel.value?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
   }

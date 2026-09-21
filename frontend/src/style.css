@@ -324,8 +324,12 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .thread-location { font: inherit; font-size: 12px; font-weight: 600; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
 .thread-location:disabled { color: var(--text-muted); cursor: default; }
 .thread-status { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
+/* A reply in a thread starts where the previous one ends, so it gets a rule and real
+   space above it — without that the next author's name reads as another line of the
+   comment before it. */
 .thread-comment { margin-top: 4px; }
-.thread-author { font-size: 12px; font-weight: 600; }
+.thread-comment + .thread-comment { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-mid); }
+.thread-author { font-size: 12px; font-weight: 700; color: var(--text-strong); }
 .thread-date { margin-left: 6px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .comments-off { margin: 8px 0 0; font-size: 12px; }
 .comments-off code { font-family: Consolas, 'Courier New', monospace; }
@@ -336,7 +340,7 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .pr-workspace--readonly .thread-new,
 .pr-workspace--readonly .comment-line-button,
 .pr-workspace--readonly .comment-add-glyph::before { display: none; }
-.thread-content { margin: 2px 0 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thread-content { margin: 4px 0 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .thread-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .comments-open { margin-top: 10px; width: 100%; }
 .comments-view { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; overflow-y: auto; }
