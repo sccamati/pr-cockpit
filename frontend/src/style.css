@@ -376,7 +376,11 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
    absolutely positioned box over the whole content — so it paints over the comment
    block and eats every click in it, cursor included. The zone node is already
    position:absolute, so one z-index lifts it back above the code. */
-.comment-zone { width: 100%; z-index: 2; cursor: default; }
+/* Monaco wylacza zaznaczanie na calym edytorze, zeby samemu zarzadzac selekcja kodu,
+   a nasze karty komentarzy siedza w jego strefach i to dziedzicza. Tutaj jest zwykly
+   tekst do przeczytania i skopiowania, wiec zaznaczanie wraca. Kod obok zostaje pod
+   kontrola Monaka. */
+.comment-zone { width: 100%; z-index: 2; cursor: default; -webkit-user-select: text; user-select: text; }
 .zone-card { margin: 4px 10px 6px 8px; padding: 8px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-muted); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 .zone-card--draft { border-left-style: dashed; }
 .zone-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; cursor: pointer; }

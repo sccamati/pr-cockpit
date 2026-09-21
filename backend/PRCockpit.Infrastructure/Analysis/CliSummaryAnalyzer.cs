@@ -61,9 +61,14 @@ public sealed class CliSummaryAnalyzer(
         if (string.IsNullOrWhiteSpace(executable))
             throw new SummaryAnalysisException("Configure Ai:Summary:Executable on the backend.", 503);
 
-        var timeout = configuration.GetValue("Ai:Summary:TimeoutSeconds", 120);
-        if (timeout is < 1 or > 300)
-            throw new SummaryAnalysisException("Ai:Summary:TimeoutSeconds must be between 1 and 300.", 503);
+        // Two minutes was enough while a Summary was five sentences and a shortlist. Asking
+        // for the whole pull request in reading order made the answer several times longer
+        // to generate, and a 94-file change ran out of time at 120 s. A big pull request is
+        // exactly the one worth waiting for, so the default is ten minutes and the ceiling
+        // half an hour: how long this takes is the model's business, not ours to guess.
+        var timeout = configuration.GetValue("Ai:Summary:TimeoutSeconds", 600);
+        if (timeout is < 1 or > 1800)
+            throw new SummaryAnalysisException("Ai:Summary:TimeoutSeconds must be between 1 and 1800.", 503);
 
         var start = new ProcessStartInfo(executable)
         {
@@ -133,7 +138,10 @@ public sealed class CliSummaryAnalyzer(
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new SummaryAnalysisException("AI CLI timed out.", 504);
+            // Naming the knob, because on a large pull request this is a setting to raise,
+            // not a fault to retry into.
+            throw new SummaryAnalysisException(
+                $"AI CLI timed out after {timeout} s. For a large pull request raise Ai:Summary:TimeoutSeconds.", 504);
         }
         catch (IOException)
         {

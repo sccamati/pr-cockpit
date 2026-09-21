@@ -222,22 +222,55 @@ public class SummaryRunnerTests
         }
     }
 
+    // One bad entry among ninety is not worth throwing away the sentences, the shortlist and
+    // the order together — and charging for the run again. The bad entry is dropped, and the
+    // result is still every file of the pull request exactly once.
     [Fact]
-    public async Task RejectsAReadingOrderOutsideTheContract()
+    public async Task DropsBadEntriesFromTheReadingOrderInsteadOfRejectingIt()
     {
-        IReadOnlyList<string>[] invalid =
+        IReadOnlyList<string>[] sloppy =
         [
-            ["/src/invented.cs"],                                      // not in the pull request
-            ["/src/a.cs", "/src/a.cs"],                                // the same file twice
-            ["/src/a.cs", "/src/b.cs", "/src/c.cs", "/package-lock.json", "/src/a.cs"], // longer than the PR
+            ["/src/c.cs", "/src/invented.cs", "/src/a.cs"],   // a path that is not in the PR
+            ["/src/c.cs", "/src/c.cs", "/src/a.cs"],          // the same file twice
+            ["/src/c.cs", "/src/a.cs", "/src/a.cs", "/src/invented.cs", "/src/c.cs"],
         ];
 
-        foreach (var order in invalid)
+        foreach (var order in sloppy)
         {
             var analyzer = new FakeAnalyzer(new SummaryDraft(2, ["One.", "Two."], null, order));
+            var result = await SummaryRunner.RunAsync(WideContext(), analyzer, CancellationToken.None);
+            Assert.Equal(["/src/c.cs", "/src/a.cs", "/src/b.cs", "/package-lock.json"], result.ReadingOrder);
+        }
+    }
+
+    // Nine different faults behind one message was a 502 nobody could act on.
+    [Fact]
+    public async Task SaysWhichRuleTheAnswerBroke()
+    {
+        (SummaryDraft Draft, string Expected)[] cases =
+        [
+            (new SummaryDraft(3, ["One.", "Two."]), "schemaVersion 3"),
+            (new SummaryDraft(2, ["One."]), "1 sentences"),
+            (new SummaryDraft(2, ["One.", "   "]), "blank sentence"),
+            (new SummaryDraft(2, ["One.", new string('x', 501)]), "longer than 500"),
+            (new SummaryDraft(2, ["One.", "Two."],
+                [.. Enumerable.Range(0, 11).Select(_ => new CriticalFile("/src/a.cs", "R.", "P."))]),
+                "11 entries"),
+            (new SummaryDraft(2, ["One.", "Two."], [new CriticalFile("/src/invented.cs", "R.", "P.")]),
+                "not among the changed files"),
+            (new SummaryDraft(2, ["One.", "Two."],
+                [new CriticalFile("/src/a.cs", "R.", "P."), new CriticalFile("/src/a.cs", "R.", "P.")]),
+                "same file twice"),
+            (new SummaryDraft(2, ["One.", "Two."], [new CriticalFile("/src/a.cs", "R.", new string('x', 201))]),
+                "over 200 characters"),
+        ];
+
+        foreach (var (draft, expected) in cases)
+        {
             var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
-                SummaryRunner.RunAsync(WideContext(), analyzer, CancellationToken.None));
+                SummaryRunner.RunAsync(WideContext(), new FakeAnalyzer(draft), CancellationToken.None));
             Assert.Equal(502, error.StatusCode);
+            Assert.Contains(expected, error.Message);
         }
     }
 

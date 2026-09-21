@@ -14,10 +14,14 @@ public static class SummaryRunner
         PrContext context, IAiSummaryAnalyzer analyzer, CancellationToken ct)
     {
         var draft = await analyzer.AnalyzeAsync(context, ct);
-        if (draft.SchemaVersion != SummaryContract.SchemaVersion ||
-            draft.Sentences is not { Count: >= 2 and <= 5 } ||
-            draft.Sentences.Any(sentence => string.IsNullOrWhiteSpace(sentence) || sentence.Length > 500))
-            throw new SummaryAnalysisException("AI returned an invalid Summary.", 502);
+        if (draft.SchemaVersion != SummaryContract.SchemaVersion)
+            throw Invalid($"schemaVersion {draft.SchemaVersion} instead of {SummaryContract.SchemaVersion}");
+        if (draft.Sentences is not { Count: >= 2 and <= 5 })
+            throw Invalid($"{draft.Sentences?.Count ?? 0} sentences instead of 2 to 5");
+        if (draft.Sentences.Any(string.IsNullOrWhiteSpace))
+            throw Invalid("a blank sentence");
+        if (draft.Sentences.Any(sentence => sentence.Length > 500))
+            throw Invalid("a sentence longer than 500 characters");
 
         var criticalFiles = ValidateCriticalFiles(draft.CriticalFiles, context);
         var readingOrder = ValidateReadingOrder(draft.ReadingOrder, context);
@@ -63,53 +67,60 @@ public static class SummaryRunner
         IReadOnlyList<CriticalFile>? files, PrContext context)
     {
         if (files is null || files.Count == 0) return [];
-        if (files.Count > SummaryContract.CriticalFileLimit(context.ChangedFiles.Count))
-            throw new SummaryAnalysisException("AI returned an invalid Summary.", 502);
+        var limit = SummaryContract.CriticalFileLimit(context.ChangedFiles.Count);
+        if (files.Count > limit)
+            throw Invalid($"criticalFiles holds {files.Count} entries, {limit} allowed here");
 
         var allowed = context.ChangedFiles.Select(file => file.Path).ToHashSet(StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<CriticalFile>(files.Count);
         foreach (var file in files)
         {
-            if (file is null || !allowed.Contains(file.Path) || !seen.Add(file.Path) ||
-                Invalid(file.Role) || Invalid(file.Why))
-                throw new SummaryAnalysisException("AI returned an invalid Summary.", 502);
+            if (file is null) throw Invalid("an empty entry in criticalFiles");
+            if (!allowed.Contains(file.Path))
+                throw Invalid("a criticalFiles path that is not among the changed files");
+            if (!seen.Add(file.Path)) throw Invalid("the same file twice in criticalFiles");
+            if (TooLong(file.Role) || TooLong(file.Why))
+                throw Invalid($"a criticalFiles role or why that is blank or over {SummaryContract.MaxCriticalFileTextLength} characters");
             result.Add(new CriticalFile(file.Path, file.Role.Trim(), file.Why.Trim()));
         }
         return result;
 
-        static bool Invalid(string? text) =>
+        static bool TooLong(string? text) =>
             string.IsNullOrWhiteSpace(text) || text.Length > SummaryContract.MaxCriticalFileTextLength;
     }
 
     /// <summary>
-    /// The whole pull request in reading order. Checked against the context the same way the
-    /// shortlist is — an invented or repeated path is a rejection — but what the model left
-    /// out is appended by us rather than refused: a missing file is our gap to fill, not the
-    /// model's claim to believe. Noise ends up last whatever the model said, because a
-    /// lockfile is never where a change is understood.
+    /// Every rejection says which rule broke, and never by quoting the model: the reason is
+    /// written here, the numbers are ours. One message for nine different faults was a 502
+    /// nobody could act on, which is the same lesson the invalid-JSON error already taught.
+    /// </summary>
+    private static SummaryAnalysisException Invalid(string reason) =>
+        new($"AI returned an invalid Summary: {reason}.", 502);
+
+    /// <summary>
+    /// The whole pull request in reading order — hints, not a contract. Unlike the shortlist,
+    /// a bad entry here is dropped rather than rejected: this list is one line per changed
+    /// file, so on a 90-file pull request a single mistyped or repeated path would otherwise
+    /// throw away the sentences, the shortlist and the order together, and charge for the
+    /// run again. Nothing is lost by dropping one — a path that is not in the pull request
+    /// does not belong in a walk through it, and a repeat is already placed. The guarantee
+    /// the walkthrough needs (every path real, each exactly once, none missing) is produced
+    /// here rather than believed: whatever the model left out is appended in the order the
+    /// change list arrived. Noise ends up last whatever the model said, because a lockfile
+    /// is never where a change is understood.
     /// </summary>
     private static IReadOnlyList<string> ValidateReadingOrder(
         IReadOnlyList<string>? paths, PrContext context)
     {
+        var allowed = context.ChangedFiles.Select(file => file.Path).ToHashSet(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var order = new List<string>(context.ChangedFiles.Count);
-        if (paths is not null)
-        {
-            if (paths.Count > context.ChangedFiles.Count)
-                throw new SummaryAnalysisException("AI returned an invalid Summary.", 502);
-
-            var allowed = context.ChangedFiles.Select(file => file.Path).ToHashSet(StringComparer.Ordinal);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var path in paths)
-            {
-                if (path is null || !allowed.Contains(path) || !seen.Add(path))
-                    throw new SummaryAnalysisException("AI returned an invalid Summary.", 502);
+        foreach (var path in paths ?? [])
+            if (path is not null && allowed.Contains(path) && seen.Add(path))
                 order.Add(path);
-            }
-        }
 
-        var listed = order.ToHashSet(StringComparer.Ordinal);
-        order.AddRange(context.ChangedFiles.Select(file => file.Path).Where(path => !listed.Contains(path)));
+        order.AddRange(context.ChangedFiles.Select(file => file.Path).Where(path => !seen.Contains(path)));
         // A stable partition, so the order the model chose survives inside each half.
         return [.. order.Where(path => FileCategory.Of(path) is null),
                 .. order.Where(path => FileCategory.Of(path) is not null)];

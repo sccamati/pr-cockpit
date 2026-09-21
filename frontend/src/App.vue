@@ -91,13 +91,6 @@ const sideBySide = ref(false)
 // --- Przejście (the guided walkthrough) ---
 // ponytail: the brief calls these configuration. A one-person local tool has no settings
 // file, so they are named constants here; a settings screen is the upgrade path.
-const walkParallelPrefetch = 2 // US-P5: explanations generated at once
-// How far ahead of the cursor explanations are prepared. The whole path was the rule when
-// a path was a dozen files; walking all of an eighty-file pull request that way would buy
-// eighty explanations up front, most of them before the reader decides to stop. The key-file
-// path is shorter than this window anyway, so its behaviour does not change.
-// ponytail: a fixed window, not a rate limiter — raise it when waiting is the complaint.
-const walkPrefetchWindow = 10
 // Ten files is enough to open a pull request of twenty and far too few to open one of
 // eighty — at that size a ranking of ten is a sample, not a starting point. Both the
 // ranking and the walkthrough's default path therefore grow with the change. The ranking
@@ -124,12 +117,9 @@ const walkSkipped = ref<string[]>([])
 // so the default follows the ranking as it arrives.
 const walkPicked = ref<string[] | null>(null)
 const walkResumeDismissed = ref(false)
-// Explanations held for the whole pull request, which is what makes the walkthrough feel
-// instant: the prefetch fills this, and opening a file reads from it (US-P5).
+// Every explanation asked for, kept for as long as the pull request is open, so coming
+// back to a file shows it again without paying for it twice.
 const explanationCache = ref<Record<string, FileExplanation>>({})
-const prefetchErrors = ref<Record<string, string>>({})
-let prefetchToken = 0
-let prefetchAbort: AbortController | null = null
 const helpDialog = ref<HTMLDialogElement | null>(null)
 // ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
 // dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
@@ -712,10 +702,6 @@ function acceptProposal() {
   proposalDismissed.value = true
 }
 
-function explanationHint(path: string): string {
-  return prefetchErrors.value[path] ?? ''
-}
-
 // Optimistic with rollback, the same shape as setChecklistItem: the request id is captured
 // without incrementing, because this is a mutation of the current generation, not a load.
 // The position travels with the path: editing the path from the rail is a new path, so it
@@ -817,7 +803,6 @@ function setWalkMode(mode: 'key' | 'all') {
 
 function leaveWalkthrough() {
   view.value = 'tree'
-  cancelPrefetch()
 }
 
 // US-P3: accepting is what turns a proposal into a reading path, and the path is what the
@@ -831,14 +816,12 @@ async function startWalkthrough(paths: string[] = walkPick.value) {
   await saveReadingPath(paths, 0)
   const first = walkPaths.value[0]
   if (first) await openFile(first)
-  void prefetchExplanations()
 }
 
 function resumeWalkthrough() {
   view.value = 'walk'
   const path = walkFilePath.value
   if (path) void openFile(path)
-  void prefetchExplanations()
 }
 
 async function goToWalkIndex(index: number) {
@@ -848,13 +831,9 @@ async function goToWalkIndex(index: number) {
   void saveReadingPath(paths, next)
   if (next >= paths.length) {
     view.value = 'done'
-    cancelPrefetch()
     return
   }
   await openFile(paths[next]!)
-  // The window follows the cursor, so a long path pays for the next few files rather than
-  // for all of them at once.
-  void prefetchExplanations()
 }
 
 // The main action of the walkthrough: this file is read, show me the next one. Marking is
@@ -882,64 +861,6 @@ function returnToSkipped(path: string) {
   if (index < 0) return
   view.value = 'walk'
   void goToWalkIndex(index)
-}
-
-// Two different endings. Moving the window only stops new requests and lets whatever is in
-// flight finish: aborting cancels the request the backend is running, which kills a model
-// run that was already paid for, while letting it land means the backend stores it and the
-// next ask for that file costs nothing. Leaving the pull request or the walkthrough does
-// abort, because there the run itself is what nobody needs.
-function stopPrefetch(abort: boolean) {
-  ++prefetchToken
-  if (abort) prefetchAbort?.abort()
-  prefetchAbort = null
-}
-
-function cancelPrefetch() {
-  stopPrefetch(true)
-}
-
-// US-P5: the explanations of the path are generated in the background in path order, so
-// the model is never waited for while reading. Leaving the pull request or the walkthrough
-// stops it; whatever already came back is saved by the backend either way.
-async function prefetchExplanations() {
-  const id = details.value?.id
-  if (!id) return
-  stopPrefetch(false)
-  const token = prefetchToken
-  const controller = prefetchAbort = new AbortController()
-  const project = projectId.value
-  const repository = repositoryId.value
-  // Only the window ahead of the cursor, and only files whose explanation is not in hand:
-  // every entry here is one paid call to the model, and a walkthrough of the whole pull
-  // request is abandoned far more often than it is finished.
-  const queue = walkPaths.value
-    .slice(walkPosition.value, walkPosition.value + walkPrefetchWindow)
-    .filter(path => !explanationCache.value[path])
-  let cursor = 0
-  const worker = async () => {
-    while (cursor < queue.length && token === prefetchToken) {
-      const path = queue[cursor++]!
-      try {
-        const result = await api.explainFile(project, repository, id, path, controller.signal)
-        if (token !== prefetchToken) return
-        explanationCache.value = { ...explanationCache.value, [path]: result }
-        const { [path]: _dropped, ...rest } = prefetchErrors.value
-        prefetchErrors.value = rest
-        // Arrived while its file is on screen: it appears where the waiting state was,
-        // without reloading anything.
-        if (selectedFilePath.value === path) {
-          explanation.value = result
-          explanationLoading.value = false
-        }
-      } catch (cause) {
-        if (token !== prefetchToken || controller.signal.aborted) return
-        // One file failing is one file: the rest of the path carries on.
-        prefetchErrors.value = { ...prefetchErrors.value, [path]: message(cause) }
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: walkParallelPrefetch }, () => worker()))
 }
 
 function openCriticalFile(path: string) {
@@ -1122,7 +1043,6 @@ function resetChecklistProgress() {
 }
 
 function resetWalkthrough() {
-  cancelPrefetch()
   view.value = 'tree'
   walkPosition.value = 0
   walkHeadSha.value = null
@@ -1130,7 +1050,6 @@ function resetWalkthrough() {
   walkPicked.value = null
   walkResumeDismissed.value = false
   explanationCache.value = {}
-  prefetchErrors.value = {}
 }
 
 function resetFileReviews() {
@@ -1495,10 +1414,9 @@ async function openFile(path: string, sinceIteration?: number | null) {
   collapsedZones.value = new Set()
   if (lineDraft.value !== null) draft.value = null
   resetExplanation()
-  // Prefetched ahead of the reader (US-P5), so the sentences are simply there.
+  // Already asked for once, so it comes back without paying for it again.
   const cached = explanationCache.value[path]
   if (cached) explanation.value = cached
-  else if (prefetchErrors.value[path]) explanationError.value = prefetchErrors.value[path]!
   fileDiff.value = null
   monacoComponent.value = null
   diffError.value = ''
@@ -1999,16 +1917,18 @@ onMounted(async () => {
               <span v-if="roleByPath.get(walkFilePath)" class="walk-bar-role">{{ roleByPath.get(walkFilePath) }}</span>
               <button type="button" class="walk-bar-exit" @click="leaveWalkthrough">Pełne drzewo</button>
             </div>
-            <!-- The explanation never holds the diff back: when it is not here yet the zone
-                 says so and the code renders regardless (US-P5). -->
+            <!-- Nothing is generated by walking in here: an explanation costs a model run,
+                 so it happens when asked for and not a file sooner. -->
             <details v-if="view === 'walk'" class="walk-explanation" open>
               <summary>Wyjaśnienie pliku</summary>
               <p v-if="explanation" class="walk-explanation-text">{{ explanation.sentences.join(' ') }}</p>
-              <p v-else-if="explanationHint(walkFilePath)" class="notice error" role="alert">
-                {{ explanationHint(walkFilePath) }}
+              <p v-else-if="explanationError" class="notice error" role="alert">
+                {{ explanationError }}
                 <button class="checklist-retry" type="button" :disabled="explanationLoading" @click="explainFile">Ponów</button>
               </p>
-              <p v-else class="muted" role="status">Wyjaśnienie w drodze…</p>
+              <p v-else class="muted walk-explanation-ask">
+                <button type="button" class="explain-button" :disabled="explanationLoading" @click="explainFile">{{ explanationLoading ? 'Wyjaśniam…' : 'Wyjaśnij ten plik (e)' }}</button>
+              </p>
             </details>
             <section v-if="commentsOpen" class="comments-view" aria-label="Komentarze pull requesta">
               <div class="comments-head">

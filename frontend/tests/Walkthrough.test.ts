@@ -316,22 +316,18 @@ describe('duży PR dostaje dłuższą propozycję', () => {
     wrapper.unmount()
   })
 
-  // Every explanation is a paid model run, and a walkthrough of 84 files is abandoned far
-  // more often than it is finished, so only the window ahead of the cursor is bought.
-  it('buys explanations for the window ahead, not for the whole pull request', async () => {
+  // Walking 84 files must not mean buying 84 explanations nobody asked for.
+  it('walks a big pull request without calling the model once', async () => {
     const wrapper = await openPr()
     await wrapper.findAll('.walk-mode-option')[1]!.trigger('click')
     await wrapper.find('.walk-actions .walk-primary').trigger('click')
     await flushPromises()
+    for (const _step of [1, 2, 3]) {
+      await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
+      await flushPromises()
+    }
 
-    expect(wrapper.find('.walk-progress').text()).toBe('Plik 1 z 84')
-    expect(api.explainFile.mock.calls.map(call => call[3])).toEqual(many.slice(0, 10))
-
-    api.explainFile.mockClear()
-    await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
-    await flushPromises()
-    // One step forward buys one more file, not another ten.
-    expect(api.explainFile.mock.calls.map(call => call[3])).toEqual([many[10]])
+    expect(api.explainFile).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })
@@ -402,38 +398,61 @@ describe('US-P4 — przejście plik po pliku', () => {
   })
 })
 
-describe('US-P5 — wyjaśnienia gotowe przed plikiem', () => {
-  it('generates the path explanations in the background and shows them without waiting', async () => {
+// US-P5. An explanation is a paid model run, so nothing here happens on its own: the
+// walkthrough offers the button and spends only when it is pressed.
+describe('US-P5 — wyjaśnienie pliku tylko na prośbę', () => {
+  it('spends nothing by walking and only asks when the button is pressed', async () => {
     const wrapper = await openPr()
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
 
-    expect(api.explainFile.mock.calls.map(call => call[3])).toEqual(paths.slice(0, 6))
-    expect(wrapper.find('.walk-explanation-text').text()).toBe('Wyjaśnienie /src/a.cs.')
-
-    api.explainFile.mockClear()
+    // Entering the walkthrough and stepping through it costs nothing.
+    expect(api.explainFile).not.toHaveBeenCalled()
     await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
     await flushPromises()
-    // Already in hand, so entering the file asks for nothing and shows it at once.
     expect(api.explainFile).not.toHaveBeenCalled()
+
+    await wrapper.find('.walk-explanation .explain-button').trigger('click')
+    await flushPromises()
+    expect(api.explainFile.mock.calls.map(call => call[3])).toEqual(['/src/b.cs'])
     expect(wrapper.find('.walk-explanation-text').text()).toBe('Wyjaśnienie /src/b.cs.')
     wrapper.unmount()
   })
 
-  it('carries on past a file the model failed on and offers that one a retry', async () => {
-    api.explainFile.mockImplementation(async (_p: string, _r: string, _i: number, path: string) => {
-      if (path === '/src/a.cs') throw new Error('AI CLI timed out.')
-      return { schemaVersion: 2, path, headCommitSha: HEAD, sentences: [`Wyjaśnienie ${path}.`] }
-    })
+  it('does not pay twice for a file it was already asked about', async () => {
+    const wrapper = await openPr()
+    await wrapper.find('.walk-primary').trigger('click')
+    await flushPromises()
+    await wrapper.find('.walk-explanation .explain-button').trigger('click')
+    await flushPromises()
+
+    api.explainFile.mockClear()
+    await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
+    await flushPromises()
+    const back = wrapper.findAll('.walk-actions--sticky button')
+      .find(button => button.text().includes('Wstecz'))!
+    await back.trigger('click')
+    await flushPromises()
+
+    expect(api.explainFile).not.toHaveBeenCalled()
+    expect(wrapper.find('.walk-explanation-text').text()).toBe('Wyjaśnienie /src/a.cs.')
+    wrapper.unmount()
+  })
+
+  it('keeps a failed explanation at its own file and offers a retry', async () => {
+    api.explainFile.mockRejectedValueOnce(new Error('AI CLI timed out.'))
 
     const wrapper = await openPr()
     await wrapper.find('.walk-primary').trigger('click')
+    await flushPromises()
+    await wrapper.find('.walk-explanation .explain-button').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.walk-explanation [role="alert"]').text()).toContain('AI CLI timed out.')
     await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.walk-explanation-text').text()).toBe('Wyjaśnienie /src/b.cs.')
+    // The next file starts clean: no error carried over, and still nothing bought.
+    expect(wrapper.find('.walk-explanation .explain-button').exists()).toBe(true)
     wrapper.unmount()
   })
 })

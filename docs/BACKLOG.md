@@ -493,6 +493,53 @@ Jeśli wróci, w logu backendu stanie teraz linia Warning z treścią odpowiedzi
 powie, co się dzieje. Gdyby przyczyną okazały się dwa oddzielne obiekty JSON w jednej
 odpowiedzi albo limit 16 384 znaków wyjścia, `extractJson` tego nie załatwia.
 
+## Wdrożone — wyjaśnienie pliku tylko na prośbę, czytelne odrzucenia, dłuższy timeout
+
+Status: zaimplementowane, pokryte testami. Trzy uwagi użytkownika z 21 wrz 2026, wszystkie
+z prawdziwego PR na 93 pliki.
+
+**Prefetch wyjaśnień kupował za użytkownika.** Wejście w plik pokazywało wyjaśnienie, o które
+nikt nie prosił. Tak to było zaprojektowane (US-P5) i przy ścieżce ośmiu plików było tanie,
+ale tryb całego PR zmienił rachunek: przejście dziewięćdziesięciu plików to dziewięćdziesiąt
+opłaconych wywołań modelu. Okno dziesięciu plików przed kursorem, dodane dzień wcześniej,
+tylko rozkładało ten koszt w czasie — nie usuwało go. Prefetch wycięty w całości razem
+z `AbortController`, licznikiem pokoleń i mapą błędów. Wyjaśnienie powstaje wyłącznie
+przyciskiem „Wyjaśnij ten plik" (klawisz `e`). Zostaje `explanationCache` i zapis
+w `pr_file_explanations`, więc powrót do pliku jest darmowy. Błąd w projekcie był mój:
+dokładając tryb na cały PR zostawiłem regułę policzoną dla ośmiu plików.
+
+**„AI returned an invalid Summary" znaczyło dziewięć rzeczy naraz.** Jeden komunikat dla
+wersji schematu, liczby zdań, pustego zdania, za długiego zdania, za długiego skrótu, ścieżki
+spoza listy zmian, duplikatu i za długiego `role`/`why` — `502`, z którym nie dało się nic
+zrobić. Każde odrzucenie mówi teraz, która reguła pękła. Powód jest pisany u nas, nie cytowany
+z modelu, więc do klienta nie wycieka nic z jego odpowiedzi. Ta sama lekcja, którą wcześniej
+dał błąd „AI CLI returned invalid JSON".
+
+**`readingOrder` było za ostre.** Lista ma jedną linię na zmieniony plik, więc przy 93 plikach
+jedna literówka albo jedno powtórzenie wywracało zdania, skrót i kolejność naraz — i kazało
+zapłacić za przebieg drugi raz. Zła pozycja jest teraz **pomijana**, nie odrzucana, i nic przez
+to nie ginie: ścieżka spoza PR nie ma czego szukać w przejściu przez ten PR, a powtórzenie jest
+już ustawione. Gwarancję „każdy plik raz, żadnego nie brakuje" i tak produkujemy sami.
+`criticalFiles` zostaje ostre — jest krótkie, a zła ścieżka tam wysyła recenzenta do
+nieistniejącego pliku.
+
+**Timeout.** 120 s wystarczało, gdy Summary było pięcioma zdaniami i skrótem. Kolejność całego
+PR wydłużyła odpowiedź kilkukrotnie i PR na 94 pliki nie zmieścił się w limicie. Domyślnie
+600 s, sufit 1800 s, a komunikat mówi, ile sekund minęło i którą nastawę podnieść.
+
+**Przy okazji:** komentarze w strefach Monaco dało się wreszcie zaznaczyć i skopiować. Monaco
+wyłącza `user-select` na całym edytorze, żeby samemu zarządzać selekcją kodu, a nasze karty
+komentarzy siedzą w jego strefach i to dziedziczyły. Jedna reguła CSS na `.comment-zone`.
+
+**Zweryfikowane:** 134 testy backendu (nowy sprawdza, że każdy z ośmiu powodów odrzucenia nazywa
+siebie; przepisany pinuje pomijanie zamiast odrzucania), 100 frontendu (trzy testy prefetchu
+zastąpione trzema, które pinują regułę odwrotną — przejście 84 plików nie woła modelu ani razu).
+Oba buildy przechodzą.
+
+**Niesprawdzone:** zaznaczanie tekstu w komentarzach nie było klikane w przeglądarce — to
+poprawka CSS wyprowadzona z zachowania Monaka, nie z obserwacji naprawionego widoku. Nie
+wiadomo też, czy 600 s wystarczy na PR tej wielkości ani czy złagodzone `readingOrder`
+przepuści odpowiedź, która wcześniej była odrzucana.
 ## Wdrożone — dwa zakresy przejścia i kolejność czytania całego PR
 
 Status: zaimplementowane, pokryte testami. Prośba użytkownika z 21 wrz 2026.
