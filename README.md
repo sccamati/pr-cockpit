@@ -64,6 +64,18 @@ Each pull request has six manual checklist items. The backend saves them through
 
 ## Run locally
 
+### One click
+
+`scripts/install-shortcut.ps1` puts a **PR Cockpit** shortcut on the desktop; run it once,
+and again after moving the repository. The shortcut runs `scripts/start.ps1`, which frees
+ports 5164 and 5173, runs `npm ci` if `frontend/node_modules` is missing, starts the backend
+and Vite in that one console, waits for Vite and opens the browser. Both servers log into
+that window, so closing it or pressing Ctrl+C stops them; if a run is ever left behind, the
+next launch clears the ports itself. The shortcut uses a stock Windows icon — put your own
+`icon.ico` next to the script and rerun the installer to change it.
+
+### Two terminals
+
 From the repository root, use two terminals. Start the backend in the first:
 
 ```powershell
