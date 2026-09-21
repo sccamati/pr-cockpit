@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   decorationsSet: vi.fn(),
   decorationsClear: vi.fn(),
   disposeGlyphListener: vi.fn(),
+  addAction: vi.fn(),
+  selection: null as unknown,
+  selectedText: '',
 }))
 
 vi.mock('../src/api', () => ({ api: { csharpHovers: mocks.csharpHovers } }))
@@ -55,7 +58,7 @@ vi.mock('monaco-editor', () => ({
       goToDiff: mocks.goToDiff,
       revealFirstDiff: mocks.revealFirstDiff,
       onDidUpdateDiff: mocks.onDidUpdateDiff,
-      getOriginalEditor: () => ({ updateOptions: mocks.originalUpdate }),
+      getOriginalEditor: () => ({ updateOptions: mocks.originalUpdate, addAction: mocks.addAction, getSelection: () => null, getModel: () => null }),
       // One stable modified editor per diff editor: the component keeps two decoration
       // collections, and a fresh object per call would hand it two fresh ones each time.
       getModifiedEditor: () => mocks.modifiedEditor,
@@ -95,9 +98,15 @@ beforeEach(() => {
     return { dispose: mocks.disposeSemanticProvider }
   })
   mocks.onDidUpdateDiff.mockReturnValue({ dispose: vi.fn() })
+  mocks.addAction.mockReturnValue({ dispose: vi.fn() })
+  mocks.selection = null
+  mocks.selectedText = ''
   let collections = 0
   mocks.modifiedEditor = {
     updateOptions: mocks.modifiedUpdate,
+    addAction: mocks.addAction,
+    getSelection: () => mocks.selection,
+    getModel: () => ({ getValueInRange: () => mocks.selectedText }),
     focus: vi.fn(),
     getPosition: () => ({ lineNumber: 12 }),
     setPosition: mocks.setPosition,
@@ -330,5 +339,27 @@ describe('Monaco reading options', () => {
 
     wrapper.unmount()
     expect(mocks.disposeGlyphListener).toHaveBeenCalled()
+  })
+
+  it('offers the ask action on both panes and emits the selected snippet', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/a.ts', originalPath: null, originalText: 'old', modifiedText: 'new' },
+    })
+    await flushPromises()
+
+    // Both panes, because in side-by-side the old version on the left is just as readable.
+    expect(mocks.addAction).toHaveBeenCalledTimes(2)
+    const action = mocks.addAction.mock.calls[0]![0] as { label: string; run: () => void }
+    expect(action.label).toBe('Zapytaj AI o zaznaczenie')
+
+    // Nothing selected is nothing to ask about.
+    action.run()
+    expect(wrapper.emitted('ask')).toBeUndefined()
+
+    mocks.selection = { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 8 }
+    mocks.selectedText = 'const x'
+    action.run()
+    expect(wrapper.emitted('ask')).toEqual([['const x']])
+    wrapper.unmount()
   })
 })

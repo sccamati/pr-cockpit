@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type C
 import FileTree from './FileTree.vue'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
 import { commentPreview, renderComment, renderDescription } from './description'
-import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type PrComment, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type FileQuestionTurn, type PrComment, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -22,6 +22,15 @@ const explanation = ref<FileExplanation | null>(null)
 const explanationLoading = ref(false)
 const explanationError = ref('')
 const explanationOpen = ref(true)
+// The conversation about the open file. Kept in the backend, so this is only what is on
+// screen; the draft and the captured snippet live here until they are sent.
+const questionTurns = ref<FileQuestionTurn[]>([])
+const questionDraft = ref('')
+const questionSelection = ref('')
+const questionLoading = ref(false)
+const questionError = ref('')
+const questionOpen = ref(false)
+const questionBox = ref<HTMLTextAreaElement | null>(null)
 const summaryLoading = ref(false)
 const summaryError = ref('')
 const summaryReadLoading = ref(false)
@@ -125,7 +134,7 @@ const explanationCache = ref<Record<string, FileExplanation>>({})
 const helpDialog = ref<HTMLDialogElement | null>(null)
 // ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
 // dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
-const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void } | null>(null)
+const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void; selectedText(): string } | null>(null)
 let requestId = 0
 let diffRequestId = 0
 let summaryRequestId = 0
@@ -1442,6 +1451,67 @@ async function explainFile() {
   }
 }
 
+function resetQuestions() {
+  questionTurns.value = []
+  questionDraft.value = ''
+  questionSelection.value = ''
+  questionError.value = ''
+  questionLoading.value = false
+  questionOpen.value = false
+}
+
+// Both of these ride the diff request id, like explainFile: switching files or leaving the
+// pull request invalidates an answer still in flight, exactly like a late diff response.
+async function loadQuestions(pullRequestId: number, path: string, current: number) {
+  try {
+    const turns = await api.fileQuestions(projectId.value, repositoryId.value, pullRequestId, path)
+    if (current !== diffRequestId) return
+    // The thread loads, the drawer does not open itself: it overlays the code, and a file
+    // you asked about yesterday must not cover the diff when you come back to it. The count
+    // on the toolbar button is what says there is something to read.
+    questionTurns.value = turns
+  } catch {
+    // A conversation that cannot be read is not worth an alarm over the file: the box still
+    // works, and the first answer will say so if the backend is really down.
+  }
+}
+
+async function askQuestion() {
+  if (!details.value || !selectedFilePath.value || questionLoading.value) return
+  const asked = questionDraft.value.trim()
+  if (!asked) return
+  const current = diffRequestId
+  const pullRequestId = details.value.id
+  const path = selectedFilePath.value
+  const selection = questionSelection.value || null
+  questionError.value = ''
+  questionLoading.value = true
+  try {
+    const turn = await api.askAboutFile(projectId.value, repositoryId.value, pullRequestId, path, asked, selection)
+    if (current !== diffRequestId) return
+    questionTurns.value = [...questionTurns.value, turn]
+    questionDraft.value = ''
+    questionSelection.value = ''
+  } catch (cause) {
+    if (current === diffRequestId) questionError.value = message(cause)
+  } finally {
+    if (current === diffRequestId) questionLoading.value = false
+  }
+}
+
+// Opening the drawer is also how the right-click action lands: the snippet is already
+// captured, the cursor goes where the question gets typed. A selection always opens —
+// you just asked for it — while the button and the key toggle, because that is the way
+// back out of a drawer that covers the code.
+async function openQuestions(selection = '') {
+  if (!selectedFilePath.value) return
+  if (selection) questionSelection.value = selection
+  else if (questionOpen.value) { questionOpen.value = false; return }
+  questionOpen.value = true
+  await nextTick()
+  questionBox.value?.focus()
+}
+
 // Set while the diff on screen is a since-an-iteration comparison rather than the whole
 // change, so the toolbar can say so and offer the way back.
 const diffSinceIteration = ref<number | null>(null)
@@ -1507,6 +1577,8 @@ async function openFile(path: string, sinceIteration?: number | null) {
   // Already asked for once, so it comes back without paying for it again.
   const cached = explanationCache.value[path]
   if (cached) explanation.value = cached
+  resetQuestions()
+  void loadQuestions(pullRequestId, path, current)
   fileDiff.value = null
   monacoComponent.value = null
   diffError.value = ''
@@ -1610,6 +1682,7 @@ const shortcutHelp = [
   { keys: 'g', label: 'Przejdź kursorem do kodu' },
   { keys: 'o', label: 'Opis PR i powrót do pliku' },
   { keys: 'e', label: 'Wyjaśnij ten plik' },
+  { keys: 'a', label: 'Zapytaj o ten plik' },
   { keys: 'c', label: 'Widok komentarzy' },
   { keys: 'Esc', label: 'Zamknij pomoc albo wróć do listy' },
   { keys: '?', label: 'Ta pomoc' },
@@ -1680,6 +1753,7 @@ function markAndAdvance() {
 // that drops the edit, the draft, the conversation and the whole PR at once is a trap.
 function escapeLayer() {
   if (helpDialog.value?.open) closeHelp()
+  else if (questionOpen.value) questionOpen.value = false
   else if (deleting.value !== null) deleting.value = null
   else if (editing.value) editing.value = null
   else if (draft.value) { draft.value = null; commentError.value = '' }
@@ -1718,6 +1792,7 @@ const shortcuts: Record<string, () => void> = {
   g: () => diffView.value?.focusEditor(),
   o: toggleBriefing,
   e: explainFile,
+  a: () => void openQuestions(),
   c: toggleComments,
 }
 
@@ -2159,6 +2234,9 @@ onMounted(async () => {
                     :disabled="!fileDiff || fileDiff.kind !== 'text'" @click="commentOnCursorLine">Skomentuj linię</button>
                   <button type="button" class="explain-button" title="Wyjaśnij ten plik (e)"
                     :disabled="explanationLoading" @click="explainFile">{{ explanationLoading ? 'Wyjaśniam…' : 'Wyjaśnij ten plik' }}</button>
+                  <button type="button" class="ask-button" title="Zapytaj o ten plik (a)"
+                    :aria-pressed="questionOpen" :disabled="!fileDiff" @click="openQuestions()">Zapytaj o plik<span
+                      v-if="questionTurns.length"> ({{ questionTurns.length }})</span></button>
                 </div>
                 <label class="review-check"><input type="checkbox" :checked="isReviewed(selectedFilePath)" :disabled="!fileDiff && !isReviewed(selectedFilePath)" @change="toggleReviewed"> Obejrzałem</label>
               </div>
@@ -2233,6 +2311,43 @@ onMounted(async () => {
                   <button type="button" class="explanation-dismiss" @click="resetExplanation">Ukryj</button>
                 </p>
               </details>
+              <!-- A drawer on the right rather than a block above the diff: stacked, it
+                   pushed the code off the screen exactly while you were reading it. It
+                   overlays instead of reflowing, so opening it never moves a line of code.
+                   Shown in the walkthrough too — that is where you read code you did not
+                   write, and the explanation's second panel has no equivalent here. -->
+              <aside v-if="questionOpen" class="file-chat" aria-label="Pytania o plik">
+                <div class="file-chat-head">
+                  <strong>Pytania o plik</strong>
+                  <span class="muted">{{ fileName(selectedFilePath) }}</span>
+                  <button type="button" class="inline-close" title="Zamknij (a albo Esc)"
+                    @click="questionOpen = false">Zamknij</button>
+                </div>
+                <div class="file-chat-thread">
+                  <p v-if="!questionTurns.length" class="muted">Zapytaj o ten plik albo zaznacz kawałek kodu i wybierz „Zapytaj AI o zaznaczenie” z menu prawego przycisku.</p>
+                  <div v-for="(turn, index) in questionTurns" :key="index" class="file-chat-turn">
+                    <p class="file-chat-question">{{ turn.question }}</p>
+                    <pre v-if="turn.selection" class="file-chat-selection"><code>{{ turn.selection }}</code></pre>
+                    <p v-for="(sentence, line) in turn.sentences" :key="line">{{ sentence }}</p>
+                  </div>
+                  <p v-if="questionLoading" class="muted" role="status">Pytam…</p>
+                </div>
+                <div class="file-chat-draft">
+                  <p v-if="questionError" class="notice error" role="alert">{{ questionError }}</p>
+                  <p v-if="questionSelection" class="file-chat-attached muted">
+                    Dołączę zaznaczony fragment ({{ questionSelection.length }} znaków).
+                    <button type="button" class="explanation-dismiss" @click="questionSelection = ''">Odłącz</button>
+                  </p>
+                  <textarea ref="questionBox" v-model="questionDraft" class="debug-answer" rows="3" :maxlength="1000"
+                    placeholder="Po co jest ten kawałek kodu?" aria-label="Pytanie o ten plik"
+                    @keydown.ctrl.enter="askQuestion"></textarea>
+                  <div class="debug-actions">
+                    <button type="button" class="comment-send" :disabled="questionLoading || !questionDraft.trim()"
+                      @click="askQuestion">{{ questionLoading ? 'Pytam…' : 'Zapytaj (uruchomi AI)' }}</button>
+                    <span class="muted">Ctrl+Enter wysyła. Rozmowa zapisuje się lokalnie.</span>
+                  </div>
+                </div>
+              </aside>
               <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
               <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
               <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
@@ -2240,7 +2355,7 @@ onMounted(async () => {
               <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" ref="diffView" :path="fileDiff.path"
                 :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
                 :side-by-side="sideBySide" :comment-lines="commentLinesForFile" :resolved-lines="resolvedLinesForFile"
-                :zone-lines="zoneLines" @open-line="openLineComments" @zones="zoneTargets = $event" />
+                :zone-lines="zoneLines" @open-line="openLineComments" @zones="zoneTargets = $event" @ask="openQuestions($event)" />
               <!-- Rendered between the lines of code, inside the containers Monaco made.
                    Ordinary Vue markup, so replying and resolving work the same as in the
                    comments view. -->

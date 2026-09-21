@@ -8,6 +8,7 @@ import App from '../src/App.vue'
 const api = vi.hoisted(() => ({
   projects: vi.fn(), repositories: vi.fn(), pullRequests: vi.fn(), checklistProgress: vi.fn(),
   pullRequest: vi.fn(), fileDiff: vi.fn(), generateSummary: vi.fn(), explainFile: vi.fn(),
+  askAboutFile: vi.fn(), fileQuestions: vi.fn(),
   savedSummary: vi.fn(), checklist: vi.fn(), fileReviews: vi.fn(), setFileReviewed: vi.fn(),
   setReadingPath: vi.fn(), setDebugNote: vi.fn(), fileReviewProgress: vi.fn(),
   commentThreads: vi.fn(), createThread: vi.fn(), replyToThread: vi.fn(), setThreadStatus: vi.fn(),
@@ -76,6 +77,12 @@ beforeEach(() => {
   api.checklistProgress.mockResolvedValue([])
   api.fileReviewProgress.mockResolvedValue([])
   api.commentThreads.mockResolvedValue([])
+  api.fileQuestions.mockResolvedValue([])
+  api.askAboutFile.mockImplementation(async (_project, _repository, _id, path, question, selection) => ({
+    schemaVersion: 2, path, question, selection: selection ?? null,
+    sentences: [`Odpowiedź na: ${question}.`], blobId: null, headCommitSha: null,
+    askedAt: '2026-09-01T12:00:00Z',
+  }))
   api.config.mockResolvedValue({ commentsEnabled: true })
   // Summary is never generated on its own, so the ordinary case is one already paid for
   // and read back from the local database for free.
@@ -349,6 +356,24 @@ describe('US-P4 — przejście plik po pliku', () => {
     // The rail and the tree are gone; the diff has the window.
     expect(wrapper.find('.pr-workspace').classes()).toContain('pr-workspace--walk')
     expect(wrapper.find('.test-diff').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  // The walkthrough is exactly where you read code you did not write, so the question box
+  // has to be reachable there. It was not: the panel copied the explanation's walk guard,
+  // and the explanation has a second panel up in the walk bar that the conversation has not.
+  it('opens the question box in the walkthrough too', async () => {
+    const wrapper = await startWalk()
+
+    await wrapper.find('.ask-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.file-chat').exists()).toBe(true)
+    await wrapper.find('.file-chat textarea').setValue('Po co to jest?')
+    await wrapper.find('.file-chat .comment-send').trigger('click')
+    await flushPromises()
+    expect(api.askAboutFile).toHaveBeenCalledWith(
+      'project', 'repo-a', 123, '/src/a.cs', 'Po co to jest?', null)
     wrapper.unmount()
   })
 

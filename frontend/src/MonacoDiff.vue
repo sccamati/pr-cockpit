@@ -26,9 +26,13 @@ const emit = defineEmits<{
   // The containers Monaco created for those lines; the parent teleports its own markup in,
   // so the conversation stays ordinary Vue instead of hand-built DOM.
   zones: [zones: { line: number; el: HTMLElement }[]]
+  // The snippet the reader right-clicked. This component only knows what is selected; the
+  // parent owns the conversation.
+  ask: [text: string]
 }>()
 const container = ref<HTMLElement | null>(null)
 let editor: monaco.editor.IStandaloneDiffEditor | null = null
+let askActions: monaco.IDisposable[] = []
 let originalModel: monaco.editor.ITextModel | null = null
 let modifiedModel: monaco.editor.ITextModel | null = null
 let resizeObserver: ResizeObserver | null = null
@@ -249,6 +253,18 @@ onMounted(() => {
   })
   hoverMoveListener = modified.onMouseMove(event => setHoveredLine(event.target.position?.lineNumber ?? null))
   hoverLeaveListener = modified.onMouseLeave(() => setHoveredLine(null))
+  // Right-click on a selection is the way in: a bare letter never reaches Monaco, because
+  // the page takes shortcuts in the capture phase. Both panes, since in side-by-side the
+  // old version on the left is just as readable.
+  askActions = [modified, editor.getOriginalEditor()].map(pane => pane.addAction({
+    id: 'prcockpit.ask',
+    label: 'Zapytaj AI o zaznaczenie',
+    contextMenuGroupId: 'navigation',
+    run: () => {
+      const text = selectedText()
+      if (text) emit('ask', text)
+    },
+  }))
   refreshGlyphs()
   syncZones()
   if (language === 'csharp' || originalLanguage === 'csharp') void loadCSharpHovers()
@@ -266,7 +282,19 @@ watch(() => [props.commentLines, props.resolvedLines], () => {
 
 watch(() => props.sideBySide, value => editor?.updateOptions({ renderSideBySide: value ?? false }))
 
+// The selection can be on either side; the modified pane first, because that is where a
+// reviewer spends the time. An empty selection yields an empty range, so nothing else to check.
+function selectedText(): string {
+  for (const pane of [editor?.getModifiedEditor(), editor?.getOriginalEditor()]) {
+    const selection = pane?.getSelection()
+    const text = selection ? pane?.getModel()?.getValueInRange(selection) ?? '' : ''
+    if (text.trim()) return text
+  }
+  return ''
+}
+
 defineExpose({
+  selectedText,
   goToDiff: (target: 'next' | 'previous') => editor?.goToDiff(target),
   focusEditor: () => editor?.getModifiedEditor().focus(),
   // Anchoring is always right-hand side, so the cursor line of the modified editor is the
@@ -388,6 +416,7 @@ function refreshGlyphs() {
 
 onBeforeUnmount(() => {
   hoverAbort?.abort()
+  askActions.forEach(action => action.dispose())
   clearZones()
   diffZoneListener?.dispose()
   glyphListener?.dispose()

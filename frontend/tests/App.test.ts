@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   fileDiff: vi.fn(),
   generateSummary: vi.fn(),
   explainFile: vi.fn(),
+  askAboutFile: vi.fn(),
+  fileQuestions: vi.fn(),
   savedSummary: vi.fn(),
   checklist: vi.fn(),
   fileReviews: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock('../src/MonacoDiff.vue', () => ({
       goToDiff: () => {},
       focusEditor: () => {},
       cursorLine: () => null,
+      selectedText: () => 'zaznaczony kod',
       // Stands in for Monaco's view zones: a real container per line, so the teleported
       // conversation actually renders and can be asserted on.
       syncZones(this: any) {
@@ -131,6 +134,12 @@ beforeEach(() => {
   })
   api.explainFile.mockImplementation(async (_project, _repository, _id, path) => ({
     schemaVersion: 2, path, headCommitSha: 'b'.repeat(40), sentences: [`Wyjaśnienie dla ${path}.`],
+  }))
+  api.fileQuestions.mockResolvedValue([])
+  api.askAboutFile.mockImplementation(async (_project, _repository, _id, path, question, selection) => ({
+    schemaVersion: 2, path, question, selection: selection ?? null,
+    sentences: [`Odpowiedź na: ${question}.`], blobId: null, headCommitSha: 'b'.repeat(40),
+    askedAt: '2026-09-01T12:00:00Z',
   }))
   api.fileReviews.mockResolvedValue({
     files: [], readingPath: { paths: [], position: 0, headCommitSha: null, updatedAt: null }, updatedAt: null,
@@ -324,6 +333,108 @@ describe('PR review', () => {
     await flushPromises()
     expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
     expect(wrapper.find('.file-explanation').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('asks about the open file, keeps the thread, and drops an answer that arrives after a file switch', async () => {
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    // The saved conversation is read when the file opens; nothing is asked until asked.
+    expect(api.fileQuestions).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/first.cs')
+    expect(api.askAboutFile).not.toHaveBeenCalled()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+    await flushPromises()
+    await wrapper.find('.file-chat textarea').setValue('Po co jest ten kawałek?')
+    await wrapper.find('.file-chat .comment-send').trigger('click')
+    await flushPromises()
+
+    expect(api.askAboutFile).toHaveBeenCalledWith(
+      'project', 'repo-a', 123, '/src/first.cs', 'Po co jest ten kawałek?', null)
+    expect(wrapper.find('.file-chat-thread').text()).toContain('Odpowiedź na: Po co jest ten kawałek?.')
+    // The question box empties, so the next one starts clean.
+    expect((wrapper.find('.file-chat textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.find('.test-diff').exists()).toBe(true)
+
+    // An answer for the file you just left must not appear over the file you moved to.
+    let resolveLate!: (value: unknown) => void
+    api.askAboutFile.mockReturnValueOnce(new Promise(resolve => { resolveLate = resolve }))
+    await wrapper.find('.file-chat textarea').setValue('A to?')
+    await wrapper.find('.file-chat .comment-send').trigger('click')
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+    resolveLate({
+      schemaVersion: 2, path: '/src/first.cs', question: 'A to?', selection: null,
+      sentences: ['Spóźnione.'], blobId: null, headCommitSha: null, askedAt: '2026-09-01T12:00:00Z',
+    })
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('second.cs')
+    expect(wrapper.text()).not.toContain('Spóźnione.')
+    wrapper.unmount()
+  })
+
+  it('toggles the drawer and never opens it by itself over a saved thread', async () => {
+    api.fileQuestions.mockResolvedValue([{
+      schemaVersion: 2, path: '/src/first.cs', question: 'Wczorajsze?', selection: null,
+      sentences: ['Wczorajsza odpowiedź.'], blobId: null, headCommitSha: null,
+      askedAt: '2026-09-01T12:00:00Z',
+    }])
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    // The thread is loaded, but it must not cover the diff you came to read. The count on
+    // the button is what says there is something there.
+    expect(wrapper.find('.file-chat').exists()).toBe(false)
+    expect(wrapper.find('.ask-button').text()).toContain('(1)')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+    await flushPromises()
+    expect(wrapper.find('.file-chat').exists()).toBe(true)
+    expect(wrapper.find('.file-chat-thread').text()).toContain('Wczorajsza odpowiedź.')
+
+    // The same key is the way back out, and so is Esc.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+    await flushPromises()
+    expect(wrapper.find('.file-chat').exists()).toBe(false)
+
+    await wrapper.find('.ask-button').trigger('click')
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.find('.file-chat').exists()).toBe(false)
+    // Escape closed the drawer, not the pull request.
+    expect(wrapper.find('.diff-toolbar h4').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('attaches the snippet the editor reports and sends it with the question', async () => {
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.next-file-button').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'MonacoDiff' }).vm.$emit('ask', 'var x = 1;')
+    await flushPromises()
+    expect(wrapper.find('.file-chat-attached').text()).toContain('10 znaków')
+
+    await wrapper.find('.file-chat textarea').setValue('Co to robi?')
+    await wrapper.find('.file-chat .comment-send').trigger('click')
+    await flushPromises()
+    expect(api.askAboutFile).toHaveBeenCalledWith(
+      'project', 'repo-a', 123, '/src/first.cs', 'Co to robi?', 'var x = 1;')
+    // Spent: the next question is about the file again unless something new is selected.
+    expect(wrapper.find('.file-chat-attached').exists()).toBe(false)
     wrapper.unmount()
   })
 

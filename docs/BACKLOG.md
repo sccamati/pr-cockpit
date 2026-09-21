@@ -783,3 +783,29 @@ przechodzi. Backend nietknięty.
 pokrywa się z `headSha` zapisanym w markerze dla wszystkich typów zmian; testy jadą na atrapie
 `src/api`. Nie oglądano też w przeglądarce wyglądu bloku rundy ani kolejności grup w filtrze
 „Moje nierozwiązane".
+
+## Wdrożone — pytania o czytany plik
+
+### B-26 — Zapytaj AI o ten plik (i o zaznaczony fragment)
+
+Status: zaimplementowane, pokryte testami backendu i frontendu. Migracja `AddFileQuestions`
+i rzeczywista odpowiedź modelu **niesprawdzone** — testy stoją na SQLite `EnsureCreated()`
+i atrapie portu AI, więc ani schemat SQL Server, ani jakość odpowiedzi nie są tu potwierdzone.
+Prośba użytkownika z 21 wrz 2026: „jak zaznaczę kod to żeby była opcja wytłumaczenia tego
+kawałka" i „a może normalnie mógłbym dopytać o coś w pliku, jakiś prosty czacik".
+
+**Dlaczego.** Czytając plik trafiasz na kawałek kodu, którego sensu nie widać z samego diffu.
+Były dwie ścieżki AI — Summary całego PR i „Wyjaśnij ten plik" — obie jednostronne, obu nie
+dało się dopytać. To jedna funkcja, nie dwie: „wyjaśnij zaznaczenie" to to samo pytanie
+z dołączonym fragmentem.
+
+**Zakres.** Trzecie zadanie `ask` w tym samym adapterze (`scripts/summary-adapter.mjs` bez
+zmian — przepuszcza tylko `instruction` i `context`). `POST/GET .../summary/ask`, nowa tabela
+`pr_file_questions` (jedyna, która dopisuje), historia składana po stronie backendu i filtrowana
+`ContentFreshness`, limity 1000/4000 znaków sprawdzane przed jakimkolwiek I/O. W przeglądarce:
+akcja `prcockpit.ask` w menu kontekstowym Monaco na obu stronach diffu, klawisz `a`, zwijany
+panel nad diffem. Osobny model przez `Ai:Summary:AskModel` z fallbackiem.
+
+**Gotowe, gdy:** potwierdzone na prawdziwym PR — migracja tworzy tabelę przy starcie, pytanie
+o zaznaczenie wraca sensowną odpowiedzią, follow-up nawiązuje do poprzedniej tury, a wątek
+wraca po powrocie do pliku. Do sprawdzenia także odrzucenie pytania > 1000 znaków.

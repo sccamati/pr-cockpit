@@ -113,6 +113,17 @@ export interface FileExplanation {
   sentences: string[]
 }
 
+export interface FileQuestionTurn {
+  schemaVersion: number
+  path: string
+  question: string
+  selection: string | null
+  sentences: string[]
+  blobId: string | null
+  headCommitSha: string | null
+  askedAt: string
+}
+
 export interface FileReviewEntry { path: string; blobId: string | null; headSha: string | null; updatedAt: string }
 export interface FileReviewState {
   files: FileReviewEntry[]
@@ -237,6 +248,11 @@ export const api = {
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
   explainFile: (project: string, repository: string, id: number, path: string, signal?: AbortSignal) =>
     post<FileExplanation>(`${location(project, repository)}/pull-requests/${id}/summary/file`, { path }, signal),
+  askAboutFile: (project: string, repository: string, id: number, path: string, question: string, selection?: string | null) =>
+    post<FileQuestionTurn>(`${location(project, repository)}/pull-requests/${id}/summary/ask`,
+      { path, question, selection }),
+  fileQuestions: (project: string, repository: string, id: number, path: string) =>
+    get<FileQuestionTurn[]>(`${location(project, repository)}/pull-requests/${id}/summary/ask?path=${encodeURIComponent(path)}`),
   savedSummary: (project: string, repository: string, id: number) =>
     get<{ stored: StoredSummary | null }>(`${location(project, repository)}/pull-requests/${id}/summary`)
       .then(response => response.stored),
