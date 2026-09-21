@@ -493,6 +493,33 @@ Jeśli wróci, w logu backendu stanie teraz linia Warning z treścią odpowiedzi
 powie, co się dzieje. Gdyby przyczyną okazały się dwa oddzielne obiekty JSON w jednej
 odpowiedzi albo limit 16 384 znaków wyjścia, `extractJson` tego nie załatwia.
 
+## Wdrożone — komentarz z PR Cockpit psuł stronę PR w Azure DevOps
+
+Status: naprawione, zapięte testem. Zgłoszone przez użytkownika 21 wrz 2026.
+
+Komentarz do linii dodawał się poprawnie, ale po jego wystawieniu webowy UI Azure DevOps
+pokazywał na tym PR „An unexpected error has occurred within this region of the page"
+i `Cannot read properties of undefined (reading 'line')`.
+
+**Przyczyna.** `threadContext` szedł z samym `rightFileStart`, bez `rightFileEnd`. API to
+przyjmuje bez słowa, więc po naszej stronie wszystko wyglądało dobrze — wątek się tworzył,
+odczyt działał, nasz własny widok komentarzy renderował się poprawnie. Dopiero renderer
+Azure DevOps czyta `rightFileEnd.line` i wywraca się na `undefined`. Zepsuty był nie nasz
+ekran, tylko cudzy, i to dla wszystkich patrzących na ten PR.
+
+**Poprawka.** Wątek w linii wysyła oba końce: `rightFileStart` offset 1 i `rightFileEnd`
+offset 2, czyli jednoznakowy zakres z przykładu Microsoftu. Komentarz do całego pliku nadal
+nie ma zakresu w ogóle — to inny kształt, a nie wypełniony do połowy.
+
+**Wniosek na przyszłość.** Nasze testy sprawdzały, czy wątek się tworzy i czy potrafimy go
+odczytać, a nie *co* wysyłamy. Przy zapisie do cudzego systemu „API przyjęło" nie znaczy
+„poprawne" — payload jest teraz zapięty dwoma testami, osobno dla wątku w linii i do pliku.
+
+**Zweryfikowane:** 136 testów backendu, w tym dwa nowe na kształt żądania.
+
+**Niesprawdzone:** nie wystawiłem komentarza na prawdziwym PR po poprawce. Wątki utworzone
+**przed** nią nadal mają połowiczny `threadContext` i nadal będą psuć stronę w Azure DevOps —
+trzeba je skasować (w PR Cockpit „Usuń" przy własnym komentarzu).
 ## Wdrożone — wyjaśnienie pliku tylko na prośbę, czytelne odrzucenia, dłuższy timeout
 
 Status: zaimplementowane, pokryte testami. Trzy uwagi użytkownika z 21 wrz 2026, wszystkie

@@ -224,10 +224,21 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
                 throw new AzureDevOpsException("Invalid line number.", 400);
             // Always anchored on the right-hand side: with an inline diff only the modified
             // editor has addressable positions, so a left-side anchor could not be produced
-            // by the UI in the first place. Offset 1 is what Azure DevOps' own example sends.
+            // by the UI in the first place.
+            //
+            // Both ends, always. A threadContext carrying rightFileStart without rightFileEnd
+            // is accepted by the API and then crashes the Azure DevOps web UI, which reads
+            // rightFileEnd.line while rendering the thread — a comment posted from here broke
+            // the pull request page for everyone looking at it in the browser. Offsets 1 and 2
+            // are what Azure DevOps' own example sends: a one-character span on the line.
             context = thread.Line is null
                 ? new { filePath = thread.FilePath }
-                : new { filePath = thread.FilePath, rightFileStart = new { line = thread.Line, offset = 1 } };
+                : new
+                {
+                    filePath = thread.FilePath,
+                    rightFileStart = new { line = thread.Line, offset = 1 },
+                    rightFileEnd = new { line = thread.Line, offset = 2 },
+                };
         }
 
         return await WriteAsync(HttpMethod.Post,

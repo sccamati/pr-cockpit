@@ -479,6 +479,55 @@ public sealed class AzureDevOpsClientTests
         Assert.Null(thread.Comments[1].Content);
     }
 
+    // A half-filled anchor is accepted by the API and then breaks the Azure DevOps web UI,
+    // which reads rightFileEnd.line while rendering the thread. Writing into somebody else's
+    // system is exactly where a payload has to be pinned by a test.
+    [Fact]
+    public async Task AnchorsALineCommentWithBothEndsOfTheRange()
+    {
+        string? body = null;
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            body = request.Content!.ReadAsStringAsync().Result;
+            return Json("""{"id":9,"comments":[{"id":1,"commentType":"text","content":"Uwaga."}]}""");
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        await Client(http, allowComments: true).CreateCommentThreadAsync("proj", "repo", 123,
+            new NewCommentThread("Uwaga.", "/src/invoices.cs", 42), CancellationToken.None);
+
+        using var sent = JsonDocument.Parse(body!);
+        var context = sent.RootElement.GetProperty("threadContext");
+        Assert.Equal("/src/invoices.cs", context.GetProperty("filePath").GetString());
+        Assert.Equal(42, context.GetProperty("rightFileStart").GetProperty("line").GetInt32());
+        Assert.Equal(1, context.GetProperty("rightFileStart").GetProperty("offset").GetInt32());
+        Assert.Equal(42, context.GetProperty("rightFileEnd").GetProperty("line").GetInt32());
+        Assert.Equal(2, context.GetProperty("rightFileEnd").GetProperty("offset").GetInt32());
+    }
+
+    // A comment on the whole file has no range at all, which is a different shape, not a
+    // half-filled one.
+    [Fact]
+    public async Task AnchorsAFileCommentWithNoRange()
+    {
+        string? body = null;
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            body = request.Content!.ReadAsStringAsync().Result;
+            return Json("""{"id":9,"comments":[{"id":1,"commentType":"text","content":"Uwaga."}]}""");
+        }))
+        { BaseAddress = new Uri("https://dev.azure.com/") };
+
+        await Client(http, allowComments: true).CreateCommentThreadAsync("proj", "repo", 123,
+            new NewCommentThread("Uwaga.", "/src/invoices.cs", null), CancellationToken.None);
+
+        using var sent = JsonDocument.Parse(body!);
+        var context = sent.RootElement.GetProperty("threadContext");
+        Assert.Equal("/src/invoices.cs", context.GetProperty("filePath").GetString());
+        Assert.False(context.TryGetProperty("rightFileStart", out _));
+        Assert.False(context.TryGetProperty("rightFileEnd", out _));
+    }
+
     [Fact]
     public void ReadsAThreadWithNoStatusAndNoContextWithoutFailing()
     {
