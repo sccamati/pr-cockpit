@@ -809,3 +809,29 @@ panel nad diffem. Osobny model przez `Ai:Summary:AskModel` z fallbackiem.
 **Gotowe, gdy:** potwierdzone na prawdziwym PR — migracja tworzy tabelę przy starcie, pytanie
 o zaznaczenie wraca sensowną odpowiedzią, follow-up nawiązuje do poprzedniej tury, a wątek
 wraca po powrocie do pliku. Do sprawdzenia także odrzucenie pytania > 1000 znaków.
+
+## Wdrożone — koniec pliku z komentarzem był nieosiągalny
+
+### B-27 — Blok komentarza zabierał tyle przewijania, ile sam zajmował
+
+Status: naprawione, pokryte testem frontendu (`mirrors a comment block into the original
+editor, at the same height`). **Niepotwierdzone na prawdziwym PR** — atrapa Monaco w testach
+sprawdza, że bliźniak powstaje i rośnie razem z blokiem, nie że edytor faktycznie dojeżdża
+do końca pliku.
+
+**Objaw.** Zgłoszenie użytkownika z 22 wrz 2026: w pliku z komentarzami nie dało się przewinąć
+do ostatniej linii. Brakowało dokładnie tylu pikseli, ile zajmowały bloki komentarzy.
+
+**Przyczyna.** Diff editor trzyma oba edytory na tej samej pozycji przewijania i po każdej
+zmianie przepisuje ją z jednego do drugiego, a `setScrollTop` przycina wartość do wysokości
+treści **tego** edytora. Strefy komentarzy istniały tylko po stronie zmodyfikowanej, więc
+oryginał kończył się wcześniej i ściągał prawą stronę z powrotem.
+
+**Poprawka.** Każdy blok dostaje pusty bliźniak o tej samej wysokości w edytorze oryginalnym,
+w linii, na którą diff mapuje linię komentarza (`originalLineFor` z `getLineChanges()`).
+Wysokość idzie za blokiem przez ten sam `ResizeObserver`. Bliźniak trzyma też oba panele
+w równi przy diffie obok siebie.
+
+**Chowanie komentarzy** — druga część zgłoszenia — istniało już wcześniej: przełącznik
+„Ukryj komentarze / Pokaż komentarze (N)” w pasku nad diffem (preferencja na sesję, nie na
+plik) oraz zwijanie pojedynczego bloku kliknięciem w jego nagłówek.

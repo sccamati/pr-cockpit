@@ -48,6 +48,8 @@ let glyphs: monaco.editor.IEditorDecorationsCollection | null = null
 const zoneIds = new Map<number, string>()
 const zoneNodes = new Map<number, HTMLElement>()
 const zoneObservers = new Map<number, ResizeObserver>()
+const twinIds = new Map<number, string>()
+const twinZones = new Map<number, monaco.editor.IViewZone>()
 let hoverGlyphs: monaco.editor.IEditorDecorationsCollection | null = null
 let hoveredLine: number | null = null
 
@@ -337,6 +339,11 @@ function setHoveredLine(line: number | null) {
  * are only ever added and removed one by one, never through a wholesale reset, and they
  * are re-asserted after the diff recomputes.
  *
+ * Every block also gets a blank twin of the same height in the original editor. The two
+ * editors scroll in lockstep and each clamps to its own content height, so without the
+ * twin the original runs out of scroll first and drags the modified back — the tail of a
+ * commented file becomes unreachable. The twin keeps the side-by-side panes aligned too.
+ *
  * ponytail: the height comes from a ResizeObserver on the container rather than from
  * measuring the content ourselves. Ceiling: a zone briefly lags a very large paste.
  */
@@ -344,19 +351,19 @@ function syncZones() {
   if (!editor) return
   const modified = editor.getModifiedEditor()
   const wanted = new Set((props.zoneLines ?? []).filter(line => line > 0))
+  const gone = [...zoneIds.keys()].filter(line => !wanted.has(line))
+  const fresh = [...wanted].filter(line => !zoneIds.has(line))
 
   modified.changeViewZones(accessor => {
-    for (const [line, id] of [...zoneIds]) {
-      if (wanted.has(line)) continue
-      accessor.removeZone(id)
+    for (const line of gone) {
+      accessor.removeZone(zoneIds.get(line)!)
       zoneIds.delete(line)
       zoneObservers.get(line)?.disconnect()
       zoneObservers.delete(line)
       zoneNodes.delete(line)
     }
 
-    for (const line of wanted) {
-      if (zoneIds.has(line)) continue
+    for (const line of fresh) {
       const container = document.createElement('div')
       container.className = 'comment-zone'
       const zone: monaco.editor.IViewZone = {
@@ -377,24 +384,73 @@ function syncZones() {
         if (height === zone.heightInPx) return
         zone.heightInPx = height
         modified.changeViewZones(inner => inner.layoutZone(id))
+        resizeTwin(line, height)
       })
       observer.observe(container)
       zoneObservers.set(line, observer)
     }
   })
 
+  editor.getOriginalEditor().changeViewZones(accessor => {
+    for (const line of gone) {
+      const id = twinIds.get(line)
+      if (id) accessor.removeZone(id)
+      twinIds.delete(line)
+      twinZones.delete(line)
+    }
+    for (const line of fresh) {
+      const twin: monaco.editor.IViewZone = {
+        afterLineNumber: originalLineFor(line),
+        domNode: document.createElement('div'),
+        heightInPx: zoneNodes.get(line)?.scrollHeight ?? 0,
+        suppressMouseDown: true,
+      }
+      twinIds.set(line, accessor.addZone(twin))
+      twinZones.set(line, twin)
+    }
+  })
+
   emit('zones', [...zoneNodes].map(([line, el]) => ({ line, el })))
+}
+
+function resizeTwin(line: number, height: number) {
+  const twin = twinZones.get(line)
+  const id = twinIds.get(line)
+  if (!twin || !id || twin.heightInPx === height) return
+  twin.heightInPx = height
+  editor?.getOriginalEditor().changeViewZones(accessor => accessor.layoutZone(id))
+}
+
+/**
+ * Where a modified line sits in the original text, so the twin lands beside its comment.
+ *
+ * ponytail: a line inside a hunk takes that whole hunk's delta, so the twin can sit a few
+ * lines off within it. Enough to keep the panes aligned; exactness needs the full mapping.
+ */
+function originalLineFor(modifiedLine: number): number {
+  let line = modifiedLine
+  for (const change of editor?.getLineChanges() ?? []) {
+    if (change.modifiedStartLineNumber > modifiedLine) break
+    const added = change.modifiedEndLineNumber === 0 ? 0 : change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1
+    const removed = change.originalEndLineNumber === 0 ? 0 : change.originalEndLineNumber - change.originalStartLineNumber + 1
+    line += removed - added
+  }
+  return Math.min(Math.max(line, 0), originalModel?.getLineCount() ?? 0)
 }
 
 function clearZones() {
   for (const observer of zoneObservers.values()) observer.disconnect()
   zoneObservers.clear()
-  const modified = editor?.getModifiedEditor()
-  modified?.changeViewZones(accessor => {
+  editor?.getModifiedEditor().changeViewZones(accessor => {
     for (const id of zoneIds.values()) accessor.removeZone(id)
+  })
+  editor?.getOriginalEditor().changeViewZones(accessor => {
+    for (const id of twinIds.values()) accessor.removeZone(id)
   })
   zoneIds.clear()
   zoneNodes.clear()
+  twinIds.clear()
+  twinZones.clear()
 }
 
 function refreshGlyphs() {

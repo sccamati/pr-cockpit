@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   addZone: vi.fn(),
   removeZone: vi.fn(),
   layoutZone: vi.fn(),
+  originalAddZone: vi.fn(),
+  originalRemoveZone: vi.fn(),
+  originalLayoutZone: vi.fn(),
+  resizeCallbacks: [] as (() => void)[],
   revealLineInCenter: vi.fn(),
   modifiedEditor: null as unknown,
   decorationsSet: vi.fn(),
@@ -46,7 +50,7 @@ vi.mock('monaco-editor', () => ({
     setTheme: mocks.setTheme,
     createModel: vi.fn(() => {
       const id = mocks.models.length
-      const model = { uri: { toString: () => `model-${id}` }, dispose: vi.fn() }
+      const model = { uri: { toString: () => `model-${id}` }, dispose: vi.fn(), getLineCount: () => 500 }
       mocks.models.push(model)
       return model
     }),
@@ -58,7 +62,18 @@ vi.mock('monaco-editor', () => ({
       goToDiff: mocks.goToDiff,
       revealFirstDiff: mocks.revealFirstDiff,
       onDidUpdateDiff: mocks.onDidUpdateDiff,
-      getOriginalEditor: () => ({ updateOptions: mocks.originalUpdate, addAction: mocks.addAction, getSelection: () => null, getModel: () => null }),
+      getLineChanges: () => [],
+      getOriginalEditor: () => ({
+        updateOptions: mocks.originalUpdate, addAction: mocks.addAction,
+        getSelection: () => null, getModel: () => null,
+        // The comment blocks are mirrored here as blank spacers, so this pane needs the
+        // zone accessor too.
+        changeViewZones: (change: (accessor: unknown) => void) => change({
+          addZone: mocks.originalAddZone,
+          removeZone: mocks.originalRemoveZone,
+          layoutZone: mocks.originalLayoutZone,
+        }),
+      }),
       // One stable modified editor per diff editor: the component keeps two decoration
       // collections, and a fresh object per call would hand it two fresh ones each time.
       getModifiedEditor: () => mocks.modifiedEditor,
@@ -127,6 +142,8 @@ beforeEach(() => {
     }),
   }
   mocks.addZone.mockImplementation(() => `zone-${mocks.addZone.mock.calls.length}`)
+  mocks.originalAddZone.mockImplementation(() => `twin-${mocks.originalAddZone.mock.calls.length}`)
+  mocks.resizeCallbacks = []
   mocks.onMouseDown.mockReturnValue({ dispose: mocks.disposeGlyphListener })
   mocks.onMouseMove.mockReturnValue({ dispose: vi.fn() })
   mocks.onMouseLeave.mockReturnValue({ dispose: vi.fn() })
@@ -136,6 +153,7 @@ beforeEach(() => {
     removeEventListener() {},
   }) as unknown as typeof window.matchMedia
   globalThis.ResizeObserver = class {
+    constructor(callback: () => void) { mocks.resizeCallbacks.push(callback) }
     observe() {}
     disconnect() {}
     unobserve() {}
@@ -271,6 +289,32 @@ describe('Monaco reading options', () => {
     await flushPromises()
     expect(mocks.removeZone).toHaveBeenCalled()
     expect(wrapper.emitted('zones')?.at(-1)?.[0]).toEqual([])
+
+    wrapper.unmount()
+  })
+
+  // Monaco keeps both panes at the same scroll position and clamps each to its own
+  // content height, so a block that only exists on the right makes the tail of the file
+  // unreachable. The blank twin on the left is what buys those pixels back.
+  it('mirrors a comment block into the original editor, at the same height', async () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/a.ts', originalPath: null, originalText: 'a', modifiedText: 'b', zoneLines: [12] },
+    })
+    await flushPromises()
+
+    const twin = mocks.originalAddZone.mock.calls[0]![0] as { afterLineNumber: number; heightInPx: number }
+    expect(twin.afterLineNumber).toBe(12)
+
+    const zone = mocks.addZone.mock.calls[0]![0] as { domNode: HTMLElement; heightInPx: number }
+    Object.defineProperty(zone.domNode, 'scrollHeight', { value: 180, configurable: true })
+    mocks.resizeCallbacks.forEach(callback => callback())
+    expect(zone.heightInPx).toBe(180)
+    expect(twin.heightInPx).toBe(180)
+    expect(mocks.originalLayoutZone).toHaveBeenCalled()
+
+    await wrapper.setProps({ zoneLines: [] })
+    await flushPromises()
+    expect(mocks.originalRemoveZone).toHaveBeenCalledWith('twin-1')
 
     wrapper.unmount()
   })
