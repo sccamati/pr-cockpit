@@ -66,6 +66,8 @@ public sealed class AzureDevOpsClientTests
                     {"changeEntries":[
                       {"item":{"path":"/src/new.cs"},"changeType":"add"},
                       {"item":{"path":"/src/renamed.cs"},"originalPath":"/src/old.cs","changeType":"rename"},
+                      {"item":{"objectId":"deadbeef"},"changeType":"edit"},
+                      {"item":{"path":null},"changeType":"edit"},
                       {"item":{"path":"/src","isFolder":true},"changeType":"edit"}
                     ],"nextSkip":3}
                     """,

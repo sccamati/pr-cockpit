@@ -492,6 +492,11 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
                     var item = entry.GetProperty("item");
                     if (item.TryGetProperty("isFolder", out var isFolder) && isFolder.GetBoolean())
                         continue;
+                    // A big pull request really does contain entries with no item path (a folder
+                    // rename, a submodule). Nothing downstream can diff, mark or list them, so drop
+                    // them here rather than carrying a null path into serialization.
+                    if (!item.TryGetProperty("path", out var itemPath) || string.IsNullOrEmpty(itemPath.GetString()))
+                        continue;
                     files.Add(AzureDevOpsMapper.ChangedFile(entry));
                 }
                 var nextSkip = json.RootElement.TryGetProperty("nextSkip", out var next)
