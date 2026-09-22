@@ -7,8 +7,8 @@
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-$backendPort = 5164
-$frontendPort = 5173
+$backendPort = 7180
+$frontendPort = 7181
 $appUrl = "http://localhost:$frontendPort"
 $children = @()
 

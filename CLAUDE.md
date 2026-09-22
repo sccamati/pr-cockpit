@@ -9,8 +9,8 @@ dotnet build PRCockpit.slnx
 dotnet test PRCockpit.slnx
 dotnet test PRCockpit.slnx --filter "FullyQualifiedName~PrContextBuilderTests"   # one class/test
 
-dotnet run --project backend/PRCockpit.Api --launch-profile http                 # http://localhost:5164
-cd frontend; npm ci; npm run dev                                                 # Vite on 5173, proxies /api
+dotnet run --project backend/PRCockpit.Api --launch-profile http                 # http://localhost:7180
+cd frontend; npm ci; npm run dev                                                 # Vite on 7181, proxies /api
 cd frontend; npm test                                                            # vitest run
 cd frontend; npm test -- tests/App.test.ts -t "filters unreviewed"               # one file/test
 cd frontend; npm run build                                                       # vue-tsc --noEmit + vite build

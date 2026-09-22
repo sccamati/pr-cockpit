@@ -81,7 +81,7 @@ Each pull request has six manual checklist items. The backend saves them through
 
 `scripts/install-shortcut.ps1` puts a **PR Cockpit** shortcut on the desktop; run it once,
 and again after moving the repository. The shortcut runs `scripts/start.ps1`, which frees
-ports 5164 and 5173, runs `npm ci` if `frontend/node_modules` is missing, starts the backend
+ports 7180 and 7181, runs `npm ci` if `frontend/node_modules` is missing, starts the backend
 and Vite in that one console, waits for Vite and opens the browser. Both servers log into
 that window, so closing it or pressing Ctrl+C stops them; if a run is ever left behind, the
 next launch clears the ports itself. The shortcut uses a stock Windows icon — put your own
@@ -104,7 +104,7 @@ npm ci
 npm run dev
 ```
 
-Open the URL shown by Vite (usually `http://localhost:5173`). Vite proxies `/api` requests to the backend at `http://localhost:5164`. The health endpoint is `http://localhost:5164/api/health`.
+Open the URL shown by Vite (usually `http://localhost:7181`). Vite proxies `/api` requests to the backend at `http://localhost:7180`. The health endpoint is `http://localhost:7180/api/health`.
 
 ## Build and test
 
