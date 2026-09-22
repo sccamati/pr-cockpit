@@ -1486,14 +1486,28 @@ async function askQuestion() {
   const selection = questionSelection.value || null
   questionError.value = ''
   questionLoading.value = true
+  // The question goes into the thread and the box empties at once, the way a chat behaves;
+  // the answer fills in when it arrives. ponytail: matched by index, because turns are only
+  // ever appended and a file switch is already caught by the diff request id below.
+  const index = questionTurns.value.length
+  questionTurns.value = [...questionTurns.value, {
+    schemaVersion: 0, path, question: asked, selection, sentences: [],
+    blobId: null, headCommitSha: null, askedAt: new Date().toISOString(),
+  }]
+  questionDraft.value = ''
+  questionSelection.value = ''
   try {
     const turn = await api.askAboutFile(projectId.value, repositoryId.value, pullRequestId, path, asked, selection)
     if (current !== diffRequestId) return
-    questionTurns.value = [...questionTurns.value, turn]
-    questionDraft.value = ''
-    questionSelection.value = ''
+    questionTurns.value = questionTurns.value.map((existing, at) => at === index ? turn : existing)
   } catch (cause) {
-    if (current === diffRequestId) questionError.value = message(cause)
+    if (current !== diffRequestId) return
+    // Nothing was stored, so the question leaves the thread and goes back into the box
+    // with its snippet — one error line beats a turn that looks answered and is not.
+    questionTurns.value = questionTurns.value.filter((_, at) => at !== index)
+    questionDraft.value = asked
+    questionSelection.value = selection ?? ''
+    questionError.value = message(cause)
   } finally {
     if (current === diffRequestId) questionLoading.value = false
   }

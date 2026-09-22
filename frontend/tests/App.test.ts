@@ -351,7 +351,18 @@ describe('PR review', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
     await flushPromises()
     await wrapper.find('.file-chat textarea').setValue('Po co jest ten kawałek?')
+    let resolveAnswer!: (value: unknown) => void
+    api.askAboutFile.mockReturnValueOnce(new Promise(resolve => { resolveAnswer = resolve }))
     await wrapper.find('.file-chat .comment-send').trigger('click')
+
+    // The question is in the thread and the box is empty before the answer comes back.
+    expect(wrapper.find('.file-chat-thread').text()).toContain('Po co jest ten kawałek?')
+    expect((wrapper.find('.file-chat textarea').element as HTMLTextAreaElement).value).toBe('')
+    resolveAnswer({
+      schemaVersion: 2, path: '/src/first.cs', question: 'Po co jest ten kawałek?', selection: null,
+      sentences: ['Odpowiedź na: Po co jest ten kawałek?.'], blobId: null, headCommitSha: null,
+      askedAt: '2026-09-01T12:00:00Z',
+    })
     await flushPromises()
 
     expect(api.askAboutFile).toHaveBeenCalledWith(
