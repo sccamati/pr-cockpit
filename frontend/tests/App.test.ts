@@ -818,6 +818,28 @@ describe('PR review', () => {
     wrapper.unmount()
   })
 
+  it('shows a snippet for every commented file, not only the first twenty', async () => {
+    api.commentThreads.mockResolvedValue(Array.from({ length: 25 }, (_, index) => ({
+      id: index + 1, status: 'active', filePath: `/src/file${index}.cs`, rightLine: 1, leftLine: null,
+      isSystem: false, iterationId: null,
+      comments: [{ id: 1, author: 'Jan', content: 'Tu.', commentType: 'text', publishedAt: null }],
+    })))
+    api.fileDiff.mockImplementation(async (_project, _repository, _id, path) => ({
+      kind: 'text', path, originalPath: null, originalText: '', modifiedText: 'jeden',
+    }))
+
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    await wrapper.find('.comments-open').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.thread-snippet')).toHaveLength(25)
+    expect(wrapper.find('.snippet-loading').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('keeps every conversation between the lines it belongs to, foldable one by one', async () => {
     api.commentThreads.mockResolvedValue([
       { id: 1, status: 'active', filePath: '/src/first.cs', rightLine: 4, leftLine: null, isSystem: false, iterationId: null,

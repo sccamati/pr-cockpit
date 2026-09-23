@@ -332,9 +332,14 @@ const snippetsLoading = ref(false)
 const snippetContext = 3
 // Azure DevOps counts lines, not characters, and a repository can hold either ending.
 const splitLines = (text: string) => text.split('\n').map(line => line.replace(/\r$/, ''))
-// ponytail: a flat cap instead of paging the fetch. Twenty commented files is already an
-// unusual pull request; raise it when one shows up.
-const maxSnippetFiles = 20
+// Every commented file gets its snippet — a review can touch sixty of them. A few at a
+// time, because each diff costs the backend four Azure DevOps calls.
+// ponytail: all files are fetched up front, not as they scroll into view; lazy loading
+// when a pull request with hundreds of commented files shows up.
+const snippetConcurrency = 4
+// Bumped by every load and by a PR switch. Only the newest run writes, so a refresh
+// mid-load cannot leave "Wczytywanie kodu…" stuck or drop the load it started.
+let snippetsRun = 0
 
 function threadSnippet(thread: PrCommentThread) {
   if (!thread.filePath) return null
@@ -359,21 +364,22 @@ function threadSnippet(thread: PrCommentThread) {
 }
 
 async function loadSnippets() {
-  if (!details.value || snippetsLoading.value) return
-  const current = threadsRequestId
-  const paths = [...new Set(threads.value.map(thread => thread.filePath).filter((path): path is string => !!path))]
+  if (!details.value) return
+  const run = ++snippetsRun
+  // The order the list reads in, so the top of the view fills first.
+  const inOrder = [...threadGroups.value.map(group => group.path), ...threads.value.map(thread => thread.filePath)]
+  const queue = [...new Set(inOrder.filter((path): path is string => !!path))]
     .filter(path => !snippets.value[path])
-    .slice(0, maxSnippetFiles)
-  if (paths.length === 0) return
+  snippetsLoading.value = queue.length > 0
+  if (queue.length === 0) return
 
   const project = projectId.value
   const repository = repositoryId.value
   const id = details.value.id
-  snippetsLoading.value = true
-  try {
-    for (const path of paths) {
+  const worker = async () => {
+    for (let path = queue.shift(); path && run === snippetsRun; path = queue.shift()) {
       const diff = await api.fileDiff(project, repository, id, path).catch(() => null)
-      if (current !== threadsRequestId) return
+      if (run !== snippetsRun) return
       // A binary or oversized file simply has no snippet; the thread still lists fine.
       if (diff?.kind === 'text') {
         snippets.value = {
@@ -382,8 +388,11 @@ async function loadSnippets() {
         }
       }
     }
+  }
+  try {
+    await Promise.all(Array.from({ length: snippetConcurrency }, worker))
   } finally {
-    if (current === threadsRequestId) snippetsLoading.value = false
+    if (run === snippetsRun) snippetsLoading.value = false
   }
 }
 
@@ -1093,6 +1102,7 @@ function resetThreads() {
   deleting.value = null
   commentSaving.value = false
   commentError.value = ''
+  ++snippetsRun
   snippets.value = {}
   snippetsLoading.value = false
 }

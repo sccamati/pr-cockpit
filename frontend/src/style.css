@@ -363,11 +363,12 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .thread-location { font: inherit; font-size: 12px; font-weight: 600; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
 .thread-location:disabled { color: var(--text-muted); cursor: default; }
 .thread-status { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
-/* A reply in a thread starts where the previous one ends, so it gets a rule and real
-   space above it — without that the next author's name reads as another line of the
-   comment before it. */
+/* The first comment opens the thread; every reply sits indented under it on its own
+   tinted strip with a marker, so where one remark ends and the answer begins is visible
+   at a glance, not only from the next author's name. */
 .thread-comment { margin-top: 4px; }
-.thread-comment + .thread-comment { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-mid); }
+.thread-comment + .thread-comment { margin: 10px 0 0 16px; padding: 6px 10px; border-left: 3px solid var(--line-strong); border-radius: 0 6px 6px 0; background: var(--surface-muted); }
+.thread-comment + .thread-comment::before { content: "↳ odpowiedź"; display: block; margin-bottom: 2px; font-size: 11px; color: var(--text-muted); }
 .thread-author { font-size: 12px; font-weight: 700; color: var(--text-strong); }
 .thread-date { margin-left: 6px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .comments-off { margin: 8px 0 0; font-size: 12px; }
@@ -389,9 +390,28 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
 .comments-close { margin-left: auto; }
 .comments-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .thread-search { flex: 1 1 220px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: inherit; }
-.thread-group { display: flex; flex-direction: column; gap: 8px; }
-.thread-group-head { margin: 8px 0 0; font-size: 12px; color: var(--text-muted); font-weight: 600; overflow-wrap: anywhere; }
-.thread--full { border: 1px solid var(--line); border-left-width: 3px; border-radius: 0 6px 6px 0; padding: 8px 10px; }
+/* Spacing carries the hierarchy: the gap between threads is clearly wider than any gap
+   inside one, and the gap between files wider still. */
+.thread-group { display: flex; flex-direction: column; gap: 20px; }
+.thread-group + .thread-group { margin-top: 18px; }
+/* The file a block of threads belongs to stays pinned while its threads scroll past. */
+.thread-group-head { position: sticky; top: -14px; z-index: 3; margin: 8px -16px 0; padding: 8px 16px; border-bottom: 1px solid var(--border-control); background: var(--surface-muted); color: var(--text-strong); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+/* Each thread is a card lifted off the pane by a shadow; the accent edge is kept for
+   active threads only, so teal stays a signal instead of decoration. */
+.thread--full { border: 1px solid var(--border-control); border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; padding: 0 0 12px; background: var(--surface); box-shadow: var(--card-shadow); }
+.thread--full.thread--resolved { border-left-color: var(--border-control); }
+/* Three zones — header, conversation, actions — split by hairlines. */
+.thread--full > .thread-head { padding: 8px 14px; border-bottom: 1px solid var(--line-mid); }
+.thread--full > :not(.thread-head) { margin-left: 14px; margin-right: 14px; }
+.thread--full > .thread-snippet { margin-top: 10px; }
+.thread--full > .thread-comment:first-of-type { margin-top: 12px; }
+.thread--full > .thread-actions, .thread--full > .comment-draft:last-child { margin: 12px 0 -12px; padding: 8px 14px; border-top: 1px solid var(--line-mid); background: var(--surface-muted); border-radius: 0 0 8px 0; }
+.thread--full .thread-actions button, .thread--full .comment-draft button { font-size: 12px; padding: 3px 10px; }
+.thread--full .thread-status { margin-left: auto; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.thread--full.thread--resolved .thread-status { background: var(--surface-chip); color: var(--text-muted); }
+.thread--full .thread-author { font-size: 13px; }
+/* A quote inside a comment must not wear the same teal bar as the thread itself. */
+.thread--full .markdown-body blockquote { border-left-color: var(--text-faint); background: var(--surface-muted); }
 .thread-head { display: flex; align-items: baseline; gap: 8px; }
 .thread-actions, .comment-draft { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .comment-draft { flex-direction: column; }

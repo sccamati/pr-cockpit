@@ -298,7 +298,7 @@ Status: zaimplementowane. Prośba użytkownika po obejrzeniu B-20.
 
 **Zweryfikowane:** 48 testów frontendu. Doszły cztery: liczenie komentarzy przez poziomy drzewa i nierozwinięty folder trzymany otwarty przez nierozwiązany wątek; odznaka `💬 2` na pliku; podział znaczników na rozwiązane i nie; „Rozwiąż” z bloku nad diffem woła status `fixed` i przeładowuje wątki; „Odpowiedz i rozwiąż” wykonuje odpowiedź **przed** zmianą statusu.
 
-**Doszło po informacji zwrotnej:** w widoku komentarzy sama ścieżka i numer linii nic nie mówią, więc każdy wątek pokazuje **kod, którego dotyczy** — trzy linie kontekstu plus linia zakotwiczenia, podświetlona i z numerami. Pobieramy **jeden diff na plik**, nie na wątek, i trzymamy go, dopóki PR jest otwarty; plik binarny albo za duży po prostu nie ma wycinka. Komentarz na linii usuniętej czyta wersję sprzed zmiany, bo tam ta linia istnieje. Limit 20 plików z komentarzami (`ponytail`).
+**Doszło po informacji zwrotnej:** w widoku komentarzy sama ścieżka i numer linii nic nie mówią, więc każdy wątek pokazuje **kod, którego dotyczy** — trzy linie kontekstu plus linia zakotwiczenia, podświetlona i z numerami. Pobieramy **jeden diff na plik**, nie na wątek, i trzymamy go, dopóki PR jest otwarty; plik binarny albo za duży po prostu nie ma wycinka. Komentarz na linii usuniętej czyta wersję sprzed zmiany, bo tam ta linia istnieje. Bez limitu plików — pobierane po cztery naraz, w kolejności listy (patrz B-28).
 
 **Odczyt potwierdzony na żywym Azure DevOps (2026-09-20):** PR 1904 w `SmartIT_Monorepo` zwraca 8 wątków z plikami, liniami i iteracjami; wątki systemowe są odfiltrowane. Wcześniejszy brak komentarzy wynikał z tego, że działał proces backendu sprzed etapu 4 — trasa `/threads` zwracała 404.
 
@@ -835,3 +835,34 @@ w równi przy diffie obok siebie.
 **Chowanie komentarzy** — druga część zgłoszenia — istniało już wcześniej: przełącznik
 „Ukryj komentarze / Pokaż komentarze (N)” w pasku nad diffem (preferencja na sesję, nie na
 plik) oraz zwijanie pojedynczego bloku kliknięciem w jego nagłówek.
+
+## Wdrożone — wycinki kodu i czytelność wątków
+
+### B-28 — Wątek bez kodu, którego dotyczy; odpowiedź zlewała się z komentarzem
+
+Status: naprawione, pokryte testem frontendu (`shows a snippet for every commented file, not
+only the first twenty`). Diffy obu plików ze zgłoszenia sprawdzone na prawdziwym PR #1925
+(HTTP 200, `text`). **Niepotwierdzone w przeglądarce** — ani to, że wycinki pojawiają się
+w widoku, ani nowy wygląd wątków.
+
+**Objaw.** Zgłoszenie użytkownika z 23 wrz 2026: w widoku komentarzy PR #1925 wątki
+w `pl.json` i `priceListItems.ts` nie pokazywały kodu. Do tego pierwszy komentarz i odpowiedzi
+wyglądały tak samo, więc trudno było odróżnić nową uwagę od odpowiedzi na nią.
+
+**Przyczyna.** Wycinki ładowały się tylko dla pierwszych 20 plików z komentarzami
+(`ponytail`: „podnieść, gdy trafi się większy PR”). PR #1925 ma komentarze w 63 plikach.
+Przy okazji: odświeżenie wątków w trakcie ładowania zostawiało „Wczytywanie kodu…” na stałe,
+bo nowe ładowanie odbijało się od flagi starego.
+
+**Poprawka.** Bez limitu, cztery diffy naraz, w kolejności, w jakiej czyta się listę. Każde
+ładowanie ma własny licznik, więc pisze tylko najnowsze. Wątek jest kartą z akcentem po lewej;
+każda odpowiedź jest wcięta, ma własne tło i znacznik „↳ odpowiedź” (także w diffie
+i w szufladzie).
+
+**Druga runda czytelności (23 wrz 2026)** — „wszystko się zlewa”. W widoku komentarzy:
+odstęp między wątkami (20 px) wyraźnie większy niż w środku wątku, a między plikami jeszcze
+większy; nagłówek pliku przyklejony u góry, pogrubiony, czcionką o stałej szerokości; karta
+z cieniem i mocniejszą ramką; wątek podzielony na nagłówek (ze statusem jako plakietką),
+rozmowę i pasek akcji na osobnym tle; przyciski akcji jednej wielkości; cytat w komentarzu
+szary zamiast morskiego, więc morski oznacza tylko aktywny wątek. Sam CSS, zawężony do
+`.thread--full`. **Niepotwierdzone w przeglądarce.**
