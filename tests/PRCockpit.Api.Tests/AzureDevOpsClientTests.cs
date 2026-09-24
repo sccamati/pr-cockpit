@@ -421,6 +421,27 @@ public sealed class AzureDevOpsClientTests
     }
 
     [Fact]
+    public async Task BinaryOriginalVersionIsReportedEvenWhenTheModifiedVersionFails()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            if (path.Contains("/iterations?")) return Iteration();
+            if (path.Contains("/changes?"))
+                return Json("""{"changeEntries":[{"item":{"path":"/logo.png"},"changeType":"edit"}],"nextSkip":0}""");
+            if (path.Contains("/items?") && path.Contains(new string('a', 40)))
+                return Json("""{"objectId":"x","contentMetadata":{"isBinary":true}}""");
+            if (path.Contains("/items?")) return Json("""{"objectId":"not-a-blob-id"}""");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/logo.png", CancellationToken.None);
+
+        // The modified side is fetched alongside, but a binary original never needed it.
+        Assert.Equal("binary", diff.Kind);
+    }
+
+    [Fact]
     public async Task DiffShowsMissingFinalNewline()
     {
         var oldBlob = new string('c', 40);
@@ -807,6 +828,41 @@ public sealed class AzureDevOpsClientTests
             .GetChangedPathsSinceIterationAsync("Project A", "repo", 123, iterationId, CancellationToken.None));
 
         Assert.Equal(expected, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task DiffSinceIterationComparesThatIterationWithTheHeadWithoutTheDetailsPackage()
+    {
+        var visited = new List<string>();
+        var since = new string('c', 40);
+        var head = new string('b', 40);
+        var oldBlob = new string('d', 40);
+        var newBlob = new string('e', 40);
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            visited.Add(path);
+            if (path.Contains("/iterations?")) return Json("""
+                {"value":[{"id":1,"sourceRefCommit":{"commitId":"SINCE"}},
+                          {"id":2,"commonRefCommit":{"commitId":"BASE"},"sourceRefCommit":{"commitId":"HEAD"}}]}
+                """.Replace("SINCE", since).Replace("BASE", new string('a', 40)).Replace("HEAD", head));
+            if (path.Contains("/iterations/2/changes"))
+                return Json("""{"changeEntries":[{"item":{"path":"/src/fixed.cs"},"changeType":"add"}],"nextSkip":0}""");
+            if (path.Contains("/items?") && path.Contains(since)) return Json($$"""{"objectId":"{{oldBlob}}"}""");
+            if (path.Contains("/items?") && path.Contains(head)) return Json($$"""{"objectId":"{{newBlob}}"}""");
+            if (path.Contains($"/blobs/{oldBlob}")) return Bytes("before the fix");
+            if (path.Contains($"/blobs/{newBlob}")) return Bytes("after the fix");
+            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
+        }));
+
+        var diff = await Client(http).GetFileDiffSinceIterationAsync(
+            "Project A", "repo", 123, "/src/fixed.cs", 1, CancellationToken.None);
+
+        // "add" in the change list, and still both sides: the file existed at iteration 1.
+        Assert.Equal("text", diff.Kind);
+        Assert.Equal("before the fix", diff.OriginalText);
+        Assert.Equal("after the fix", diff.ModifiedText);
+        Assert.Equal(6, visited.Count);
     }
 
     // The regression guard for stage 4B: unlocking writes must not turn any read into one.

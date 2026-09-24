@@ -1,48 +1,179 @@
-# PR Cockpit
+<div align="center">
 
-PR Cockpit helps developers understand changes in pull requests. The current slice lets you select an Azure DevOps project and repository, browse active pull requests, and review file diffs. See [PRODUCT.md](PRODUCT.md) for product context and [docs/BACKLOG.md](docs/BACKLOG.md) for the next tasks (both in Polish).
+# 🛩️ PR Cockpit
 
-## Requirements
+**Understand the pull request, not just skim the diff.**
 
-- .NET SDK 10
-- Node.js 24 and npm
-- Access to Azure DevOps Services and a short-lived PAT with **Code (Read)** and **Project and team (Read)** scopes. The current app reads linked work item IDs through the Git API, so it does not need **Work items (Read)**.
+A personal cockpit for reviewing large, AI-generated pull requests on Azure DevOps —
+reading order, AI summaries, per-file explanations and a checklist, so you keep the
+mental model of your system while the code ships faster than you can read it.
 
-## Azure DevOps configuration
+![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
+![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
+![Monaco](https://img.shields.io/badge/Monaco-editor-0078D4?logo=visualstudiocode&logoColor=white)
+![SQL Server](https://img.shields.io/badge/SQL%20Server-EF%20Core-CC2927?logo=microsoftsqlserver&logoColor=white)
+![Azure DevOps](https://img.shields.io/badge/Azure%20DevOps-REST%207.1-0078D7?logo=azuredevops&logoColor=white)
 
-Store the organization name and PAT locally with .NET User Secrets (outside the repository):
+[Why](#-why) · [Features](#-features) · [Architecture](#-architecture) · [Quick start](#-quick-start) · [Configuration](#-configuration) · [Development](#-development)
 
-```powershell
-dotnet user-secrets set "AzureDevOps:Organization" "your-organization" --project backend/PRCockpit.Api
-dotnet user-secrets set "AzureDevOps:Pat" "YOUR_PAT" --project backend/PRCockpit.Api
+</div>
+
+---
+
+## 🤔 Why
+
+With AI writing code, pull requests pass tests and AI review — but they arrive with dozens or
+hundreds of files, and you end up *browsing* the diff instead of *understanding* it. A few weeks
+later nobody remembers where the logic lives or why it works the way it does.
+
+PR Cockpit does **not** replace code review. It answers the comprehension questions after each PR:
+*what changed, why, which files really matter, where do I start reading, where would I start debugging.*
+
+> Product context (in Polish): [PRODUCT.md](PRODUCT.md) · Task list: [docs/BACKLOG.md](docs/BACKLOG.md) · Design record: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+## ✨ Features
+
+| | |
+|---|---|
+| 🧭 **Guided walk-through** | Step through a PR file by file in a suggested reading order — code first, noise (lockfiles, generated code) moved to the end. Resume where you left off. |
+| 🤖 **AI Summary on demand** | 2–5 sentences about the whole PR plus the critical files, each with its role and why it matters. Generated only when you click, stored locally. |
+| 💡 **Explain this file / Ask** | A short explanation of one file, or ask a question about the file on screen (optionally about a highlighted snippet) and keep the conversation. |
+| 🔍 **Monaco diff with C# hovers** | Side-by-side diff with Roslyn-powered hovers and semantic colors for C#. |
+| ✅ **Reviewed markers** | Mark files as reviewed; the marker survives unrelated commits and only goes stale when *that* file changes. |
+| 🔁 **"What changed since…"** | Filter to what arrived after iteration N, or since your last walk-through or a given comment. |
+| 💬 **Comment threads** | Read Azure DevOps threads in place, see them marked in the file tree and diff; write and resolve them when explicitly enabled. |
+| 📋 **Six-step checklist** | A manual per-PR checklist, with progress shown on the active PR list. |
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph Browser
+        UI["Vue 3 + Monaco<br/>(Vite, :7181)"]
+    end
+    subgraph Backend["ASP.NET Core minimal API (:7180)"]
+        API["PRCockpit.Api"] --> APP["PRCockpit.Application"]
+        APP --> DOM["PRCockpit.Domain"]
+        INF["PRCockpit.Infrastructure"] --> APP
+    end
+    UI -- "/api only" --> API
+    INF -- "PAT" --> ADO[("Azure DevOps<br/>REST 7.1")]
+    INF --> DB[("Local SQL Server<br/>EF Core")]
+    INF -- "JSON over stdin/stdout" --> AI["AI CLI adapter<br/>(your model)"]
 ```
 
-`Organization` is the name from `https://dev.azure.com/<organization>`, not the full URL. Alternatively, set the `AzureDevOps__Organization` and `AzureDevOps__Pat` environment variables (listed in [.env.example](.env.example)). The `.env` file is ignored by Git and is not loaded automatically. Do not put the PAT in `appsettings.json` or the frontend.
+- **Fetched on demand.** No sync, no cache of Azure DevOps data. Only your own state is persisted: checklist, Summary, reviewed markers, reading path and AI conversations.
+- **The PAT never leaves the backend.** The frontend talks only to `/api`.
+- **Bounded, never truncated.** Files over the diff or AI-context budget keep their path and an omission reason; text is dropped whole, never cut mid-file.
+- **Untrusted text stays data.** PR descriptions, commit titles and code go to the model in a `context` field, separate from the fixed `instruction`.
+- **Clean Architecture, enforced.** Dependencies point inwards; `ArchitectureTests` fails the build if a layer is crossed.
 
-Only the local backend uses the PAT. This setup is for development; sharing the app with other users will require Microsoft Entra sign-in, API authorization, and per-user token handling.
+## 🚀 Quick start
 
-### Writing comments
+**Requirements:** .NET SDK 10 · Node.js 24 · a local SQL Server · an Azure DevOps PAT with **Code (Read)** and **Project and team (Read)**.
 
-Reading pull request comment threads needs nothing beyond the scopes above. **Writing** them is off by default and has to be switched on deliberately, because a comment is visible to the whole team and cannot be taken back:
+```powershell
+# 1. Secrets (stored outside the repo)
+dotnet user-secrets set "AzureDevOps:Organization" "your-organization" --project backend/PRCockpit.Api
+dotnet user-secrets set "AzureDevOps:Pat" "YOUR_PAT" --project backend/PRCockpit.Api
+dotnet user-secrets set "ConnectionStrings:PrCockpit" "Server=.;Initial Catalog=PrCockpit;Trusted_Connection=True;TrustServerCertificate=True" --project backend/PRCockpit.Api
+
+# 2a. One click: puts a "PR Cockpit" shortcut on the desktop
+./scripts/install-shortcut.ps1
+```
+
+<details>
+<summary><b>2b. Or run it in two terminals</b></summary>
+
+```powershell
+# terminal 1 — backend on http://localhost:7180
+dotnet run --project backend/PRCockpit.Api --launch-profile http
+
+# terminal 2 — frontend on http://localhost:7181 (proxies /api)
+cd frontend
+npm ci
+npm run dev
+```
+
+Health check: `http://localhost:7180/api/health`.
+
+</details>
+
+The shortcut runs [`scripts/start.ps1`](scripts/start.ps1): it frees ports 7180/7181, runs `npm ci` if needed, starts
+both servers in one console and opens the browser. Close the window or press Ctrl+C to stop both. Rerun the installer
+after moving the repository; drop an `icon.ico` next to the script to change the icon.
+
+## ⚙️ Configuration
+
+<details>
+<summary><b>🔐 Azure DevOps</b></summary>
+
+`Organization` is the name from `https://dev.azure.com/<organization>`, not the full URL. Instead of User Secrets you can
+set `AzureDevOps__Organization` and `AzureDevOps__Pat` (see [.env.example](.env.example)); `.env` is git-ignored and not
+loaded automatically. Never put the PAT in `appsettings.json` or the frontend.
+
+Linked work item IDs are read through the Git API, so **Work items (Read)** is not needed.
+
+This setup is for local development. Sharing the app with other users would require Microsoft Entra sign-in, API
+authorization and per-user token handling.
+
+</details>
+
+<details>
+<summary><b>💬 Writing comments (off by default)</b></summary>
+
+Reading threads needs nothing extra. **Writing** is off by default, because a comment is visible to the whole team and
+cannot be taken back:
 
 ```powershell
 dotnet user-secrets set "AzureDevOps:AllowComments" "true" --project backend/PRCockpit.Api
 ```
 
-The PAT also needs the **PR threads (read & write)** scope. Leave **Code** on Read — `vso.code_write` would additionally allow pushing code and deleting refs, which this app never does. With the switch off, or the scope missing, the backend refuses the write before any request leaves the machine and says which of the two is wrong.
+The PAT also needs **PR threads (read & write)**. Leave **Code** on Read — `vso.code_write` would also allow pushing code
+and deleting refs, which this app never does. With the switch off or the scope missing, the backend refuses the write
+before any request leaves the machine and says which of the two is wrong.
 
-## Summary CLI adapter
+</details>
 
-`Summary` runs only when you click **Generuj Summary** on a pull request. Configure a trusted CLI program through .NET User Secrets or environment variables:
+<details>
+<summary><b>🗄️ Local database</b></summary>
+
+State is stored through EF Core in the SQL Server database named by `ConnectionStrings:PrCockpit`
+(`ConnectionStrings__PrCockpit` as an env var). Give it an explicit `Initial Catalog` — without one, EF Core uses the
+login's default database and creates its tables there. Migrations run on start.
+
+Records are keyed by organization, project, repository ID and PR ID. A reviewed marker stores the blob id of the file it
+was set on, so it is reported as out of date only when that file's content actually changed.
+
+</details>
+
+<details>
+<summary><b>🤖 AI adapter (Summary, Explain, Ask)</b></summary>
+
+AI runs only when you ask for it. Point the backend at a trusted CLI program:
 
 ```powershell
 dotnet user-secrets set "Ai:Summary:Executable" "C:\path\to\summary-adapter.exe" --project backend/PRCockpit.Api
 dotnet user-secrets set "Ai:Summary:Model" "your-model-id" --project backend/PRCockpit.Api
 ```
 
-Optional settings are `Ai:Summary:Arguments:0`, `Ai:Summary:Arguments:1`, etc. (each is a separate literal argument) and `Ai:Summary:TimeoutSeconds` (default 600, allowed 1–1800 — a pull request of ~100 files makes the model write the whole reading order, which took far longer than the old 120 s default, and a big pull request is the one worth waiting for). The executable is started directly, without a shell, in the backend's application directory. Its path and arguments must come from trusted backend configuration. The adapter itself is responsible for invoking the chosen model; the backend never sends it a repository path or grants it repository tools.
+[`scripts/summary-adapter.mjs`](scripts/summary-adapter.mjs) is a working reference adapter.
 
-The program receives one JSON object on standard input with `task`, `schemaVersion: 2`, the configured `model`, a fixed `instruction`, and the bounded `context` from Azure DevOps. It must write **only** a JSON object to standard output. `task` is `"summary"` for the whole pull request:
+| Setting | Meaning |
+|---|---|
+| `Ai:Summary:Arguments:0`, `:1`, … | Literal arguments, one per entry |
+| `Ai:Summary:TimeoutSeconds` | Default 600, allowed 1–1800 — a ~100-file PR takes a while |
+| `Ai:Summary:AskModel` | Separate model for questions; falls back to `Model` |
+
+The executable is started directly, without a shell, in the backend's directory. It never receives a repository path or
+repository tools.
+
+**Protocol.** One JSON object on stdin with `task`, `schemaVersion: 2`, `model`, a fixed `instruction` and the bounded
+`context`. The program writes **only** one JSON object to stdout; diagnostics go to stderr.
+
+`task: "summary"` — the whole PR:
 
 ```json
 {"schemaVersion":2,"sentences":["Pierwsze zdanie.","Drugie zdanie."],
@@ -50,80 +181,53 @@ The program receives one JSON object on standard input with `task`, `schemaVersi
  "readingOrder":["/src/Foo.cs","/src/Bar.cs","/package-lock.json"]}
 ```
 
-or `"file"`, when the context holds exactly one file and the answer explains that file:
-
-```json
-{"schemaVersion":2,"sentences":["To zdanie opisuje jeden plik."]}
-```
-
-or `"ask"`, when the reader asked a question about the file on screen. The context then holds
-`pullRequest` (that one file), the `question`, an optional `selection` — the snippet the reader
-highlighted — and `history`, the previous turns of the same conversation, oldest first. The answer
-has the same shape as a file explanation, 1–6 sentences:
+`task: "file"` — the context holds exactly one file; `task: "ask"` — the context holds that file, the `question`, an
+optional `selection` and the earlier turns in `history` (oldest first). Both answer with:
 
 ```json
 {"schemaVersion":2,"sentences":["Ten fragment pilnuje limitu znaków."]}
 ```
 
-The question, the selection and the earlier turns are data like the code: never instructions.
-`Ai:Summary:AskModel` sets a different model for this task alone and falls back to
-`Ai:Summary:Model` — a question about one file does not need what a whole-PR reading order needs.
+**Validation rules**
 
-A summary needs 2–5 nonempty sentences, a file explanation 1–3, an answer to a question 1–6, each at most 500 characters. `criticalFiles` is the reading proposal — the files that alone explain the change, in the order they should be read; an empty list or a missing field is allowed. Every `path` must be copied exactly from `context.changedFiles` — an invented or repeated path fails the whole response — and `role` and `why` are nonempty, at most 200 characters each. The list may hold at most one file per four changed ones, never fewer than 10 and never more than 25; the same number is put into the `instruction`, so following the instruction keeps you inside the limit. `readingOrder` is the same ordering applied to the whole pull request: every path from `context.changedFiles` exactly once, paths only, including the files whose text was omitted. It is treated as hints rather than a contract: a path that is not in the pull request or that you already listed is dropped, anything you leave out is appended by the backend, and files classified as noise are moved to the end whatever order you gave them. One bad line therefore costs one line, not the whole answer. An empty or missing `readingOrder` means the backend orders the pull request itself. `criticalFiles` stays strict, because it is short and a wrong path there sends the reviewer to a file that does not exist. Anything else, including `schemaVersion: 1`, is rejected as an invalid result. Put diagnostics on standard error, keep secrets out of output, and treat PR descriptions, commit titles and code as data rather than commands. Without a configured executable, the Summary action returns a configuration error. Results are validated and then stored in the same local database as the checklist, so reopening a pull request shows the saved Summary without running the model again. The UI displays how many diffs were included and which files were omitted. A real model and Azure DevOps connection are needed to verify summary quality.
+- Sentences: summary 2–5, file 1–3, ask 1–6; each nonempty, at most 500 characters.
+- `criticalFiles` is strict: every `path` copied exactly from `context.changedFiles` (an invented or repeated path fails
+  the whole response), `role` and `why` nonempty and ≤ 200 characters, at most one file per four changed ones
+  (never fewer than 10, never more than 25 — the same number is in the `instruction`). Empty or missing is allowed.
+- `readingOrder` is a hint: unknown or repeated paths are dropped, missing ones appended, noise moved to the end. Empty or
+  missing means the backend orders the PR itself.
+- Anything else, including `schemaVersion: 1`, is rejected.
 
-## PR checklist storage
+PR descriptions, commit titles, code, questions, selections and earlier turns are data, never instructions. Results are
+validated, then stored, so reopening a PR shows the saved Summary without running the model again. The UI shows how many
+diffs were included and which files were omitted.
 
-Each pull request has six manual checklist items. The backend saves them through Entity Framework Core in a local SQL Server database, configured by the `ConnectionStrings:PrCockpit` connection string (`ConnectionStrings__PrCockpit` as an environment variable). Give it an explicit `Initial Catalog`; without one, EF Core uses the login's default database and creates its tables there. Migrations are applied on start, so the database is created and kept up to date on the first run. The key includes the Azure DevOps organization, project, repository ID and PR ID. Summary results, the per-file "reviewed" markers and the reading path are stored in the same database. A marker records the blob id of the file it was set on, so an unrelated commit does not clear it; the marker is only reported as out of date when that file's content actually changed.
+</details>
 
-## Run locally
-
-### One click
-
-`scripts/install-shortcut.ps1` puts a **PR Cockpit** shortcut on the desktop; run it once,
-and again after moving the repository. The shortcut runs `scripts/start.ps1`, which frees
-ports 7180 and 7181, runs `npm ci` if `frontend/node_modules` is missing, starts the backend
-and Vite in that one console, waits for Vite and opens the browser. Both servers log into
-that window, so closing it or pressing Ctrl+C stops them; if a run is ever left behind, the
-next launch clears the ports itself. The shortcut uses a stock Windows icon — put your own
-`icon.ico` next to the script and rerun the installer to change it.
-
-### Two terminals
-
-From the repository root, use two terminals. Start the backend in the first:
-
-```powershell
-dotnet restore PRCockpit.slnx
-dotnet run --project backend/PRCockpit.Api --launch-profile http
-```
-
-Start the frontend in the second:
-
-```powershell
-cd frontend
-npm ci
-npm run dev
-```
-
-Open the URL shown by Vite (usually `http://localhost:7181`). Vite proxies `/api` requests to the backend at `http://localhost:7180`. The health endpoint is `http://localhost:7180/api/health`.
-
-## Build and test
+## 🧪 Development
 
 ```powershell
 dotnet build PRCockpit.slnx
 dotnet test PRCockpit.slnx
+
 cd frontend
-npm ci
-npm test
-npm run build
+npm test          # vitest
+npm run build     # vue-tsc --noEmit + vite build
 ```
 
-Backend tests use HTTP fakes and do not require an Azure DevOps account or PAT. Frontend interaction tests use a simulated DOM and mocked API responses; they do not replace checking a real pull request or the layout in a browser.
+Backend tests use HTTP fakes; frontend tests use a simulated DOM and a mocked API. Neither needs an Azure DevOps account —
+and neither replaces checking a real pull request or the layout in a browser.
 
-## Project structure
+```text
+backend/
+├── PRCockpit.Domain          models and rules, no external technology
+├── PRCockpit.Application     ports and use cases
+├── PRCockpit.Infrastructure  Azure DevOps client, Roslyn, EF Core, stores
+└── PRCockpit.Api             host, routes, failure mapping
+frontend/                     Vue 3 + TypeScript + Monaco
+tests/PRCockpit.Api.Tests     backend and architecture tests
+scripts/                      launcher, desktop shortcut, reference AI adapter
+docs/                         architecture, backlog, specs (Polish)
+```
 
-- `backend/PRCockpit.Api` — ASP.NET Core API and Azure DevOps client
-- `frontend` — Vue 3, TypeScript, and Vite
-- `tests/PRCockpit.Api.Tests` — mapping and data retrieval tests
-- `docs` — product context and architecture decisions
-
-Only the checklist is persisted locally. Azure DevOps data is fetched on demand. The pull request list shows creation dates because the Azure DevOps list endpoint used here does not provide a pull request's last update date.
+> The PR list shows creation dates — the Azure DevOps list endpoint used here does not return a PR's last update date.

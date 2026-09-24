@@ -1,9 +1,27 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, type Component } from 'vue'
+// The shell: picking a project, a repository and a pull request, the open file with its
+// diff, the file tree and the keyboard. Each feature of an open pull request lives in its
+// own composable (use*.ts) and is handed to the child components through cockpit.ts.
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, type Component } from 'vue'
+import CommentDraft from './CommentDraft.vue'
+import CommentThread from './CommentThread.vue'
+import CommentsView from './CommentsView.vue'
+import ContextRail from './ContextRail.vue'
+import FileChat from './FileChat.vue'
 import FileTree from './FileTree.vue'
+import WalkDone from './WalkDone.vue'
+import WalkEntry from './WalkEntry.vue'
+import { api, type ChangedFile, type FileDiff, type Project, type PullRequestDetails, type PullRequestSummary, type Repository } from './api'
+import { cockpitKey } from './cockpit'
+import { commentPreview, renderDescription } from './description'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
-import { commentPreview, renderComment, renderDescription } from './description'
-import { api, type ChangedFile, type ChecklistItem, type FileExplanation, type FileQuestionTurn, type PrComment, type PrCommentThread, type ChecklistState, type FileDiff, type FileReviewEntry, type Project, type Repository, type PullRequestDetails, type PullRequestSummary, type SummaryResponse } from './api'
+import { changeLabel, fileDirectory, fileName, formatDate, message, scrollBehavior, threadStatusLabels } from './format'
+import { useChecklist } from './useChecklist'
+import { isResolved, useComments } from './useComments'
+import { useFileAi } from './useFileAi'
+import { useReviewProgress } from './useReviewProgress'
+import { useSummary } from './useSummary'
+import { useWalkthrough } from './useWalkthrough'
 
 const projects = ref<Project[]>([])
 const repositories = ref<Repository[]>([])
@@ -13,66 +31,32 @@ const projectId = ref('')
 const repositoryId = ref('')
 const loading = ref(false)
 const error = ref('')
+const checklistProgress = ref<Record<number, number>>({})
+const progressLoading = ref(false)
+const progressError = ref('')
+const fileReviewProgress = ref<Record<number, { reviewed: number; total: number }>>({})
+let requestId = 0
+
+// --- The open file ---
 const selectedFilePath = ref('')
 const fileDiff = ref<FileDiff | null>(null)
 const diffLoading = ref(false)
 const diffError = ref('')
-const summary = ref<SummaryResponse | null>(null)
-const explanation = ref<FileExplanation | null>(null)
-const explanationLoading = ref(false)
-const explanationError = ref('')
-const explanationOpen = ref(true)
-// The conversation about the open file. Kept in the backend, so this is only what is on
-// screen; the draft and the captured snippet live here until they are sent.
-const questionTurns = ref<FileQuestionTurn[]>([])
-const questionDraft = ref('')
-const questionSelection = ref('')
-const questionLoading = ref(false)
-const questionError = ref('')
-const questionOpen = ref(false)
-const questionBox = ref<HTMLTextAreaElement | null>(null)
-const summaryLoading = ref(false)
-const summaryError = ref('')
-const summaryReadLoading = ref(false)
-const summaryReadError = ref('')
-const summarySavedAt = ref<string | null>(null)
-const checklist = ref<ChecklistState | null>(null)
-const checklistLoading = ref(false)
-// What is left after the deleted comments are dropped, so the templates never have to ask
-// whether a comment still has content.
-type ReadableComment = PrComment & { content: string }
-type ReadableThread = Omit<PrCommentThread, 'comments'> & { comments: ReadableComment[] }
-const threads = ref<ReadableThread[]>([])
-const commentsOpen = ref(false)
-const threadSearch = ref('')
-const threadFilter = ref<'all' | 'active' | 'mine'>('all')
-// Two steps, always. Enter never sends: a comment is visible to the whole team and cannot
-// be taken back, so the draft is written first and confirmed second.
-const draft = ref<{ target: string; text: string } | null>(null)
-const commentSaving = ref(false)
-const commentError = ref('')
-// AzureDevOps:AllowComments is off by default and enforced in the backend. Asking for it
-// once turns "503 after the comment is written" into a disabled button with a reason.
-// It defaults to true and stays true when the probe fails: the backend is the real gate,
-// this only saves the typing.
-const commentsEnabled = ref(true)
-const threadsLoading = ref(false)
-const threadsError = ref('')
-let threadsRequestId = 0
-const checklistSaving = ref<ChecklistItem | null>(null)
-// PRODUCT.md §9: the point is a few seconds of active thinking, not a grade. Nothing here
-// checks the answer, and leaving it empty costs nothing.
-// ponytail: one fixed question instead of the 1-3 generated failure scenarios §9 describes
-// — it forces the same few seconds without a third AI path. Ceiling: if the fixed question
-// turns out to be too weak, scenarios join the Summary schema.
-const debugAnswer = ref('')
-const debugSaving = ref(false)
-const debugSaved = ref(false)
-const showDebugHint = ref(false)
-const checklistError = ref('')
-const checklistProgress = ref<Record<number, number>>({})
-const progressLoading = ref(false)
-const progressError = ref('')
+// Set while the diff on screen is a since-an-iteration comparison rather than the whole
+// change, so the toolbar can say so and offer the way back.
+const diffSinceIteration = ref<number | null>(null)
+const diffPanel = ref<HTMLElement | null>(null)
+const lastFilePath = ref('')
+const monacoComponent = shallowRef<Component | null>(null)
+const focusMode = ref(false)
+const sideBySide = ref(false)
+// ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
+// dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
+const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void; selectedText(): string } | null>(null)
+const helpDialog = ref<HTMLDialogElement | null>(null)
+let diffRequestId = 0
+
+// --- The tree's filters ---
 const fileSearch = ref('')
 const onlyUnreviewed = ref(false)
 // "Changes since update N", the way Azure DevOps offers it. Azure DevOps groups commits into
@@ -84,100 +68,21 @@ const filterPaths = ref<string[] | null>(null)
 const filterLoading = ref(false)
 const filterError = ref('')
 let filterRequestId = 0
-// Server-backed and therefore per-PR by construction: loaded when a PR opens, cleared
-// when it closes. The old tab-local dictionaries keyed by PR are gone, and so is the key.
-const fileReviews = ref<Record<string, FileReviewEntry>>({})
-const readingPath = ref<string[]>([])
-const fileReviewSaving = ref<string | null>(null)
-const fileReviewError = ref('')
-const fileReviewProgress = ref<Record<number, { reviewed: number; total: number }>>({})
-const diffPanel = ref<HTMLElement | null>(null)
-const lastFilePath = ref('')
-const monacoComponent = shallowRef<Component | null>(null)
-const focusMode = ref(false)
-const sideBySide = ref(false)
 
-// --- Przejście (the guided walkthrough) ---
-// ponytail: the brief calls these configuration. A one-person local tool has no settings
-// file, so they are named constants here; a settings screen is the upgrade path.
-// Ten files is enough to open a pull request of twenty and far too few to open one of
-// eighty — at that size a ranking of ten is a sample, not a starting point. Both the
-// ranking and the walkthrough's default path therefore grow with the change. The ranking
-// rule is the same one the backend applies (SummaryContract.CriticalFileLimit); the path
-// grows more slowly, because a walkthrough with no visible end is the thing it replaces.
-// ponytail: four constants, not a settings file — a one-person local tool has none.
-function criticalFileLimit(changedFiles: number): number {
-  return Math.min(25, Math.max(10, Math.ceil(changedFiles / 4)))
-}
-function walkPathLength(changedFiles: number): number {
-  return Math.min(12, Math.max(8, Math.ceil(changedFiles / 8)))
-}
-// 'tree' is everything that existed before the walkthrough; the other three are its screens.
-const view = ref<'tree' | 'entry' | 'walk' | 'done'>('tree')
-// 'key' walks the shortlist, 'all' walks every file of the pull request. Both follow the
-// same AI ordering — the mode only decides how much of it the path holds. 'round' is the
-// second pass after the author pushed fixes: only what moved since you last read it, in
-// tree order, and without a single call to the model.
-const walkMode = ref<'key' | 'all' | 'round'>('key')
-const walkPosition = ref(0)
-// The pull request head at the moment the path was chosen. Null means the path was built
-// in the rail rather than by a walkthrough, and no resume is offered for it.
-const walkHeadSha = ref<string | null>(null)
-const walkSkipped = ref<string[]>([])
-// The entry screen's own selection, before the path is written. Null means "not touched",
-// so the default follows the ranking as it arrives.
-const walkPicked = ref<string[] | null>(null)
-const walkResumeDismissed = ref(false)
-// Every explanation asked for, kept for as long as the pull request is open, so coming
-// back to a file shows it again without paying for it twice.
-const explanationCache = ref<Record<string, FileExplanation>>({})
-const helpDialog = ref<HTMLDialogElement | null>(null)
-// ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
-// dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
-const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void; selectedText(): string } | null>(null)
-let requestId = 0
-let diffRequestId = 0
-let summaryRequestId = 0
-let checklistRequestId = 0
-let reviewRequestId = 0
+// --- The features of an open pull request ---
+const scope = { details, projectId, repositoryId }
+const summaryState = useSummary(scope)
+const checklistState = useChecklist(scope)
+const review = useReviewProgress({ ...scope, onLoaded: () => walk.afterReviewsLoaded() })
+const { roleByPath, resetSummary, loadSavedSummary } = summaryState
+const { checklist, checklistCompleted, remainingChecklist, resetChecklist, loadChecklist } = checklistState
+const {
+  walkPosition, fileReviewError, reviewedPaths, stalePaths, remainingCount, criticalPaths, manualCriticalLimit,
+  isReviewed, isStale, isCritical, toggleCritical, setFileReviewed, resetFileReviews, loadFileReviews,
+} = review
 
-const checklistItems: { key: ChecklistItem; label: string }[] = [
-  // Kolejnosc jak w PRODUCT.md par. 6; klucze ida do API i bazy, wiec zmieniaja sie tylko napisy.
-  { key: 'aiReview', label: 'Review AI' },
-  { key: 'quality', label: 'Jakość' },
-  { key: 'understand', label: 'Rozumiem zmianę' },
-  { key: 'architecture', label: 'Architektura' },
-  { key: 'debug', label: 'Diagnoza' },
-  { key: 'ready', label: 'Gotowe' },
-]
-const checklistCompleted = computed(() => checklist.value
-  ? checklistItems.filter(item => checklist.value![item.key]).length
-  : 0)
-const summaryFreshness = computed(() => {
-  const savedSha = summary.value?.headCommitSha
-  const currentSha = details.value?.headCommitSha
-  if (!savedSha || !currentSha) return 'unknown'
-  return savedSha.toLowerCase() === currentSha.toLowerCase() ? 'current' : 'stale'
-})
-
-const reviewedPaths = computed(() =>
-  (details.value?.changedFiles ?? []).filter(file => reviewState(file.path) === 'current').map(file => file.path))
-const stalePaths = computed(() =>
-  (details.value?.changedFiles ?? []).filter(file => reviewState(file.path) === 'stale').map(file => file.path))
-const reviewedPathSet = computed(() => new Set(reviewedPaths.value))
-const stalePathSet = computed(() => new Set(stalePaths.value))
-const criticalPaths = computed(() => {
-  const currentPaths = new Set(details.value?.changedFiles.map(file => file.path) ?? [])
-  return readingPath.value.filter(path => currentPaths.has(path))
-})
-const criticalPathSet = computed(() => new Set(criticalPaths.value))
-// What the rail lets you add by hand — the shortlist rule, not the length of the stored
-// path, which a walkthrough of the whole pull request makes as long as the pull request.
-const manualCriticalLimit = computed(() => criticalFileLimit(details.value?.changedFiles.length ?? 0))
-// ponytail: a flat cap on the rows the rail draws. The rail is a summary of the path;
-// the walkthrough is where a long one is read.
-const railPathPreview = 15
-const railCriticalPaths = computed(() => criticalPaths.value.slice(0, railPathPreview))
+const lastIteration = computed(() =>
+  (details.value?.iterations ?? []).reduce((highest, item) => Math.max(highest, item.id), 0))
 const filterPathSet = computed(() => filterPaths.value && new Set(filterPaths.value))
 const matchingFiles = computed(() => {
   const search = fileSearch.value.trim().toLocaleLowerCase()
@@ -190,7 +95,6 @@ const matchingFiles = computed(() => {
 const filteredFiles = computed(() => onlyUnreviewed.value
   ? matchingFiles.value.filter(file => !isReviewed(file.path))
   : matchingFiles.value)
-const remainingCount = computed(() => (details.value?.changedFiles.length ?? 0) - reviewedPaths.value.length)
 const unreviewedMatches = computed(() => matchingFiles.value.filter(file => !isReviewed(file.path)))
 function toTreeFile(file: ChangedFile): TreeFile {
   return {
@@ -211,452 +115,6 @@ function toTreeFile(file: ChangedFile): TreeFile {
 // Lockfiles, snapshots and build output are classified by the backend and get their own
 // collapsed group, so a 44-file pull request stops opening on twelve rows nobody reads.
 // They stay listed and navigable — hiding a file would be a claim it does not exist.
-// The AI ranking, kept apart from readingPath: PRODUCT.md §10 — a proposal is not a fact
-// until the user accepts it, so nothing is written to the reading path behind their back.
-const proposalDismissed = ref(false)
-const criticalProposal = computed(() => {
-  // US-P3: a file classified as noise never enters the AI proposal. It can still be added
-  // by hand from the tree, which is the whole difference between a proposal and a rule.
-  const paths = new Map((details.value?.changedFiles ?? []).map(file => [file.path, file]))
-  return (summary.value?.criticalFiles ?? [])
-    .filter(file => paths.get(file.path) && !paths.get(file.path)!.category)
-    .slice(0, criticalFileLimit(details.value?.changedFiles.length ?? 0))
-})
-// The other half of the same ranking: every file of the pull request, in the order the AI
-// put them in, noise last because the backend sank it there. Noise is not filtered out the
-// way it is from the shortlist — "wszystkie pliki" means all of them, and a lockfile at the
-// end is one tick, not a detour. Empty when the saved Summary predates the field.
-const fullProposal = computed(() => {
-  const paths = new Set((details.value?.changedFiles ?? []).map(file => file.path))
-  return (summary.value?.readingOrder ?? []).filter(path => paths.has(path))
-})
-const showProposal = computed(() =>
-  criticalProposal.value.length > 0 && !proposalDismissed.value && criticalPaths.value.length === 0)
-const roleByPath = computed(() => new Map(criticalProposal.value.map(file => [file.path, file.role])))
-const threadStatusLabels: Record<string, string> = {
-  active: 'aktywny', fixed: 'naprawiony', wontFix: 'nie naprawimy',
-  closed: 'zamknięty', pending: 'oczekuje', byDesign: 'zgodne z projektem', unknown: '',
-}
-function threadLocation(thread: PrCommentThread): string {
-  if (!thread.filePath) return 'Cały PR'
-  const line = thread.rightLine ?? thread.leftLine
-  return line ? `${fileName(thread.filePath)}:${line}` : fileName(thread.filePath)
-}
-const lastIteration = computed(() =>
-  (details.value?.iterations ?? []).reduce((highest, item) => Math.max(highest, item.id), 0))
-// "Somebody pushed a fix after this comment" — the honest version of that question is a
-// comparison of iterations, which is exactly what Azure DevOps' own "update N" view does.
-function movedSinceComment(thread: PrCommentThread): boolean {
-  return thread.iterationId !== null && lastIteration.value > thread.iterationId
-}
-
-// "Resolved" is what Azure DevOps means by it: fixed, won't fix or closed. Anything else,
-// including a thread with no status at all, is still waiting for somebody.
-const resolvedStatuses = ['fixed', 'wontFix', 'closed']
-function isResolved(thread: PrCommentThread): boolean {
-  return thread.status !== null && resolvedStatuses.includes(thread.status)
-}
-const activeThreadCount = computed(() => threads.value.filter(thread => !isResolved(thread)).length)
-const threadsByFile = computed(() => {
-  const map = new Map<string, { total: number; unresolved: number }>()
-  for (const thread of threads.value) {
-    if (!thread.filePath) continue
-    const entry = map.get(thread.filePath) ?? { total: 0, unresolved: 0 }
-    entry.total++
-    if (!isResolved(thread)) entry.unresolved++
-    map.set(thread.filePath, entry)
-  }
-  return map
-})
-// Every thread anchored in the open file, newest anchor last, so the bar above the diff
-// shows what is waiting here without having to hunt for the markers.
-const threadsInFile = computed(() => threads.value
-  .filter(thread => thread.filePath === selectedFilePath.value)
-  .sort((a, b) => (a.rightLine ?? 0) - (b.rightLine ?? 0)))
-// Azure DevOps marks the comment, not the thread, so a thread is mine when I started it —
-// its first comment. Answering inside somebody else's thread does not make closing it my job.
-function startedByMe(thread: PrCommentThread): boolean {
-  return thread.comments[0]?.isMine === true
-}
-// What a second pass has to close: my own remarks that nobody resolved.
-const myOpenThreads = computed(() =>
-  threads.value.filter(thread => !isResolved(thread) && startedByMe(thread)))
-// With the identity probe down every comment arrives as isMine: false, so the filter would be
-// an empty list with no explanation. Then it is not offered at all.
-const mineKnown = computed(() =>
-  threads.value.some(thread => thread.comments.some(comment => comment.isMine)))
-const visibleThreads = computed(() => {
-  const search = threadSearch.value.trim().toLocaleLowerCase()
-  return threads.value.filter(thread => {
-    if (threadFilter.value === 'active' && isResolved(thread)) return false
-    if (threadFilter.value === 'mine' && (isResolved(thread) || !startedByMe(thread))) return false
-    if (!search) return true
-    return thread.filePath?.toLocaleLowerCase().includes(search) ||
-      thread.comments.some(comment =>
-        comment.content?.toLocaleLowerCase().includes(search) ||
-        comment.author?.toLocaleLowerCase().includes(search))
-  })
-})
-// Grouped by file, files in the order the tree shows them, threads by line — the same
-// order you read the pull request in, so a comment is where you expect it to be.
-const threadGroups = computed(() => {
-  const order = new Map(orderedPaths.value.map((path, index) => [path, index]))
-  // Closing a remark starts with the ones the author answered in code, so in "mine" mode
-  // those files float to the top. Everywhere else the reading order is the only order.
-  const movedFirst = threadFilter.value === 'mine'
-  const groups = new Map<string, ReadableThread[]>()
-  for (const thread of visibleThreads.value) {
-    const key = thread.filePath ?? ''
-    const group = groups.get(key)
-    if (group) group.push(thread)
-    else groups.set(key, [thread])
-  }
-  return [...groups.entries()]
-    .map(([path, items]) => ({
-      path,
-      label: path ? path : 'Bez pliku — cały PR',
-      threads: items.sort((a, b) => (a.rightLine ?? a.leftLine ?? 0) - (b.rightLine ?? b.leftLine ?? 0)),
-      rank: path ? order.get(path) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER,
-      moved: items.some(thread => movedSinceComment(thread)),
-    }))
-    .sort((a, b) =>
-      (movedFirst ? Number(b.moved) - Number(a.moved) : 0) ||
-      a.rank - b.rank || a.label.localeCompare(b.label))
-})
-
-// The few lines the comment is actually about. One diff per commented file, fetched once
-// and kept for as long as the pull request is open — a snippet per thread would mean one
-// request per thread on a file that often holds several.
-const snippets = ref<Record<string, { original: string[]; modified: string[] }>>({})
-const snippetsLoading = ref(false)
-const snippetContext = 3
-// Azure DevOps counts lines, not characters, and a repository can hold either ending.
-const splitLines = (text: string) => text.split('\n').map(line => line.replace(/\r$/, ''))
-// Every commented file gets its snippet — a review can touch sixty of them. A few at a
-// time, because each diff costs the backend four Azure DevOps calls.
-// ponytail: all files are fetched up front, not as they scroll into view; lazy loading
-// when a pull request with hundreds of commented files shows up.
-const snippetConcurrency = 4
-// Bumped by every load and by a PR switch. Only the newest run writes, so a refresh
-// mid-load cannot leave "Wczytywanie kodu…" stuck or drop the load it started.
-let snippetsRun = 0
-
-function threadSnippet(thread: PrCommentThread) {
-  if (!thread.filePath) return null
-  const file = snippets.value[thread.filePath]
-  if (!file) return null
-  // A comment on a deleted line only has a left-hand anchor, and that line exists in the
-  // original text, not in the modified one.
-  const onRight = (thread.rightLine ?? 0) > 0
-  const line = onRight ? thread.rightLine! : thread.leftLine ?? 0
-  const lines = onRight ? file.modified : file.original
-  if (!line || lines.length === 0) return null
-  const from = Math.max(1, line - snippetContext)
-  const to = Math.min(lines.length, line + 1)
-  return {
-    side: onRight ? 'po zmianie' : 'przed zmianą',
-    lines: lines.slice(from - 1, to).map((text, index) => ({
-      number: from + index,
-      text,
-      anchor: from + index === line,
-    })),
-  }
-}
-
-async function loadSnippets() {
-  if (!details.value) return
-  const run = ++snippetsRun
-  // The order the list reads in, so the top of the view fills first.
-  const inOrder = [...threadGroups.value.map(group => group.path), ...threads.value.map(thread => thread.filePath)]
-  const queue = [...new Set(inOrder.filter((path): path is string => !!path))]
-    .filter(path => !snippets.value[path])
-  snippetsLoading.value = queue.length > 0
-  if (queue.length === 0) return
-
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  const worker = async () => {
-    for (let path = queue.shift(); path && run === snippetsRun; path = queue.shift()) {
-      const diff = await api.fileDiff(project, repository, id, path).catch(() => null)
-      if (run !== snippetsRun) return
-      // A binary or oversized file simply has no snippet; the thread still lists fine.
-      if (diff?.kind === 'text') {
-        snippets.value = {
-          ...snippets.value,
-          [path]: { original: splitLines(diff.originalText), modified: splitLines(diff.modifiedText) },
-        }
-      }
-    }
-  }
-  try {
-    await Promise.all(Array.from({ length: snippetConcurrency }, worker))
-  } finally {
-    if (run === snippetsRun) snippetsLoading.value = false
-  }
-}
-
-function toggleComments() {
-  commentsOpen.value = !commentsOpen.value
-  if (!commentsOpen.value) return
-  draft.value = null
-  commentError.value = ''
-  void loadSnippets()
-}
-
-// From the round screen straight to the remarks waiting for an answer.
-function openMyThreads() {
-  threadFilter.value = 'mine'
-  if (commentsOpen.value) return
-  toggleComments()
-}
-
-function startDraft(target: string) {
-  if (!commentsEnabled.value) return
-  draft.value = { target, text: '' }
-  commentError.value = ''
-}
-
-// No optimistic write anywhere in here. The button locks, the request goes out, and the
-// threads are read back — a comment cannot be rolled back, so nothing is shown as sent
-// before Azure DevOps says it is.
-async function sendDraft(resolveAfter = false) {
-  const pending = draft.value
-  if (!details.value || !pending || commentSaving.value || !pending.text.trim()) return
-  const current = threadsRequestId
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  commentSaving.value = true
-  commentError.value = ''
-  try {
-    if (pending.target === 'new') {
-      await api.createThread(project, repository, id, { content: pending.text, filePath: null, line: null })
-    } else if (pending.target.startsWith('file:')) {
-      const [, path, line] = pending.target.split(':')
-      await api.createThread(project, repository, id,
-        { content: pending.text, filePath: path!, line: line ? Number(line) : null })
-    } else {
-      const threadId = Number(pending.target)
-      await api.replyToThread(project, repository, id, threadId, pending.text)
-      // Two calls, in this order, because Azure DevOps has no combined one: the reply is
-      // what matters, so resolving happens only once it is safely stored.
-      if (resolveAfter) await api.setThreadStatus(project, repository, id, threadId, 'fixed')
-    }
-    if (current !== threadsRequestId) return
-    draft.value = null
-    await loadThreads(project, repository, id)
-  } catch (cause) {
-    if (current === threadsRequestId) commentError.value = message(cause)
-  } finally {
-    // Unconditionally: reloading the threads bumps the request id, so a guard here would
-    // leave every comment button disabled for the rest of the pull request.
-    commentSaving.value = false
-  }
-}
-
-async function setThreadStatus(threadId: number, status: string) {
-  if (!details.value || commentSaving.value) return
-  const current = threadsRequestId
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  commentSaving.value = true
-  commentError.value = ''
-  try {
-    await api.setThreadStatus(project, repository, id, threadId, status)
-    if (current !== threadsRequestId) return
-    await loadThreads(project, repository, id)
-  } catch (cause) {
-    if (current === threadsRequestId) commentError.value = message(cause)
-  } finally {
-    // Unconditionally: reloading the threads bumps the request id, so a guard here would
-    // leave every comment button disabled for the rest of the pull request.
-    commentSaving.value = false
-  }
-}
-
-const commentLinesForFile = computed(() => threadsInFile.value
-  .filter(thread => (thread.rightLine ?? 0) > 0 && !isResolved(thread))
-  .map(thread => thread.rightLine!))
-const resolvedLinesForFile = computed(() => threadsInFile.value
-  .filter(thread => (thread.rightLine ?? 0) > 0 && isResolved(thread))
-  .map(thread => thread.rightLine!))
-
-// Clicking a line keeps you in the diff. An existing thread opens above it, a line
-// without one opens a draft anchored there — switching panels at that moment would take
-// away the code the comment is about. Both are still two-step: nothing is sent here.
-const inlineThreadId = ref<number | null>(null)
-const inlineThread = computed(() =>
-  threads.value.find(thread => thread.id === inlineThreadId.value) ?? null)
-const lineDraft = computed(() => {
-  const target = draft.value?.target ?? ''
-  return target.startsWith(`file:${selectedFilePath.value}:`)
-    ? Number(target.split(':')[2]) || null
-    : null
-})
-
-function openLineComments(line: number) {
-  const existing = threads.value.find(thread =>
-    thread.filePath === selectedFilePath.value && thread.rightLine === line)
-  commentError.value = ''
-  if (existing) {
-    inlineThreadId.value = existing.id
-    draft.value = null
-    // Opening a collapsed conversation has to expand it, or the click looks like a no-op.
-    const next = new Set(collapsedZones.value)
-    next.delete(line)
-    collapsedZones.value = next
-  } else {
-    // Nothing to read here and nothing that could be written: clicking an empty line with
-    // writing switched off would open a draft box that can only fail.
-    if (!commentsEnabled.value) return
-    inlineThreadId.value = null
-    draft.value = { target: `file:${selectedFilePath.value}:${line}`, text: '' }
-  }
-  revealCommentLine(line)
-}
-
-// The panel shrinks when the conversation opens, so the line has to be scrolled back into
-// view after the layout settles — otherwise it ends up just below the fold.
-function revealCommentLine(line: number | null | undefined) {
-  if (!line) return
-  void nextTick(() => diffView.value?.revealLine?.(line))
-}
-
-// Comment blocks are rendered by Monaco as zones between the code; these are the
-// containers it created for us, and the markup is teleported into them.
-const zoneTargets = ref<{ line: number; el: HTMLElement }[]>([])
-const collapsedZones = ref(new Set<number>())
-// Hiding them all is a per-session preference, not per file: you turn comments off to read
-// the code, and turning them back on for every file would defeat that.
-const showComments = ref(true)
-const zoneLines = computed(() => {
-  const lines = showComments.value
-    ? threadsInFile.value.filter(thread => (thread.rightLine ?? 0) > 0).map(thread => thread.rightLine!)
-    : []
-  if (lineDraft.value) lines.push(lineDraft.value)
-  return [...new Set(lines)].sort((a, b) => a - b)
-})
-function threadAtLine(line: number): ReadableThread | null {
-  return threadsInFile.value.find(thread => thread.rightLine === line) ?? null
-}
-function toggleZone(line: number) {
-  const next = new Set(collapsedZones.value)
-  if (!next.delete(line)) next.add(line)
-  collapsedZones.value = next
-}
-// A file whose diff is binary or too large has no editor, so its threads would have
-// nowhere to live. There the docked block stays.
-const useZones = computed(() => fileDiff.value?.kind === 'text')
-
-function openThreadInFile(thread: PrCommentThread) {
-  showComments.value = true
-  inlineThreadId.value = thread.id
-  draft.value = null
-  commentError.value = ''
-  revealCommentLine(thread.rightLine)
-}
-
-// With several comments in one file, stepping through them beats hunting for chips.
-const inlineThreadIndex = computed(() =>
-  threadsInFile.value.findIndex(thread => thread.id === inlineThreadId.value))
-function stepThreadInFile(offset: 1 | -1) {
-  const list = threadsInFile.value
-  if (list.length === 0) return
-  const next = inlineThreadIndex.value < 0
-    ? (offset === 1 ? 0 : list.length - 1)
-    : (inlineThreadIndex.value + offset + list.length) % list.length
-  openThreadInFile(list[next]!)
-}
-
-// Editing reuses the draft: one place that sends, one place that reloads the threads.
-const editing = ref<{ threadId: number; commentId: number; text: string } | null>(null)
-// Deleting is two steps of its own. It is the one comment action that destroys something,
-// and Azure DevOps keeps the tombstone forever.
-const deleting = ref<number | null>(null)
-
-function startEdit(threadId: number, commentId: number, content: string) {
-  editing.value = { threadId, commentId, text: content }
-  draft.value = null
-  deleting.value = null
-  commentError.value = ''
-}
-
-async function sendEdit() {
-  const pending = editing.value
-  if (!details.value || !pending || commentSaving.value || !pending.text.trim()) return
-  const current = threadsRequestId
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  commentSaving.value = true
-  commentError.value = ''
-  try {
-    await api.editComment(project, repository, id, pending.threadId, pending.commentId, pending.text)
-    if (current !== threadsRequestId) return
-    editing.value = null
-    await loadThreads(project, repository, id)
-  } catch (cause) {
-    if (current === threadsRequestId) commentError.value = message(cause)
-  } finally {
-    // Unconditionally: reloading the threads bumps the request id, so a guard here would
-    // leave every comment button disabled for the rest of the pull request.
-    commentSaving.value = false
-  }
-}
-
-async function confirmDelete(threadId: number, commentId: number) {
-  if (!details.value || commentSaving.value) return
-  const current = threadsRequestId
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  commentSaving.value = true
-  commentError.value = ''
-  try {
-    await api.deleteComment(project, repository, id, threadId, commentId)
-    if (current !== threadsRequestId) return
-    deleting.value = null
-    await loadThreads(project, repository, id)
-  } catch (cause) {
-    if (current === threadsRequestId) commentError.value = message(cause)
-  } finally {
-    // Unconditionally: reloading the threads bumps the request id, so a guard here would
-    // leave every comment button disabled for the rest of the pull request.
-    commentSaving.value = false
-  }
-}
-
-function resolveThread(threadId: number) {
-  void setThreadStatus(threadId, 'fixed')
-}
-
-function reopenThread(threadId: number) {
-  void setThreadStatus(threadId, 'active')
-}
-
-function closeInlineComments() {
-  inlineThreadId.value = null
-  if (lineDraft.value !== null) draft.value = null
-}
-
-function commentOnCursorLine() {
-  const line = diffView.value?.cursorLine?.() ?? null
-  if (!selectedFilePath.value || !line) return
-  openLineComments(line)
-}
-
-async function openThread(thread: PrCommentThread) {
-  if (!thread.filePath || !details.value?.changedFiles.some(file => file.path === thread.filePath)) return
-  // The comments view sits in the same panel as the diff, so leaving it open would load
-  // the file behind it and nothing on screen would change.
-  commentsOpen.value = false
-  // The whole diff even when the iteration filter is on: a thread is anchored to a line of
-  // the full file, and a narrowed diff may not contain that line at all.
-  await openFile(thread.filePath, null)
-  openThreadInFile(thread)
-}
 const noiseFiles = computed(() => filteredFiles.value.filter(file => file.category))
 const codeFiles = computed(() => filteredFiles.value.filter(file => !file.category))
 const expandAll = computed(() => fileSearch.value.trim().length > 0)
@@ -669,6 +127,13 @@ const orderedPaths = computed(() => [...flattenTree(fileTree.value), ...flattenT
 const orderedIndex = computed(() => orderedPaths.value.indexOf(selectedFilePath.value))
 const hasPreviousFile = computed(() => orderedIndex.value > 0)
 const hasNextFile = computed(() => orderedIndex.value >= 0 && orderedIndex.value < orderedPaths.value.length - 1)
+const nextUnreviewedPath = computed(() => {
+  const paths = orderedPaths.value
+  const selectedIndex = paths.indexOf(selectedFilePath.value)
+  const afterSelected = paths.slice(selectedIndex + 1).find(path => !isReviewed(path))
+  const beforeSelected = paths.slice(0, Math.max(selectedIndex, 0)).find(path => !isReviewed(path))
+  return afterSelected ?? beforeSelected ?? null
+})
 const lastFileName = computed(() => lastFilePath.value ? fileName(lastFilePath.value) : '')
 const descriptionHtml = computed(() => details.value?.description
   ? renderDescription(details.value.description, details.value.workItems)
@@ -677,291 +142,48 @@ const filePosition = computed(() => {
   const index = details.value?.changedFiles.findIndex(file => file.path === selectedFilePath.value) ?? -1
   return index < 0 ? null : index + 1
 })
-const remainingChecklist = computed(() => checklist.value
-  ? checklistItems.filter(item => !checklist.value![item.key]).map(item => item.label)
-  : [])
 // j/k/m deliberately do not move focus, so a screen reader needs this spoken instead.
 const readingStatus = computed(() => filePosition.value && details.value
   ? `Plik ${filePosition.value} z ${details.value.changedFilesCount} · ${selectedFilePath.value}`
   : '')
-const nextUnreviewedPath = computed(() => {
-  const paths = orderedPaths.value
-  const selectedIndex = paths.indexOf(selectedFilePath.value)
-  const afterSelected = paths.slice(selectedIndex + 1).find(path => !isReviewed(path))
-  const beforeSelected = paths.slice(0, Math.max(selectedIndex, 0)).find(path => !isReviewed(path))
-  return afterSelected ?? beforeSelected ?? null
+// Comparing the newest iteration with itself changes nothing, so it is not offered. Newest
+// first, because "since my last pass" is the reason anybody opens this list.
+const iterationChoices = computed(() => {
+  const titles = new Map((details.value?.commits ?? []).map(commit => [commit.id, commit.message]))
+  return (details.value?.iterations ?? []).filter(item => item.id < lastIteration.value).reverse().map(item => ({
+    id: item.id,
+    label: `Po aktualizacji ${item.id}` +
+      (item.sourceCommitSha && titles.has(item.sourceCommitSha)
+        ? ` — ${titles.get(item.sourceCommitSha)}` : ''),
+  }))
 })
 
-// A marker goes stale only on positive evidence that the file changed: a blob id that no
-// longer matches, or a head SHA that moved. With nothing to compare against we keep the
-// mark, because nagging without cause is worse than a slightly optimistic tick.
-// ponytail: the head SHA fallback is per-PR, so when Azure DevOps omits a blob id any new
-// commit marks that file stale. Precise per-file tracking would need iteration diffing.
-function reviewState(path: string): 'none' | 'current' | 'stale' {
-  const entry = fileReviews.value[path]
-  if (!entry) return 'none'
-  const objectId = details.value?.changedFiles.find(file => file.path === path)?.objectId
-  if (entry.blobId && objectId) return same(entry.blobId, objectId) ? 'current' : 'stale'
-  const head = details.value?.headCommitSha
-  if (entry.headSha && head) return same(entry.headSha, head) ? 'current' : 'stale'
-  return 'current'
-}
-
-function same(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase()
-}
-
-function isReviewed(path: string): boolean {
-  return reviewedPathSet.value.has(path)
-}
-
-function isStale(path: string): boolean {
-  return stalePathSet.value.has(path)
-}
-
-function isCritical(path: string): boolean {
-  return criticalPathSet.value.has(path)
-}
-
-function toggleCritical(path: string) {
-  if (!details.value?.changedFiles.some(file => file.path === path)) return
-  const selected = criticalPaths.value
-  if (selected.includes(path)) saveReadingPath(selected.filter(item => item !== path))
-  else if (selected.length < manualCriticalLimit.value) {
-    saveReadingPath([...selected, path])
-  }
-}
-
-function moveCritical(path: string, offset: -1 | 1) {
-  const selected = [...criticalPaths.value]
-  const index = selected.indexOf(path)
-  const target = index + offset
-  if (index < 0 || target < 0 || target >= selected.length) return
-  const moved = selected[index]!
-  selected[index] = selected[target]!
-  selected[target] = moved
-  saveReadingPath(selected)
-}
-
-function acceptProposal() {
-  if (!showProposal.value) return
-  saveReadingPath(criticalProposal.value.map(file => file.path))
-  proposalDismissed.value = true
-}
-
-// Optimistic with rollback, the same shape as setChecklistItem: the request id is captured
-// without incrementing, because this is a mutation of the current generation, not a load.
-// The position travels with the path: editing the path from the rail is a new path, so it
-// starts from zero, while the walkthrough passes the place it has reached (US-P7).
-async function saveReadingPath(paths: string[], position = 0) {
-  if (!details.value) return
-  const current = reviewRequestId
-  const previous = readingPath.value
-  const id = details.value.id
-  const project = projectId.value
-  const repository = repositoryId.value
-  readingPath.value = paths
-  fileReviewError.value = ''
-  try {
-    const result = await api.setReadingPath(project, repository, id, paths, position, walkHeadSha.value)
-    if (current === reviewRequestId) readingPath.value = result.paths
-  } catch (cause) {
-    if (current === reviewRequestId) {
-      readingPath.value = previous
-      fileReviewError.value = message(cause)
-    }
-  }
-}
-
-// ---------- Przejście: what the walkthrough is made of ----------
-// Only code files count: a pull request that is five sources plus a lockfile is small.
-const codeFileCount = computed(() =>
-  (details.value?.changedFiles ?? []).filter(file => !file.category).length)
-// US-P3: below this, the proposal screen would cost more than the wall of files it saves.
-const walkWorthwhile = computed(() => codeFileCount.value > 5)
-// The accepted path, already filtered to files that are still in the pull request, so a
-// file dropped by a new iteration leaves no dead row (US-P4).
-const walkPaths = computed(() => criticalPaths.value)
-const walkFilePath = computed(() => walkPaths.value[walkPosition.value] ?? '')
-const walkFinished = computed(() =>
-  walkPaths.value.length > 0 && walkPosition.value >= walkPaths.value.length)
-// A path with no head SHA was built in the rail, not by a walkthrough, so nothing is
-// offered to resume for it.
-const walkResumable = computed(() =>
-  walkHeadSha.value !== null && walkPaths.value.length > 0 && !walkFinished.value)
-const walkChangedSincePicked = computed(() =>
-  walkHeadSha.value !== null && details.value?.headCommitSha != null &&
-  !same(walkHeadSha.value, details.value.headCommitSha))
-const walkReadCount = computed(() => walkPaths.value.filter(path => isReviewed(path)).length)
-const walkSkippedPaths = computed(() => walkPaths.value.filter(path => walkSkipped.value.includes(path)))
-// The second pass. A file belongs to it when its marker went stale — positive evidence the
-// content moved — or when it has no marker at all, because an unread file is unread whichever
-// push brought it. Noise stays out of the default the way it stays out of the shortlist; it
-// can still be ticked on by hand. No AI here: the order is the tree's.
-const roundPaths = computed(() => {
-  const order = new Map(orderedPaths.value.map((path, index) => [path, index]))
-  return (details.value?.changedFiles ?? [])
-    .filter(file => !file.category && reviewState(file.path) !== 'current')
-    .map(file => file.path)
-    // A file hidden by the search box or the iteration filter keeps its place at the end
-    // instead of dropping out of the round — the round is about the pull request, not the
-    // current view of it.
-    .sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER))
+const comments = useComments({ ...scope, selectedFilePath, fileDiff, orderedPaths, lastIteration, diffView, openFile })
+const walk = useWalkthrough({
+  details, summary: summaryState, review, orderedPaths, lastIteration, nextUnreviewedPath, selectedFilePath, openFile,
 })
-const roundUnreadCount = computed(() => roundPaths.value.filter(path => !fileReviews.value[path]).length)
-// Something was read at an earlier head, so the pull request moved since you were here. An
-// unfinished first pass has every marker at the current head and is not a second round.
-const readAtOlderHead = computed(() => {
-  const head = details.value?.headCommitSha
-  if (!head) return false
-  return Object.values(fileReviews.value).some(entry => entry.headSha && !same(entry.headSha, head))
+const fileAi = useFileAi({ ...scope, selectedFilePath, diffRequest: () => diffRequestId })
+const {
+  threads, commentsOpen, draft, editing, deleting, commentError, commentsEnabled, inlineThreadId, inlineThread,
+  inlineThreadIndex, lineDraft, activeThreadCount, threadsByFile, threadsInFile, commentLinesForFile, resolvedLinesForFile,
+  zoneTargets, zoneCards, zoneLines, collapsedZones, showComments, useZones,
+  resetThreads, loadThreads, toggleComments, toggleZone, openLineComments, openThreadInFile, stepThreadInFile,
+  closeInlineComments, commentOnCursorLine, leaveFile,
+} = comments
+const {
+  view, walkWorthwhile, walkPaths, walkFilePath, enterWalkthrough, leaveWalkthrough, goToWalkIndex, walkAdvance, walkBack,
+  resetWalkthrough,
+} = walk
+const {
+  explanation, explanationLoading, explanationError, explanationOpen, questionOpen, questionTurns,
+  resetExplanation, resetFileAi, fileOpened, explainFile, openQuestions,
+} = fileAi
+
+provide(cockpitKey, {
+  ...scope, selectedFilePath,
+  summary: summaryState, checklist: checklistState, review, walk, comments, fileAi,
+  openFile, openCriticalFile, backToList,
 })
-const roundAvailable = computed(() => readAtOlderHead.value && roundPaths.value.length > 0)
-
-// The iteration this file was last seen at, so the second pass opens on what arrived after
-// it instead of the whole diff again. Null asks for the whole diff: no marker, a head SHA
-// belonging to no iteration of this pull request, or the newest iteration, where the
-// comparison would be with itself and show nothing.
-// ponytail: the baseline is the marker, so a file you never marked has nothing to measure
-// from and gets the full diff. A per-PR round stamp in the database would close that.
-function roundSince(path: string): number | null {
-  const saved = fileReviews.value[path]?.headSha
-  if (!saved) return null
-  const match = (details.value?.iterations ?? []).find(item =>
-    item.sourceCommitSha && same(item.sourceCommitSha, saved))
-  if (!match || match.id >= lastIteration.value) return null
-  return match.id
-}
-
-// The entry screen's list: in 'key' mode the ranking, minus what has already been read, cut
-// to the configured length; in 'all' mode the whole pull request, because leaving files out
-// is the one thing that mode is not for; in 'round' mode whatever moved since your last
-// pass. Once the user touches it, their version is the list.
-const walkDefaultPick = computed(() => {
-  if (walkMode.value === 'round') return roundPaths.value
-  if (walkMode.value === 'all') return fullProposal.value
-  return criticalProposal.value
-    .filter(file => reviewState(file.path) !== 'current')
-    .slice(0, walkPathLength(details.value?.changedFiles.length ?? 0))
-    .map(file => file.path)
-})
-const walkPick = computed(() => walkPicked.value ?? walkDefaultPick.value)
-const walkPickSet = computed(() => new Set(walkPick.value))
-// On the entry screen "the rest" is measured against what is selected, because the path
-// is not written yet; everywhere after that, against the path itself.
-const walkInsideSet = computed(() => view.value === 'entry' ? walkPickSet.value : criticalPathSet.value)
-const walkOutsideCount = computed(() =>
-  Math.max(0, (details.value?.changedFiles.length ?? 0) - walkInsideSet.value.size))
-const walkOutsideNoiseCount = computed(() =>
-  (details.value?.changedFiles ?? []).filter(file => file.category && !walkInsideSet.value.has(file.path)).length)
-// Every file the entry screen can offer: the proposal for this mode plus anything already
-// in the path, so unticking a file leaves the row on screen instead of making it vanish.
-const walkCandidates = computed(() => {
-  const proposed = walkMode.value === 'round'
-    ? roundPaths.value
-    : walkMode.value === 'all'
-      ? fullProposal.value
-      : criticalProposal.value.map(file => file.path)
-  return [...new Set([...proposed, ...walkPick.value])]
-})
-// 'all' mode needs an order the model produced; a Summary from before this feature has
-// none, and inventing one would hide that. The user is offered the recompute instead.
-const fullOrderMissing = computed(() =>
-  walkMode.value === 'all' && summary.value !== null && fullProposal.value.length === 0)
-
-function toggleWalkPick(path: string) {
-  const current = walkPick.value
-  walkPicked.value = current.includes(path)
-    ? current.filter(item => item !== path)
-    : [...current, path]
-}
-
-function enterWalkthrough() {
-  // A second pass is worth the screen whatever the size of the pull request — the whole
-  // point is that it is shorter than the first one.
-  if (!walkWorthwhile.value && !roundAvailable.value) return
-  walkPicked.value = null
-  walkMode.value = roundAvailable.value ? 'round' : 'key'
-  walkResumeDismissed.value = false
-  view.value = 'entry'
-}
-
-// Switching mode drops the hand-edited selection, because it was a selection of the other
-// list. Staying on the mode you are already on changes nothing.
-function setWalkMode(mode: 'key' | 'all' | 'round') {
-  if (walkMode.value === mode) return
-  walkMode.value = mode
-  walkPicked.value = null
-}
-
-function leaveWalkthrough() {
-  view.value = 'tree'
-}
-
-// US-P3: accepting is what turns a proposal into a reading path, and the path is what the
-// walkthrough walks. Nothing here happens without the click.
-// In the second pass a file opens on the changes that arrived after you last saw it, so
-// what you read is the fix and not the whole file again. The bar above the diff says so and
-// offers the whole diff back. Every other mode keeps opening the full diff.
-function openWalkFile(path: string) {
-  return walkMode.value === 'round' ? openFile(path, roundSince(path)) : openFile(path)
-}
-
-async function startWalkthrough(paths: string[] = walkPick.value) {
-  if (paths.length === 0) return
-  walkSkipped.value = []
-  walkPosition.value = 0
-  walkHeadSha.value = details.value?.headCommitSha ?? null
-  view.value = 'walk'
-  await saveReadingPath(paths, 0)
-  const first = walkPaths.value[0]
-  if (first) await openWalkFile(first)
-}
-
-function resumeWalkthrough() {
-  view.value = 'walk'
-  const path = walkFilePath.value
-  if (path) void openWalkFile(path)
-}
-
-async function goToWalkIndex(index: number) {
-  const paths = walkPaths.value
-  const next = Math.min(Math.max(index, 0), paths.length)
-  walkPosition.value = next
-  void saveReadingPath(paths, next)
-  if (next >= paths.length) {
-    view.value = 'done'
-    return
-  }
-  await openWalkFile(paths[next]!)
-}
-
-// The main action of the walkthrough: this file is read, show me the next one. Marking is
-// local, so a broken connection to Azure DevOps cannot lose it.
-async function walkAdvance(markRead: boolean) {
-  const path = walkFilePath.value
-  if (!path) return
-  if (markRead) {
-    if (!isReviewed(path)) await setFileReviewed(path, true)
-    walkSkipped.value = walkSkipped.value.filter(item => item !== path)
-  } else if (!walkSkipped.value.includes(path)) {
-    walkSkipped.value = [...walkSkipped.value, path]
-  }
-  await goToWalkIndex(walkPosition.value + 1)
-}
-
-function walkBack() {
-  if (walkPosition.value === 0) return
-  void goToWalkIndex(walkPosition.value - 1)
-}
-
-// US-P6: the skipped files are the reason to come back, so one action returns to one.
-function returnToSkipped(path: string) {
-  const index = walkPaths.value.indexOf(path)
-  if (index < 0) return
-  view.value = 'walk'
-  void goToWalkIndex(index)
-}
 
 function openCriticalFile(path: string) {
   void openFile(path)
@@ -979,54 +201,9 @@ function toggleReviewed() {
   void setFileReviewed(path, !isReviewed(path))
 }
 
-async function setFileReviewed(path: string, reviewed: boolean) {
-  if (!details.value) return
-  const current = reviewRequestId
-  const previous = fileReviews.value[path]
-  const id = details.value.id
-  const project = projectId.value
-  const repository = repositoryId.value
-  const file = details.value.changedFiles.find(entry => entry.path === path)
-  const next = { ...fileReviews.value }
-  if (reviewed) {
-    next[path] = {
-      path,
-      blobId: file?.objectId ?? null,
-      headSha: details.value.headCommitSha ?? null,
-      updatedAt: new Date().toISOString(),
-    }
-  } else {
-    delete next[path]
-  }
-  fileReviews.value = next
-  fileReviewSaving.value = path
-  fileReviewError.value = ''
-  try {
-    const result = await api.setFileReviewed(project, repository, id, {
-      path,
-      reviewed,
-      blobId: file?.objectId ?? null,
-      headCommitSha: details.value.headCommitSha ?? null,
-      changedFilesCount: details.value.changedFilesCount,
-    })
-    if (current === reviewRequestId && result.entry) {
-      fileReviews.value = { ...fileReviews.value, [path]: result.entry }
-    }
-  } catch (cause) {
-    if (current === reviewRequestId) {
-      const restored = { ...fileReviews.value }
-      if (previous) restored[path] = previous
-      else delete restored[path]
-      fileReviews.value = restored
-      fileReviewError.value = message(cause)
-    }
-  } finally {
-    if (current === reviewRequestId) fileReviewSaving.value = null
-  }
-}
-
 function resetDiff() {
   ++diffRequestId
+  leaveFile()
   lastFilePath.value = ''
   selectedFilePath.value = ''
   fileDiff.value = null
@@ -1034,9 +211,6 @@ function resetDiff() {
   diffLoading.value = false
   diffError.value = ''
   diffSinceIteration.value = null
-  inlineThreadId.value = null
-  zoneTargets.value = []
-  collapsedZones.value = new Set()
   resetExplanation()
   fileSearch.value = ''
   onlyUnreviewed.value = false
@@ -1047,160 +221,25 @@ function resetDiff() {
   filterError.value = ''
 }
 
-function resetSummary() {
-  ++summaryRequestId
-  summary.value = null
-  summaryLoading.value = false
-  summaryError.value = ''
-  summaryReadLoading.value = false
-  summaryReadError.value = ''
-  summarySavedAt.value = null
-  proposalDismissed.value = false
+// Everything that belongs to one pull request. Each reset bumps that feature's request id,
+// which is what makes a late answer about the previous pull request land nowhere.
+function resetPullRequest() {
+  resetDiff()
+  resetSummary()
+  resetChecklist()
+  resetFileReviews()
+  resetWalkthrough()
+  resetThreads()
+  resetFileAi()
+  details.value = null
+  error.value = ''
 }
 
-async function loadSavedSummary(project: string, repository: string, id: number) {
-  const current = ++summaryRequestId
-  summaryReadLoading.value = true
-  summaryReadError.value = ''
-  try {
-    const stored = await api.savedSummary(project, repository, id)
-    if (current !== summaryRequestId) return
-    if (stored) {
-      summary.value = stored.result
-      summarySavedAt.value = stored.savedAt
-    }
-  } catch (cause) {
-    if (current === summaryRequestId) summaryReadError.value = message(cause)
-  } finally {
-    if (current === summaryRequestId) summaryReadLoading.value = false
-  }
-}
-
-function resetChecklist() {
-  ++checklistRequestId
-  checklist.value = null
-  checklistLoading.value = false
-  checklistSaving.value = null
-  checklistError.value = ''
-  debugAnswer.value = ''
-  debugSaving.value = false
-  debugSaved.value = false
-  showDebugHint.value = false
-}
-
-function resetThreads() {
-  ++threadsRequestId
-  threads.value = []
-  threadsLoading.value = false
-  threadsError.value = ''
-  commentsOpen.value = false
-  threadSearch.value = ''
-  threadFilter.value = 'all'
-  inlineThreadId.value = null
-  draft.value = null
-  editing.value = null
-  deleting.value = null
-  commentSaving.value = false
-  commentError.value = ''
-  ++snippetsRun
-  snippets.value = {}
-  snippetsLoading.value = false
-}
-
-// A deleted comment has no content, so on screen it was a row saying only that something
-// used to be here — it broke up the conversation without adding to it. Filtering at the
-// one place threads enter state means every counter, badge and editor marker follows,
-// because they all derive from this list.
-function withoutDeleted(list: PrCommentThread[]): ReadableThread[] {
-  return list
-    .map(thread => ({
-      ...thread,
-      comments: thread.comments.filter((comment): comment is ReadableComment => !!comment.content),
-    }))
-    // A thread whose every comment is gone has nothing left to read.
-    .filter(thread => thread.comments.length > 0)
-}
-
-async function loadThreads(project: string, repository: string, id: number) {
-  const current = ++threadsRequestId
-  threadsLoading.value = true
-  threadsError.value = ''
-  try {
-    const result = await api.commentThreads(project, repository, id)
-    if (current !== threadsRequestId) return
-    threads.value = withoutDeleted(result)
-    if (commentsOpen.value) void loadSnippets()
-  } catch (cause) {
-    if (current === threadsRequestId) threadsError.value = message(cause)
-  } finally {
-    if (current === threadsRequestId) threadsLoading.value = false
-  }
-}
-
-function resetChecklistProgress() {
+function resetListProgress() {
   checklistProgress.value = {}
   progressLoading.value = false
   progressError.value = ''
-}
-
-function resetWalkthrough() {
-  view.value = 'tree'
-  walkPosition.value = 0
-  walkHeadSha.value = null
-  walkSkipped.value = []
-  walkPicked.value = null
-  walkResumeDismissed.value = false
-  explanationCache.value = {}
-}
-
-function resetFileReviews() {
-  ++reviewRequestId
-  fileReviews.value = {}
-  readingPath.value = []
-  fileReviewSaving.value = null
-  fileReviewError.value = ''
-}
-
-function resetFileReviewProgress() {
   fileReviewProgress.value = {}
-}
-
-// Same shape as loadChecklist: capture the id, compare before every write including finally.
-async function loadFileReviews(project: string, repository: string, id: number) {
-  const current = ++reviewRequestId
-  fileReviewError.value = ''
-  try {
-    const result = await api.fileReviews(project, repository, id)
-    if (current !== reviewRequestId) return
-    fileReviews.value = Object.fromEntries(result.files.map(entry => [entry.path, entry]))
-    readingPath.value = result.readingPath.paths
-    walkPosition.value = result.readingPath.position
-    walkHeadSha.value = result.readingPath.headCommitSha
-    // US-P7: a walkthrough taken to its end is done with. Reopening the pull request lands
-    // on the ordinary screen, with nothing offered to resume.
-    if (walkHeadSha.value !== null && walkFinished.value) view.value = 'tree'
-    // The second pass can only be recognised from the markers, and openPullRequest picks the
-    // screen before they arrive — so the decision belongs here. A walkthrough already running
-    // is left alone.
-    if ((view.value === 'tree' || view.value === 'entry') && roundAvailable.value) {
-      walkPicked.value = null
-      walkMode.value = 'round'
-      view.value = 'entry'
-    }
-    resumeAtFirstUnread()
-  } catch (cause) {
-    if (current === reviewRequestId) fileReviewError.value = message(cause)
-  }
-}
-
-// Picks up where the last session stopped instead of opening on an empty panel.
-function resumeAtFirstUnread() {
-  // The entry screen is the start of the pull request when there is one; opening a file
-  // behind it would only mean the user finds a diff waiting when they leave it.
-  if (view.value !== 'tree') return
-  if (selectedFilePath.value || reviewedPaths.value.length === 0) return
-  const next = nextUnreviewedPath.value
-  if (next) void openFile(next)
 }
 
 // Guards the outer requestId, not its own, exactly like loadChecklistProgress.
@@ -1233,75 +272,6 @@ async function loadChecklistProgress(current: number, project: string, repositor
   }
 }
 
-async function loadChecklist(project: string, repository: string, id: number) {
-  const current = ++checklistRequestId
-  checklistLoading.value = true
-  checklistError.value = ''
-  try {
-    const result = await api.checklist(project, repository, id)
-    if (current === checklistRequestId) {
-      checklist.value = result
-      debugAnswer.value = result.debugNote ?? ''
-    }
-  } catch (cause) {
-    if (current === checklistRequestId) checklistError.value = message(cause)
-  } finally {
-    if (current === checklistRequestId) checklistLoading.value = false
-  }
-}
-
-// No optimistic write: this is the reviewer's own sentence, so what the field shows after
-// a save is what the server stored, not what we hoped it stored.
-async function saveDebugAnswer() {
-  if (!details.value || debugSaving.value) return
-  const current = checklistRequestId
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  debugSaving.value = true
-  debugSaved.value = false
-  checklistError.value = ''
-  try {
-    const result = await api.setDebugNote(project, repository, id, debugAnswer.value)
-    if (current === checklistRequestId) {
-      checklist.value = result
-      debugAnswer.value = result.debugNote ?? ''
-      debugSaved.value = true
-    }
-  } catch (cause) {
-    if (current === checklistRequestId) checklistError.value = message(cause)
-  } finally {
-    if (current === checklistRequestId) debugSaving.value = false
-  }
-}
-
-async function setChecklistItem(item: ChecklistItem, completed: boolean) {
-  if (!details.value || !checklist.value || checklistSaving.value) return
-  const current = checklistRequestId
-  const project = projectId.value
-  const repository = repositoryId.value
-  const id = details.value.id
-  const previous = checklist.value
-  checklist.value = { ...previous, [item]: completed }
-  checklistSaving.value = item
-  checklistError.value = ''
-  try {
-    const result = await api.setChecklistItem(project, repository, id, item, completed)
-    if (current === checklistRequestId) checklist.value = result
-  } catch (cause) {
-    if (current === checklistRequestId) {
-      checklist.value = previous
-      checklistError.value = message(cause)
-    }
-  } finally {
-    if (current === checklistRequestId) checklistSaving.value = null
-  }
-}
-
-function message(cause: unknown): string {
-  return cause instanceof Error ? cause.message : 'Wystąpił nieoczekiwany błąd.'
-}
-
 async function loadProjects() {
   const current = ++requestId
   loading.value = true
@@ -1323,17 +293,11 @@ async function loadProjects() {
 
 async function loadRepositories() {
   const current = ++requestId
-  resetDiff()
-  resetSummary()
-  resetChecklist()
-  resetChecklistProgress()
-  resetFileReviews()
-  resetFileReviewProgress()
+  resetPullRequest()
+  resetListProgress()
   repositories.value = []
   repositoryId.value = ''
   pullRequests.value = []
-  details.value = null
-  error.value = ''
   if (!projectId.value) return
   loading.value = true
   try {
@@ -1353,15 +317,9 @@ async function loadRepositories() {
 
 async function loadPullRequests() {
   const current = ++requestId
-  resetDiff()
-  resetSummary()
-  resetChecklist()
-  resetChecklistProgress()
-  resetFileReviews()
-  resetFileReviewProgress()
+  resetPullRequest()
+  resetListProgress()
   pullRequests.value = []
-  details.value = null
-  error.value = ''
   if (!repositoryId.value) return
   loading.value = true
   try {
@@ -1382,14 +340,7 @@ async function loadPullRequests() {
 
 async function openPullRequest(id: number) {
   const current = ++requestId
-  resetDiff()
-  resetSummary()
-  resetChecklist()
-  resetFileReviews()
-  resetWalkthrough()
-  resetThreads()
-  details.value = null
-  error.value = ''
+  resetPullRequest()
   loading.value = true
   try {
     const result = await api.pullRequest(projectId.value, repositoryId.value, id)
@@ -1410,149 +361,15 @@ async function openPullRequest(id: number) {
   }
 }
 
-async function generateSummary() {
-  if (!details.value || summaryLoading.value) return
-  const current = ++summaryRequestId
-  const id = details.value.id
-  const project = projectId.value
-  const repository = repositoryId.value
-  summaryError.value = ''
-  summaryReadError.value = ''
-  summaryReadLoading.value = false
-  summaryLoading.value = true
-  try {
-    const result = await api.generateSummary(project, repository, id)
-    if (current === summaryRequestId) {
-      summary.value = result
-      summarySavedAt.value = null
-    }
-  } catch (cause) {
-    if (current === summaryRequestId) summaryError.value = message(cause)
-  } finally {
-    if (current === summaryRequestId) summaryLoading.value = false
+function backToList() {
+  ++requestId
+  resetPullRequest()
+  loading.value = false
+  if (repositoryId.value && pullRequests.value.length > 0) {
+    void loadChecklistProgress(requestId, projectId.value, repositoryId.value)
+    void loadFileReviewProgress(requestId, projectId.value, repositoryId.value)
   }
 }
-
-function resetExplanation() {
-  explanation.value = null
-  explanationLoading.value = false
-  explanationError.value = ''
-  explanationOpen.value = true
-}
-
-// Rides the diff request id: switching files or leaving the PR invalidates an explanation
-// still in flight, exactly like a late diff response.
-async function explainFile() {
-  if (!details.value || !selectedFilePath.value || explanationLoading.value) return
-  const current = diffRequestId
-  const pullRequestId = details.value.id
-  const path = selectedFilePath.value
-  explanationError.value = ''
-  explanationLoading.value = true
-  try {
-    const result = await api.explainFile(projectId.value, repositoryId.value, pullRequestId, path)
-    if (current !== diffRequestId) return
-    explanation.value = result
-    explanationCache.value = { ...explanationCache.value, [path]: result }
-  } catch (cause) {
-    if (current === diffRequestId) explanationError.value = message(cause)
-  } finally {
-    if (current === diffRequestId) explanationLoading.value = false
-  }
-}
-
-function resetQuestions() {
-  questionTurns.value = []
-  questionDraft.value = ''
-  questionSelection.value = ''
-  questionError.value = ''
-  questionLoading.value = false
-  questionOpen.value = false
-}
-
-// Both of these ride the diff request id, like explainFile: switching files or leaving the
-// pull request invalidates an answer still in flight, exactly like a late diff response.
-async function loadQuestions(pullRequestId: number, path: string, current: number) {
-  try {
-    const turns = await api.fileQuestions(projectId.value, repositoryId.value, pullRequestId, path)
-    if (current !== diffRequestId) return
-    // The thread loads, the drawer does not open itself: it overlays the code, and a file
-    // you asked about yesterday must not cover the diff when you come back to it. The count
-    // on the toolbar button is what says there is something to read.
-    questionTurns.value = turns
-  } catch {
-    // A conversation that cannot be read is not worth an alarm over the file: the box still
-    // works, and the first answer will say so if the backend is really down.
-  }
-}
-
-async function askQuestion() {
-  if (!details.value || !selectedFilePath.value || questionLoading.value) return
-  const asked = questionDraft.value.trim()
-  if (!asked) return
-  const current = diffRequestId
-  const pullRequestId = details.value.id
-  const path = selectedFilePath.value
-  const selection = questionSelection.value || null
-  questionError.value = ''
-  questionLoading.value = true
-  // The question goes into the thread and the box empties at once, the way a chat behaves;
-  // the answer fills in when it arrives. ponytail: matched by index, because turns are only
-  // ever appended and a file switch is already caught by the diff request id below.
-  const index = questionTurns.value.length
-  questionTurns.value = [...questionTurns.value, {
-    schemaVersion: 0, path, question: asked, selection, sentences: [],
-    blobId: null, headCommitSha: null, askedAt: new Date().toISOString(),
-  }]
-  questionDraft.value = ''
-  questionSelection.value = ''
-  try {
-    const turn = await api.askAboutFile(projectId.value, repositoryId.value, pullRequestId, path, asked, selection)
-    if (current !== diffRequestId) return
-    questionTurns.value = questionTurns.value.map((existing, at) => at === index ? turn : existing)
-  } catch (cause) {
-    if (current !== diffRequestId) return
-    // Nothing was stored, so the question leaves the thread and goes back into the box
-    // with its snippet — one error line beats a turn that looks answered and is not.
-    questionTurns.value = questionTurns.value.filter((_, at) => at !== index)
-    questionDraft.value = asked
-    questionSelection.value = selection ?? ''
-    questionError.value = message(cause)
-  } finally {
-    if (current === diffRequestId) questionLoading.value = false
-  }
-}
-
-// Opening the drawer is also how the right-click action lands: the snippet is already
-// captured, the cursor goes where the question gets typed. A selection always opens —
-// you just asked for it — while the button and the key toggle, because that is the way
-// back out of a drawer that covers the code.
-async function openQuestions(selection = '') {
-  if (!selectedFilePath.value) return
-  if (selection) questionSelection.value = selection
-  else if (questionOpen.value) { questionOpen.value = false; return }
-  questionOpen.value = true
-  await nextTick()
-  questionBox.value?.focus()
-}
-
-// Set while the diff on screen is a since-an-iteration comparison rather than the whole
-// change, so the toolbar can say so and offer the way back.
-const diffSinceIteration = ref<number | null>(null)
-
-// Comparing the newest iteration with itself changes nothing, so it is not offered. Newest
-// first, because "since my last pass" is the reason anybody opens this list.
-const iterationChoices = computed(() => {
-  const iterations = details.value?.iterations ?? []
-  const titles = new Map((details.value?.commits ?? []).map(commit => [commit.id, commit.message]))
-  const last = iterations.reduce((highest, item) => Math.max(highest, item.id), 0)
-  return iterations.filter(item => item.id < last).reverse().map(item => ({
-    id: item.id,
-    label: `Po aktualizacji ${item.id}` +
-      (item.sourceCommitSha && titles.has(item.sourceCommitSha)
-        ? ` — ${titles.get(item.sourceCommitSha)}` : ''),
-  }))
-})
 
 async function setFilterIteration(value: number | null) {
   const current = ++filterRequestId
@@ -1577,12 +394,6 @@ async function setFilterIteration(value: number | null) {
   }
 }
 
-async function showChangesSinceComment(thread: PrCommentThread) {
-  if (!thread.filePath || thread.iterationId === null) return
-  commentsOpen.value = false
-  await openFile(thread.filePath, thread.iterationId)
-}
-
 // sinceIteration: a number compares against that iteration, null asks for the whole diff
 // however the filter is set, and leaving it out follows the filter — so every existing
 // caller keeps working and the tree gets the narrowed diff for free.
@@ -1592,17 +403,9 @@ async function openFile(path: string, sinceIteration?: number | null) {
   const since = sinceIteration === undefined ? filterIteration.value : sinceIteration
   diffSinceIteration.value = since
   const pullRequestId = details.value.id
+  leaveFile()
   selectedFilePath.value = path
-  inlineThreadId.value = null
-  zoneTargets.value = []
-  collapsedZones.value = new Set()
-  if (lineDraft.value !== null) draft.value = null
-  resetExplanation()
-  // Already asked for once, so it comes back without paying for it again.
-  const cached = explanationCache.value[path]
-  if (cached) explanation.value = cached
-  resetQuestions()
-  void loadQuestions(pullRequestId, path, current)
+  fileOpened(pullRequestId, path, current)
   fileDiff.value = null
   monacoComponent.value = null
   diffError.value = ''
@@ -1633,67 +436,6 @@ async function openFile(path: string, sinceIteration?: number | null) {
   }
 }
 
-function backToList() {
-  ++requestId
-  resetDiff()
-  resetSummary()
-  resetChecklist()
-  resetFileReviews()
-  resetWalkthrough()
-  details.value = null
-  error.value = ''
-  loading.value = false
-  if (repositoryId.value && pullRequests.value.length > 0) {
-    void loadChecklistProgress(requestId, projectId.value, repositoryId.value)
-    void loadFileReviewProgress(requestId, projectId.value, repositoryId.value)
-  }
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-}
-
-function commitTitle(message: string): string {
-  return message.split(/\r?\n/, 1)[0]?.trim() || 'Bez opisu'
-}
-
-function fileName(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1)
-}
-
-function fileDirectory(path: string): string {
-  return path.slice(0, path.lastIndexOf('/') + 1)
-}
-
-function reviewerVote(vote: number): string {
-  if (vote >= 5) return 'Zatwierdzono'
-  if (vote < 0) return 'Zmiany wymagane'
-  return 'Bez decyzji'
-}
-
-const changeLabels: Record<string, string> = {
-  add: 'Dodano',
-  edit: 'Zmieniono',
-  delete: 'Usunięto',
-  rename: 'Przeniesiono',
-}
-
-function changeLabel(changeType: string): string {
-  return changeLabels[changeType.toLowerCase()] ?? changeType
-}
-
-const omissionLabels: Record<string, string> = {
-  lockFile: 'plik zależności', snapshot: 'snapshot', generated: 'plik wygenerowany',
-  minified: 'plik zminifikowany', buildOutput: 'wynik budowania', binary: 'plik binarny',
-  sourceTooLarge: 'limit istniejącego diffu', fileCharacterLimit: 'limit na plik',
-  pullRequestCharacterLimit: 'limit na PR',
-}
-
-function omissionLabel(reason: string): string {
-  return omissionLabels[reason] ?? reason
-}
-
-
 const shortcutHelp = [
   { keys: 'j / n', label: 'Następny plik' },
   { keys: 'k / p', label: 'Poprzedni plik' },
@@ -1711,12 +453,6 @@ const shortcutHelp = [
   { keys: 'Esc', label: 'Zamknij pomoc albo wróć do listy' },
   { keys: '?', label: 'Ta pomoc' },
 ]
-
-// A CSS prefers-reduced-motion block cannot override the JS `behavior` option, so the
-// two smooth-scroll call sites have to ask for themselves.
-function scrollBehavior(): ScrollBehavior {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
-}
 
 function goToDiff(target: 'next' | 'previous') {
   diffView.value?.goToDiff(target)
@@ -1919,148 +655,8 @@ onMounted(async () => {
             @click="toggleHelp">?</button>
         </div>
 
-        <!-- US-P3. Opening a pull request of 83 files on a tree of 83 files is the problem
-             this screen exists for: one sentence, eight files, one decision. -->
-        <section v-if="view === 'entry'" class="walk-entry" aria-label="Wejście w przejście">
-          <!-- Druga runda. Liczona z markerów, które już są w przeglądarce — bez AI,
-               bez dodatkowego pytania do Azure DevOps. -->
-          <div v-if="walkMode === 'round'" class="walk-round">
-            <h3>Runda po poprawkach</h3>
-            <p class="walk-round-counts">
-              Od Twojego czytania zmieniło się <strong>{{ stalePaths.length }}</strong>
-              {{ stalePaths.length === 1 ? 'plik' : 'plików' }}<template v-if="roundUnreadCount">,
-              a <strong>{{ roundUnreadCount }}</strong> {{ roundUnreadCount === 1 ? 'pliku' : 'plików' }} nie widziałeś w ogóle</template>.
-              Każdy otworzy się na zmianach od iteracji, na której go ostatnio oglądałeś.
-            </p>
-            <button v-if="myOpenThreads.length" type="button" class="walk-round-threads" @click="openMyThreads">
-              {{ myOpenThreads.length }} {{ myOpenThreads.length === 1 ? 'Twój wątek czeka' : 'Twoich wątków czeka' }} na domknięcie
-            </button>
-          </div>
-          <div class="walk-entry-summary">
-            <h3>Co się zmieniło</h3>
-            <p v-if="summaryLoading || summaryReadLoading" class="notice" role="status">Przygotowuję propozycję ścieżki…</p>
-            <template v-else-if="summary">
-              <div v-if="summary.sentences?.length" class="summary-text">
-                <p v-for="(sentence, index) in summary.sentences" :key="index" :class="{ 'summary-lead': index === 0 }">{{ sentence }}</p>
-              </div>
-              <p v-else class="summary-text">{{ summary.summary }}</p>
-              <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem</p>
-              <!-- Regenerating costs money too, so a stale ranking says so and waits. -->
-              <p v-if="summaryFreshness === 'stale'" class="notice walk-stale" role="status">
-                PR zmienił się od zapisania tego Summary — propozycja niżej pochodzi ze starszego commita.
-                <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
-              </p>
-            </template>
-            <p v-else-if="summaryError" class="notice error" role="alert">
-              Propozycja ścieżki jest niedostępna: {{ summaryError }}
-              <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Spróbuj ponownie</button>
-            </p>
-            <!-- Nothing saved for this pull request: the model runs when asked, not when
-                 the screen opens. Every AI run is money, and it is the user's money. -->
-            <div v-else-if="walkMode !== 'round'" class="walk-no-summary">
-              <p class="muted">Dla tego PR nie ma jeszcze Summary, więc nie ma propozycji ścieżki.</p>
-              <button type="button" class="walk-primary" :disabled="summaryLoading" @click="generateSummary">Zaproponuj ścieżkę (uruchomi AI)</button>
-            </div>
-          </div>
-
-          <!-- US-P7: an interrupted walkthrough is offered back before anything is recomputed. -->
-          <div v-if="walkResumable && !walkResumeDismissed" class="walk-resume">
-            <p><strong>Przerwane przejście</strong> — krok {{ walkPosition + 1 }} z {{ walkPaths.length }}.</p>
-            <p v-if="walkChangedSincePicked" class="notice walk-changed" role="status">
-              PR zmienił się od czasu wyboru ścieżki. Możesz wznowić dotychczasową albo przeliczyć propozycję — nic nie kasuję bez Twojej decyzji.
-            </p>
-            <div class="walk-actions">
-              <button type="button" class="walk-primary" @click="resumeWalkthrough">Wznów od kroku {{ walkPosition + 1 }}</button>
-              <button type="button" @click="walkResumeDismissed = true">Przelicz propozycję</button>
-              <button type="button" @click="view = 'tree'">Pełne drzewo plików</button>
-            </div>
-          </div>
-
-          <template v-else>
-            <div class="walk-entry-files">
-              <!-- Dwa tryby tej samej kolejności: skrót i całość. Kolejność w obu układa AI. -->
-              <div class="walk-mode" role="group" aria-label="Zakres przejścia">
-                <button type="button" class="walk-mode-option" :class="{ 'walk-mode--on': walkMode === 'key' }"
-                  :aria-pressed="walkMode === 'key'" @click="setWalkMode('key')">
-                  Kluczowe pliki<small>{{ criticalProposal.length }}</small>
-                </button>
-                <button type="button" class="walk-mode-option" :class="{ 'walk-mode--on': walkMode === 'all' }"
-                  :aria-pressed="walkMode === 'all'" @click="setWalkMode('all')">
-                  Wszystkie pliki<small>{{ fullProposal.length || details?.changedFiles.length || 0 }}</small>
-                </button>
-                <button v-if="roundAvailable" type="button" class="walk-mode-option" :class="{ 'walk-mode--on': walkMode === 'round' }"
-                  :aria-pressed="walkMode === 'round'" @click="setWalkMode('round')">
-                  Od mojego przejścia<small>{{ roundPaths.length }}</small>
-                </button>
-              </div>
-              <h3>{{ walkMode === 'round' ? 'Do przejrzenia w tej rundzie' : 'Proponowana ścieżka' }} ({{ walkPick.length }})</h3>
-              <!-- Summary sprzed tej funkcji nie ma kolejności całego PR. Zmyślanie jej
-                   byłoby gorsze niż powiedzenie tego wprost i policzenie na żądanie. -->
-              <p v-if="fullOrderMissing" class="notice" role="status">
-                To Summary powstało, zanim doszła kolejność całego PR — mam ranking, ale nie mam ułożonych wszystkich plików.
-                <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
-              </p>
-              <p v-else-if="walkCandidates.length === 0" class="muted">
-                Ranking nie wskazał plików. Wejdź w pełne drzewo albo dodaj pliki ręcznie ze ścieżki w prawej szynie.
-              </p>
-              <ul v-else class="walk-file-list">
-                <li v-for="path in walkCandidates" :key="path" :class="{ 'walk-file--off': !walkPickSet.has(path) }">
-                  <label class="walk-file-pick">
-                    <input type="checkbox" :checked="walkPickSet.has(path)" @change="toggleWalkPick(path)">
-                    <span class="walk-file-path" :title="path">{{ fileName(path) }}<small>{{ fileDirectory(path) }}</small></span>
-                  </label>
-                  <span v-if="roleByPath.get(path)" class="walk-file-role">{{ roleByPath.get(path) }}</span>
-                  <span v-if="reviewState(path) === 'current'" class="walk-file-read">przeczytany</span>
-                </li>
-              </ul>
-            </div>
-            <p class="walk-entry-rest">
-              Poza przejściem zostaje {{ walkOutsideCount }} {{ walkOutsideCount === 1 ? 'plik' : 'plików' }}<template v-if="walkOutsideNoiseCount">, w tym {{ walkOutsideNoiseCount }} {{ walkOutsideNoiseCount === 1 ? 'zaklasyfikowany' : 'zaklasyfikowanych' }} jako szum</template>.
-            </p>
-            <div class="walk-actions">
-              <button type="button" class="walk-primary" :disabled="walkPick.length === 0" @click="startWalkthrough()">{{ walkMode === 'round' ? 'Rozpocznij rundę' : 'Rozpocznij przejście' }} ({{ walkPick.length }})</button>
-              <button type="button" @click="view = 'tree'">Pełne drzewo plików</button>
-            </div>
-          </template>
-        </section>
-
-        <!-- US-P6. One question, one decision, and the walkthrough has an end. -->
-        <section v-else-if="view === 'done'" class="walk-done" aria-label="Domknięcie przejścia">
-          <h3>Przejście zamknięte</h3>
-          <p class="walk-done-counts">
-            Przeczytane: <strong>{{ walkReadCount }}</strong> z {{ walkPaths.length }} ·
-            Pominięte: <strong>{{ walkSkippedPaths.length }}</strong> ·
-            Poza ścieżką: <strong>{{ walkOutsideCount }}</strong>
-          </p>
-          <div v-if="walkSkippedPaths.length" class="walk-skipped">
-            <h4>Pominięte pliki</h4>
-            <ul class="walk-file-list">
-              <li v-for="path in walkSkippedPaths" :key="path">
-                <button type="button" class="critical-open" :title="path" @click="returnToSkipped(path)">{{ fileName(path) }}<small>{{ fileDirectory(path) }}</small></button>
-              </li>
-            </ul>
-          </div>
-          <div class="walk-debug">
-            <label class="debug-label" for="walk-debug-answer">Gdzie zacząłbyś szukać, gdyby to nie zadziałało?</label>
-            <textarea id="walk-debug-answer" v-model="debugAnswer" class="debug-answer" rows="3" :maxlength="2000"></textarea>
-            <div class="debug-actions">
-              <button type="button" :disabled="debugSaving" @click="saveDebugAnswer">{{ debugSaving ? 'Zapisywanie…' : 'Zapisz odpowiedź' }}</button>
-              <span v-if="debugSaved" class="muted" role="status">Zapisano.</span>
-              <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
-            </div>
-            <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
-              <li v-for="(file, index) in criticalProposal" :key="file.path">
-                <span class="debug-hint-order">{{ index + 1 }}</span>
-                <span class="debug-hint-file" :title="file.path">{{ fileName(file.path) }}<small>{{ fileDirectory(file.path) }}</small></span>
-                <span class="debug-hint-why">{{ file.why }}</span>
-              </li>
-            </ol>
-          </div>
-          <div class="walk-actions">
-            <button type="button" class="walk-primary" @click="leaveWalkthrough">Zejdź do pozostałych plików</button>
-            <button type="button" @click="backToList">Zakończ ten PR</button>
-          </div>
-        </section>
+        <WalkEntry v-if="view === 'entry'" />
+        <WalkDone v-else-if="view === 'done'" />
 
         <!-- Writing switched off in the backend: the actions are not disabled but absent,
              because a row of five greyed-out buttons is noise, not information. -->
@@ -2138,102 +734,7 @@ onMounted(async () => {
                 <button class="checklist-retry" type="button" :disabled="explanationLoading" @click="explainFile">Ponów</button>
               </p>
             </section>
-            <section v-if="commentsOpen" class="comments-view" aria-label="Komentarze pull requesta">
-              <div class="comments-head">
-                <h3>Komentarze</h3>
-                <span class="comments-counts">{{ activeThreadCount }} aktywnych z {{ threads.length }}</span>
-                <button type="button" class="comments-close" title="Zamknij widok komentarzy (c)" @click="toggleComments">Zamknij</button>
-              </div>
-              <div class="comments-toolbar">
-                <label class="visually-hidden" for="thread-search">Szukaj w komentarzach</label>
-                <input id="thread-search" v-model="threadSearch" class="thread-search" type="search"
-                  placeholder="Szukaj w treści, autorze lub ścieżce" autocomplete="off">
-                <div class="file-filter" role="group" aria-label="Filtr komentarzy">
-                  <button type="button" :aria-pressed="threadFilter === 'all'" :class="{ active: threadFilter === 'all' }" @click="threadFilter = 'all'">Wszystkie</button>
-                  <button type="button" :aria-pressed="threadFilter === 'active'" :class="{ active: threadFilter === 'active' }" @click="threadFilter = 'active'">Aktywne</button>
-                  <button v-if="mineKnown" type="button" :aria-pressed="threadFilter === 'mine'" :class="{ active: threadFilter === 'mine' }" @click="threadFilter = 'mine'">Moje nierozwiązane</button>
-                </div>
-                <button type="button" class="thread-new" :disabled="!commentsEnabled" @click="startDraft('new')">Nowy komentarz do PR</button>
-              </div>
-              <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
-              <p v-if="!commentsEnabled" class="muted comments-off">
-                Pisanie komentarzy jest wyłączone w backendzie (<code>AzureDevOps:AllowComments</code>). Czytanie działa normalnie.
-              </p>
-
-              <div v-if="draft?.target === 'new'" class="comment-draft">
-                <label class="debug-label" for="thread-draft">Treść komentarza</label>
-                <!-- Enter inserts a newline; only the button sends. -->
-                <textarea id="thread-draft" v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000"></textarea>
-                <div class="debug-actions">
-                  <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
-                  <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
-                  <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
-                </div>
-              </div>
-
-              <p v-if="threadsLoading" class="muted" role="status">Wczytywanie komentarzy…</p>
-              <p v-else-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
-              <p v-else-if="visibleThreads.length === 0" class="muted">Nic nie pasuje do filtra.</p>
-              <div v-for="group in threadGroups" :key="group.path || 'none'" class="thread-group">
-                <h4 class="thread-group-head" :title="group.path">{{ group.label }}</h4>
-                <article v-for="thread in group.threads" :key="thread.id" class="thread thread--full"
-                  :class="{ 'thread--resolved': isResolved(thread) }">
-                  <header class="thread-head">
-                    <button class="thread-location" type="button" :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
-                    <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
-                  </header>
-                  <div v-if="threadSnippet(thread)" class="thread-snippet">
-                    <pre><code><span v-for="row in threadSnippet(thread)!.lines" :key="row.number"
-                      class="snippet-line" :class="{ 'snippet-line--anchor': row.anchor }"><span class="snippet-number">{{ row.number }}</span>{{ row.text }}
-</span></code></pre>
-                    <span class="snippet-side">{{ threadSnippet(thread)!.side }}</span>
-                  </div>
-                  <p v-else-if="thread.filePath && snippetsLoading" class="muted snippet-loading">Wczytywanie kodu…</p>
-                  <div v-for="comment in thread.comments" :key="comment.id" class="thread-comment">
-                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
-                    <div v-if="editing && editing.commentId === comment.id && editing.threadId === thread.id" class="comment-draft">
-                      <textarea v-model="editing.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Edycja komentarza"></textarea>
-                      <div class="debug-actions">
-                        <button type="button" class="comment-send" :disabled="commentSaving || !editing.text.trim()" @click="sendEdit">{{ commentSaving ? 'Zapisywanie…' : 'Zapisz zmianę' }}</button>
-                        <button type="button" :disabled="commentSaving" @click="editing = null">Anuluj</button>
-                      </div>
-                    </div>
-                    <template v-else>
-                      <div class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                      <div v-if="comment.isMine" class="comment-own-actions">
-                        <template v-if="deleting === comment.id">
-                          <span class="muted">Usunąć na stałe?</span>
-                          <button type="button" class="comment-delete" :disabled="commentSaving" @click="confirmDelete(thread.id, comment.id)">Tak, usuń</button>
-                          <button type="button" :disabled="commentSaving" @click="deleting = null">Nie</button>
-                        </template>
-                        <template v-else>
-                          <button type="button" @click="startEdit(thread.id, comment.id, comment.content)">Edytuj</button>
-                          <button type="button" class="comment-remove" @click="deleting = comment.id; editing = null">Usuń</button>
-                        </template>
-                      </div>
-                    </template>
-                  </div>
-                  <p v-if="movedSinceComment(thread)" class="thread-moved">
-                    Kod zmienił się po tym komentarzu (iteracja {{ thread.iterationId }} → {{ lastIteration }}).
-                    <button v-if="thread.filePath" type="button" class="thread-since" @click="showChangesSinceComment(thread)">Zobacz, co się zmieniło</button>
-                  </p>
-                  <div v-if="draft?.target === String(thread.id)" class="comment-draft">
-                    <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" :aria-label="`Odpowiedź w wątku ${thread.id}`"></textarea>
-                    <div class="debug-actions">
-                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
-                      <button v-if="!isResolved(thread)" type="button" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft(true)">Odpowiedz i rozwiąż</button>
-                      <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
-                    </div>
-                  </div>
-                  <div v-else class="thread-actions">
-                    <button type="button" @click="startDraft(String(thread.id))">Odpowiedz</button>
-                    <button v-if="!isResolved(thread)" type="button" class="thread-resolve" :disabled="commentSaving" @click="resolveThread(thread.id)">Rozwiąż</button>
-                    <button v-else type="button" :disabled="commentSaving" @click="reopenThread(thread.id)">Otwórz ponownie</button>
-                    <button v-if="!isResolved(thread)" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'wontFix')">Nie naprawimy</button>
-                  </div>
-                </article>
-              </div>
-            </section>
+            <CommentsView v-if="commentsOpen" />
             <template v-else-if="selectedFilePath">
               <div class="diff-toolbar">
                 <div class="diff-toolbar-title" :title="selectedFilePath"><h4>{{ fileName(selectedFilePath) }}</h4><span>{{ fileDirectory(selectedFilePath) }}</span></div>
@@ -2282,7 +783,7 @@ onMounted(async () => {
                 </button>
               </div>
               <!-- The conversation for the clicked line, docked above the diff so the code
-                   it is about stays on screen. -->
+                   it is about stays on screen. Only where there is no editor to hold zones. -->
               <div v-if="!useZones && (inlineThread || lineDraft !== null)" class="inline-comments">
                 <div class="inline-comments-head">
                   <strong>{{ inlineThread ? `Komentarz w linii ${inlineThread.rightLine ?? '—'}` : `Nowy komentarz do linii ${lineDraft}` }}</strong>
@@ -2294,33 +795,8 @@ onMounted(async () => {
                   <button type="button" class="inline-close" @click="closeInlineComments">Zamknij</button>
                 </div>
                 <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
-                <template v-if="inlineThread">
-                  <div v-for="comment in inlineThread.comments" :key="comment.id" class="thread-comment">
-                    <span class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
-                    <div class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                  </div>
-                  <div v-if="draft?.target === String(inlineThread.id)" class="comment-draft">
-                    <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" aria-label="Odpowiedź w wątku"></textarea>
-                    <div class="debug-actions">
-                      <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
-                      <button v-if="!isResolved(inlineThread)" type="button" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft(true)">Odpowiedz i rozwiąż</button>
-                      <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
-                    </div>
-                  </div>
-                  <div v-else class="thread-actions">
-                    <button type="button" @click="startDraft(String(inlineThread.id))">Odpowiedz</button>
-                    <button v-if="!isResolved(inlineThread)" type="button" class="thread-resolve" :disabled="commentSaving" @click="resolveThread(inlineThread.id)">Rozwiąż</button>
-                    <button v-else type="button" :disabled="commentSaving" @click="reopenThread(inlineThread.id)">Otwórz ponownie</button>
-                  </div>
-                </template>
-                <div v-else-if="draft" class="comment-draft">
-                  <textarea v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Treść komentarza do linii"></textarea>
-                  <div class="debug-actions">
-                    <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
-                    <button type="button" :disabled="commentSaving" @click="closeInlineComments">Anuluj</button>
-                    <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
-                  </div>
-                </div>
+                <CommentThread v-if="inlineThread" :thread="inlineThread" />
+                <CommentDraft v-else-if="draft" label="Treść komentarza do linii" @cancel="closeInlineComments" />
               </div>
               <!-- Not in the walkthrough: there the explanation already has its own panel
                    above the diff, and the same few sentences twice on one screen is noise. -->
@@ -2335,43 +811,9 @@ onMounted(async () => {
                   <button type="button" class="explanation-dismiss" @click="resetExplanation">Ukryj</button>
                 </p>
               </details>
-              <!-- A drawer on the right rather than a block above the diff: stacked, it
-                   pushed the code off the screen exactly while you were reading it. It
-                   overlays instead of reflowing, so opening it never moves a line of code.
-                   Shown in the walkthrough too — that is where you read code you did not
+              <!-- Shown in the walkthrough too — that is where you read code you did not
                    write, and the explanation's second panel has no equivalent here. -->
-              <aside v-if="questionOpen" class="file-chat" aria-label="Pytania o plik">
-                <div class="file-chat-head">
-                  <strong>Pytania o plik</strong>
-                  <span class="muted">{{ fileName(selectedFilePath) }}</span>
-                  <button type="button" class="inline-close" title="Zamknij (a albo Esc)"
-                    @click="questionOpen = false">Zamknij</button>
-                </div>
-                <div class="file-chat-thread">
-                  <p v-if="!questionTurns.length" class="muted">Zapytaj o ten plik albo zaznacz kawałek kodu i wybierz „Zapytaj AI o zaznaczenie” z menu prawego przycisku.</p>
-                  <div v-for="(turn, index) in questionTurns" :key="index" class="file-chat-turn">
-                    <p class="file-chat-question">{{ turn.question }}</p>
-                    <pre v-if="turn.selection" class="file-chat-selection"><code>{{ turn.selection }}</code></pre>
-                    <p v-for="(sentence, line) in turn.sentences" :key="line">{{ sentence }}</p>
-                  </div>
-                  <p v-if="questionLoading" class="muted" role="status">Pytam…</p>
-                </div>
-                <div class="file-chat-draft">
-                  <p v-if="questionError" class="notice error" role="alert">{{ questionError }}</p>
-                  <p v-if="questionSelection" class="file-chat-attached muted">
-                    Dołączę zaznaczony fragment ({{ questionSelection.length }} znaków).
-                    <button type="button" class="explanation-dismiss" @click="questionSelection = ''">Odłącz</button>
-                  </p>
-                  <textarea ref="questionBox" v-model="questionDraft" class="debug-answer" rows="3" :maxlength="1000"
-                    placeholder="Po co jest ten kawałek kodu?" aria-label="Pytanie o ten plik"
-                    @keydown.ctrl.enter="askQuestion"></textarea>
-                  <div class="debug-actions">
-                    <button type="button" class="comment-send" :disabled="questionLoading || !questionDraft.trim()"
-                      @click="askQuestion">{{ questionLoading ? 'Pytam…' : 'Zapytaj (uruchomi AI)' }}</button>
-                    <span class="muted">Ctrl+Enter wysyła. Rozmowa zapisuje się lokalnie.</span>
-                  </div>
-                </div>
-              </aside>
+              <FileChat v-if="questionOpen" />
               <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
               <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
               <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
@@ -2383,77 +825,29 @@ onMounted(async () => {
               <!-- Rendered between the lines of code, inside the containers Monaco made.
                    Ordinary Vue markup, so replying and resolving work the same as in the
                    comments view. -->
-              <Teleport v-for="zone in zoneTargets" :key="zone.line" :to="zone.el">
+              <Teleport v-for="zone in zoneCards" :key="zone.line" :to="zone.el">
                 <!-- The editor must not treat a click in the conversation as a click in the
                      code, but it must not be prevented from happening either. -->
-                <div class="zone-card" :class="{ 'zone-card--draft': !threadAtLine(zone.line) }"
-                  @mousedown.stop @click.stop>
-                  <template v-if="threadAtLine(zone.line)">
+                <div class="zone-card" :class="{ 'zone-card--draft': !zone.thread }" @mousedown.stop @click.stop>
+                  <template v-if="zone.thread">
                     <!-- The whole header folds the block; the caret is a hint, not the only target. -->
                     <div class="zone-head" role="button" tabindex="0" :aria-expanded="!collapsedZones.has(zone.line)"
                       @click="toggleZone(zone.line)" @keydown.enter.prevent="toggleZone(zone.line)" @keydown.space.prevent="toggleZone(zone.line)">
                       <span class="zone-toggle">{{ collapsedZones.has(zone.line) ? '▸' : '▾' }}</span>
-                      <span class="thread-author">{{ threadAtLine(zone.line)!.comments[0]?.author ?? 'Nieznany autor' }}</span><time v-if="threadAtLine(zone.line)!.comments[0]?.publishedAt" class="thread-date" :datetime="threadAtLine(zone.line)!.comments[0]!.publishedAt!">{{ formatDate(threadAtLine(zone.line)!.comments[0]!.publishedAt!) }}</time>
-                      <span v-if="threadAtLine(zone.line)!.status && threadStatusLabels[threadAtLine(zone.line)!.status!]" class="thread-status">{{ threadStatusLabels[threadAtLine(zone.line)!.status!] }}</span>
-                      <span v-if="threadAtLine(zone.line)!.comments.length > 1" class="thread-status">{{ threadAtLine(zone.line)!.comments.length }} wpisy</span>
-                      <span v-if="collapsedZones.has(zone.line)" class="zone-preview">{{ commentPreview(threadAtLine(zone.line)!.comments[0]?.content ?? '') }}</span>
+                      <span class="thread-author">{{ zone.thread.comments[0]?.author ?? 'Nieznany autor' }}</span><time v-if="zone.thread.comments[0]?.publishedAt" class="thread-date" :datetime="zone.thread.comments[0].publishedAt">{{ formatDate(zone.thread.comments[0].publishedAt) }}</time>
+                      <span v-if="zone.thread.status && threadStatusLabels[zone.thread.status]" class="thread-status">{{ threadStatusLabels[zone.thread.status] }}</span>
+                      <span v-if="zone.thread.comments.length > 1" class="thread-status">{{ zone.thread.comments.length }} wpisy</span>
+                      <span v-if="collapsedZones.has(zone.line)" class="zone-preview">{{ commentPreview(zone.thread.comments[0]?.content ?? '') }}</span>
                     </div>
                     <template v-if="!collapsedZones.has(zone.line)">
-                      <p v-if="commentError && inlineThreadId === threadAtLine(zone.line)!.id" class="notice error" role="alert">{{ commentError }}</p>
-                      <div v-for="comment in threadAtLine(zone.line)!.comments" :key="comment.id" class="thread-comment">
-                        <span v-if="comment.id !== threadAtLine(zone.line)!.comments[0]?.id" class="thread-author">{{ comment.author ?? 'Nieznany autor' }}</span><time v-if="comment.publishedAt && comment.id !== threadAtLine(zone.line)!.comments[0]?.id" class="thread-date" :datetime="comment.publishedAt">{{ formatDate(comment.publishedAt) }}</time>
-                        <div v-if="editing && editing.commentId === comment.id" class="comment-draft">
-                          <textarea v-model="editing.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Edycja komentarza"></textarea>
-                          <div class="debug-actions">
-                            <button type="button" class="comment-send" :disabled="commentSaving || !editing.text.trim()" @click="sendEdit">{{ commentSaving ? 'Zapisywanie…' : 'Zapisz zmianę' }}</button>
-                            <button type="button" :disabled="commentSaving" @click="editing = null">Anuluj</button>
-                          </div>
-                        </div>
-                        <template v-else>
-                          <div class="thread-content markdown-body" v-html="renderComment(comment.content)" />
-                          <div v-if="comment.isMine" class="comment-own-actions">
-                            <template v-if="deleting === comment.id">
-                              <span class="muted">Usunąć na stałe?</span>
-                              <button type="button" class="comment-delete" :disabled="commentSaving" @click="confirmDelete(threadAtLine(zone.line)!.id, comment.id)">Tak, usuń</button>
-                              <button type="button" :disabled="commentSaving" @click="deleting = null">Nie</button>
-                            </template>
-                            <template v-else>
-                              <button type="button" @click="startEdit(threadAtLine(zone.line)!.id, comment.id, comment.content)">Edytuj</button>
-                              <button type="button" class="comment-remove" @click="deleting = comment.id; editing = null">Usuń</button>
-                            </template>
-                          </div>
-                        </template>
-                      </div>
-                      <p v-if="movedSinceComment(threadAtLine(zone.line)!)" class="thread-moved">
-                        Kod zmienił się po tym komentarzu (iteracja {{ threadAtLine(zone.line)!.iterationId }} → {{ lastIteration }}).
-                        <button type="button" class="thread-since" @click="showChangesSinceComment(threadAtLine(zone.line)!)">Zobacz, co się zmieniło</button>
-                      </p>
-                      <div v-if="draft?.target === String(threadAtLine(zone.line)!.id)" class="comment-draft">
-                        <textarea v-model="draft.text" class="debug-answer" rows="2" :maxlength="10000" aria-label="Odpowiedź w wątku"></textarea>
-                        <div class="debug-actions">
-                          <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij odpowiedź' }}</button>
-                          <button v-if="!isResolved(threadAtLine(zone.line)!)" type="button" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft(true)">Odpowiedz i rozwiąż</button>
-                          <button type="button" :disabled="commentSaving" @click="draft = null">Anuluj</button>
-                        </div>
-                      </div>
-                      <div v-else class="thread-actions">
-                        <button type="button" @click="startDraft(String(threadAtLine(zone.line)!.id))">Odpowiedz</button>
-                        <button v-if="!isResolved(threadAtLine(zone.line)!)" type="button" class="thread-resolve" :disabled="commentSaving" @click="resolveThread(threadAtLine(zone.line)!.id)">Rozwiąż</button>
-                        <button v-else type="button" :disabled="commentSaving" @click="reopenThread(threadAtLine(zone.line)!.id)">Otwórz ponownie</button>
-                      </div>
+                      <p v-if="commentError && inlineThreadId === zone.thread.id" class="notice error" role="alert">{{ commentError }}</p>
+                      <CommentThread :thread="zone.thread" hide-first-author />
                     </template>
                   </template>
                   <template v-else-if="draft">
                     <div class="zone-head"><strong>Nowy komentarz do linii {{ zone.line }}</strong></div>
                     <p v-if="commentError" class="notice error" role="alert">{{ commentError }}</p>
-                    <div class="comment-draft">
-                      <textarea v-model="draft.text" class="debug-answer" rows="3" :maxlength="10000" aria-label="Treść komentarza do linii"></textarea>
-                      <div class="debug-actions">
-                        <button type="button" class="comment-send" :disabled="commentSaving || !draft.text.trim()" @click="sendDraft()">{{ commentSaving ? 'Wysyłanie…' : 'Wyślij do Azure DevOps' }}</button>
-                        <button type="button" :disabled="commentSaving" @click="closeInlineComments">Anuluj</button>
-                        <span class="muted comment-warning">Wysłanego komentarza nie da się cofnąć.</span>
-                      </div>
-                    </div>
+                    <CommentDraft label="Treść komentarza do linii" @cancel="closeInlineComments" />
                   </template>
                 </div>
               </Teleport>
@@ -2479,154 +873,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <aside class="context-rail" aria-label="Kontekst pull requesta">
-            <div class="details-section summary-section">
-              <div class="summary-heading"><div><h3>Summary</h3><p class="muted">Analiza korzysta z ograniczonego kontekstu PR i uruchamia się tylko po kliknięciu.</p></div>
-                <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>
-              </div>
-              <p v-if="summaryReadLoading" class="notice" role="status">Wczytywanie zapisanego Summary…</p>
-              <div v-if="summaryReadError" class="notice error" role="alert">Nie udało się wczytać zapisanego Summary: {{ summaryReadError }} <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="loadSavedSummary(projectId, repositoryId, details.id)">Spróbuj ponownie</button></div>
-              <p v-if="summaryLoading" class="notice" role="status">Generowanie Summary…</p>
-              <p v-if="summaryError" class="notice error" role="alert">{{ summaryError }}</p>
-              <template v-if="summary">
-                <div class="summary-meta"><span class="summary-saved">Zapisano lokalnie<template v-if="summarySavedAt"> · {{ formatDate(summarySavedAt) }}</template></span><span v-if="summaryFreshness === 'current'" class="summary-current">Aktualne dla tego PR</span></div>
-                <p v-if="summaryFreshness === 'stale'" class="notice summary-stale" role="status">PR zmienił się od zapisania tego Summary. Wygeneruj je ponownie, aby uwzględnić aktualny commit.</p>
-                <p v-else-if="summaryFreshness === 'unknown'" class="notice summary-stale" role="status">Nie można potwierdzić aktualności Summary, ponieważ brakuje SHA commita.</p>
-                <div v-if="summary.sentences?.length" class="summary-text" aria-label="Podsumowanie PR"><p v-for="(sentence, index) in summary.sentences" :key="index" :class="{ 'summary-lead': index === 0 }">{{ sentence }}</p></div>
-                <p v-else class="summary-text">{{ summary.summary }}</p>
-                <p class="summary-report">Kontekst: {{ summary.contextReport.includedFiles }} / {{ summary.contextReport.changedFiles }} plików z diffem · {{ summary.contextReport.includedDiffCharacters }} znaków diffu<span v-if="summary.headCommitSha"> · commit {{ summary.headCommitSha.slice(0, 8) }}</span></p>
-                <details v-if="summary.contextReport.wasLimited" class="summary-omissions">
-                  <summary>Pominięto treść {{ summary.contextReport.omittedFiles.length }} plików</summary>
-                  <ul><li v-for="file in summary.contextReport.omittedFiles" :key="file.path"><code>{{ file.path }}</code> — {{ omissionLabel(file.reason) }}</li></ul>
-                </details>
-              </template>
-            </div>
-
-            <details class="rail-block checklist-section" open>
-              <summary>Checklista PR</summary>
-              <p class="muted">Zaznaczaj ręcznie po wykonaniu każdego kroku. Stan zapisuje się lokalnie.</p>
-              <p v-if="checklistLoading" class="notice" role="status">Wczytywanie checklisty…</p>
-              <p v-if="checklistError" class="notice error" role="alert">{{ checklistError }}</p>
-              <div v-if="checklist" class="checklist-items">
-                <label v-for="item in checklistItems" :key="item.key" class="checklist-item" :class="{ 'checklist-item--done': checklist[item.key] }">
-                  <input type="checkbox" :checked="checklist[item.key]" :disabled="checklistSaving !== null" @change="setChecklistItem(item.key, ($event.target as HTMLInputElement).checked)">
-                  <span>{{ item.label }}</span>
-                </label>
-              </div>
-              <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
-            </details>
-
-            <details class="rail-block threads-section" :open="threads.length > 0">
-              <summary>Komentarze<span v-if="threads.length"> · {{ activeThreadCount }} nierozwiązanych z {{ threads.length }}</span></summary>
-              <p v-if="threadsLoading" class="muted" role="status">Wczytywanie komentarzy…</p>
-              <p v-else-if="threadsError" class="notice error" role="alert">{{ threadsError }}
-                <button class="checklist-retry" type="button" @click="loadThreads(projectId, repositoryId, details.id)">Spróbuj ponownie</button>
-              </p>
-              <template v-else>
-                <p v-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
-                <!-- The rail stays a summary: one line per thread so you can see at a glance
-                     where the conversation is. Reading and writing happen in the full view. -->
-                <ul v-else class="thread-list" aria-label="Komentarze PR">
-                  <li v-for="thread in threads" :key="thread.id" class="thread">
-                    <button class="thread-location" type="button" :title="thread.filePath ?? 'Cały PR'"
-                      :disabled="!thread.filePath" @click="openThread(thread)">{{ threadLocation(thread) }}</button>
-                    <span class="thread-author">{{ thread.comments[0]?.author ?? 'Nieznany autor' }}</span>
-                    <span v-if="thread.status && threadStatusLabels[thread.status]" class="thread-status">{{ threadStatusLabels[thread.status] }}</span>
-                    <span v-if="thread.comments.length > 1" class="thread-status">{{ thread.comments.length }} wpisy</span>
-                    <span v-if="movedSinceComment(thread)" class="thread-status thread-moved-flag">kod się zmienił</span>
-                    <p class="thread-content thread-preview">{{ commentPreview(thread.comments[0]!.content!) }}</p>
-                  </li>
-                </ul>
-                <button type="button" class="comments-open" title="Widok komentarzy (c)" @click="toggleComments">Otwórz widok komentarzy</button>
-              </template>
-            </details>
-
-            <details class="rail-block debug-check" :open="remainingCount === 0">
-              <summary>Debug Check</summary>
-              <p class="debug-question">Gdyby ta zmiana nie zadziałała, gdzie zacząłbyś szukać?</p>
-              <p v-if="remainingCount > 0" class="muted debug-hint-later">Pytanie ma sens po przeczytaniu PR — zostało {{ remainingCount }} {{ remainingCount === 1 ? 'plik' : 'plików' }}.</p>
-              <label class="debug-label" for="debug-answer">Twoja odpowiedź</label>
-              <textarea id="debug-answer" v-model="debugAnswer" class="debug-answer" rows="3"
-                :maxlength="2000" placeholder="Jedno zdanie wystarczy."></textarea>
-              <div class="debug-actions">
-                <button type="button" class="debug-save" :disabled="debugSaving" @click="saveDebugAnswer">{{ debugSaving ? 'Zapisywanie…' : 'Zapisz' }}</button>
-                <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
-                <span v-if="debugSaved" class="debug-saved" role="status">Zapisano</span>
-              </div>
-              <!-- "Show me" reuses the ranking the Summary already returned — no second
-                   model run, and nothing here is scored against your answer. -->
-              <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
-                <li v-for="(file, index) in criticalProposal" :key="file.path">
-                  <span class="debug-hint-order">{{ index + 1 }}</span>
-                  <span class="debug-hint-file" :title="file.path">{{ fileName(file.path) }}<small>{{ fileDirectory(file.path) }}</small></span>
-                  <span class="debug-hint-why">{{ file.why }}</span>
-                </li>
-              </ol>
-            </details>
-
-            <details class="rail-block critical-section" :open="criticalPaths.length > 0 || showProposal">
-              <summary>Ścieżka kluczowych plików<span> · {{ criticalPaths.length }} / {{ manualCriticalLimit }}</span></summary>
-              <p class="muted">Wybierz do {{ manualCriticalLimit }} plików i ustaw kolejność czytania. Zapisuje się lokalnie.</p>
-              <div v-if="showProposal" class="critical-proposal">
-                <p class="critical-proposal-heading">Propozycja AI ({{ criticalProposal.length }})</p>
-                <ol class="critical-proposal-list" aria-label="Propozycja ścieżki czytania">
-                  <li v-for="file in criticalProposal" :key="file.path">
-                    <button class="critical-open" type="button" :title="file.path" @click="openCriticalFile(file.path)">{{ file.path }}</button>
-                    <p class="critical-proposal-why">{{ file.why }}</p>
-                  </li>
-                </ol>
-                <div class="critical-proposal-actions">
-                  <button type="button" class="critical-accept" @click="acceptProposal">Przyjmij ścieżkę</button>
-                  <button type="button" @click="proposalDismissed = true">Odrzuć</button>
-                </div>
-              </div>
-              <p v-else-if="criticalPaths.length === 0" class="muted critical-empty">Dodaj pliki z listy zmian po lewej.</p>
-              <!-- Po przejściu całego PR ścieżka ma tyle pozycji, ile PR ma plików. Szyna
-                   jest podsumowaniem, nie drugim widokiem przejścia — pokazuje początek. -->
-              <ol v-else class="critical-list" aria-label="Ścieżka kluczowych plików">
-                <li v-for="(path, index) in railCriticalPaths" :key="path">
-                  <button class="critical-open" type="button" :title="path" @click="openCriticalFile(path)"><span class="critical-order">{{ index + 1 }}</span><span>{{ path }}</span></button>
-                  <div class="critical-actions">
-                    <button type="button" :disabled="index === 0" :aria-label="`Przesuń ${path} w górę`" @click="moveCritical(path, -1)">↑</button>
-                    <button type="button" :disabled="index === criticalPaths.length - 1" :aria-label="`Przesuń ${path} w dół`" @click="moveCritical(path, 1)">↓</button>
-                    <button type="button" :aria-label="`Usuń ${path} ze ścieżki`" @click="toggleCritical(path)">Usuń</button>
-                  </div>
-                </li>
-              </ol>
-              <p v-if="criticalPaths.length > railCriticalPaths.length" class="muted critical-more">
-                …i {{ criticalPaths.length - railCriticalPaths.length }} dalszych plików — całą ścieżkę widać w przejściu.
-              </p>
-            </details>
-
-            <details class="rail-block">
-              <summary>Commity ({{ details.commitsCount }})</summary>
-              <p v-if="details.commits.length === 0" class="muted">Brak commitów.</p>
-              <ul v-else class="commit-list">
-                <li v-for="commit in details.commits" :key="commit.id">
-                  <code class="commit-id" :title="commit.id">{{ commit.id.slice(0, 8) }}</code>
-                  <span class="commit-info"><strong>{{ commitTitle(commit.message) }}</strong><small>{{ commit.author }}<template v-if="commit.authoredAt"> · {{ formatDate(commit.authoredAt) }}</template></small></span>
-                </li>
-              </ul>
-            </details>
-
-            <details class="rail-block">
-              <summary>Szczegóły PR</summary>
-              <div class="metadata">
-                <div><span>Autor</span><strong>{{ details.author }}</strong></div>
-                <div><span>Repozytorium</span><strong>{{ details.repository }}</strong></div>
-                <div><span>Utworzono</span><strong>{{ formatDate(details.createdAt) }}</strong></div>
-                <div><span>Gałąź źródłowa</span><strong>{{ details.sourceBranch }}</strong></div>
-                <div><span>Gałąź docelowa</span><strong>{{ details.targetBranch }}</strong></div>
-                <div><span>Zmienione pliki</span><strong>{{ details.changedFilesCount }}</strong></div>
-              </div>
-              <h4>Reviewerzy</h4>
-              <p v-if="details.reviewers.length === 0" class="muted">Brak reviewerów.</p>
-              <ul v-else class="plain-list"><li v-for="reviewer in details.reviewers" :key="reviewer.name">{{ reviewer.name }} <span class="muted">· {{ reviewerVote(reviewer.vote) }}</span></li></ul>
-              <h4>Powiązane Work Items</h4>
-              <p v-if="details.workItems.length === 0" class="muted">Brak powiązanych Work Items.</p>
-              <ul v-else class="plain-list"><li v-for="item in details.workItems" :key="item.id">#{{ item.id }}</li></ul>
-            </details>
-          </aside>
+          <ContextRail />
         </div>
       </section>
 

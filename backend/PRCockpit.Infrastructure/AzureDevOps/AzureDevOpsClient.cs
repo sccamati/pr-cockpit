@@ -59,41 +59,37 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
     {
         if (pullRequestId <= 0) throw new AzureDevOpsException("Invalid pull request ID.", 400);
         var path = $"{PullRequestPath(project, repositoryId)}/{pullRequestId}";
-        var (pr, _) = await GetAsync($"{path}?{ApiVersion}", ct);
-        using (pr)
+        // Only the change list depends on another answer (it needs the last iteration), so
+        // everything else is asked for at once: two round trips of latency instead of five.
+        var prTask = GetAsync($"{path}?{ApiVersion}", ct);
+        var commitsTask = GetCommitsAsync(path, ct);
+        var workItemsTask = GetWorkItemsAsync(path, ct);
+        var changesTask = IterationChangesAsync();
+        try
         {
-            var (iterations, _) = await GetAsync($"{path}/iterations?{ApiVersion}", ct);
-            int lastId;
-            string? baseCommit = null;
-            string? sourceCommit = null;
-            PrIteration[] iterationList;
-            using (iterations)
+            await Task.WhenAll(prTask, commitsTask, workItemsTask, changesTask);
+        }
+        catch
+        {
+            // Every call has ended here, so none is left running unobserved; the pull request
+            // document, if it arrived, is released now instead of by the using below.
+            if (prTask.IsCompletedSuccessfully) prTask.Result.Json.Dispose();
+            throw;
+        }
+        var (iterations, changedFiles) = await changesTask;
+        var (pr, _) = await prTask;
+        using (pr)
+            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, await commitsTask, await workItemsTask) with
             {
-                iterationList = Values(iterations.RootElement).EnumerateArray()
-                    .Select(item => new PrIteration(item.GetProperty("id").GetInt32(),
-                        item.TryGetProperty("sourceRefCommit", out _) ? CommitId(item, "sourceRefCommit") : null))
-                    .OrderBy(item => item.Id).ToArray();
-                var latest = Values(iterations.RootElement).EnumerateArray()
-                    .OrderByDescending(item => item.GetProperty("id").GetInt32()).FirstOrDefault();
-                lastId = latest.ValueKind == JsonValueKind.Undefined ? 0 : latest.GetProperty("id").GetInt32();
-                if (latest.ValueKind != JsonValueKind.Undefined &&
-                    latest.TryGetProperty("commonRefCommit", out _))
-                    baseCommit = CommitId(latest, "commonRefCommit");
-                if (latest.ValueKind != JsonValueKind.Undefined &&
-                    latest.TryGetProperty("sourceRefCommit", out _))
-                    sourceCommit = CommitId(latest, "sourceRefCommit");
-            }
-            var changedFiles = lastId == 0
-                ? []
-                : await GetChangedFilesAsync(path, lastId, ct);
-            var commits = await GetCommitsAsync(path, ct);
-            var workItems = await GetWorkItemsAsync(path, ct);
-            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, commits, workItems) with
-            {
-                BaseCommitSha = baseCommit,
-                HeadCommitSha = sourceCommit,
-                Iterations = iterationList
+                BaseCommitSha = iterations.BaseCommit,
+                HeadCommitSha = iterations.SourceCommit,
+                Iterations = iterations.All
             };
+
+        async Task<(IterationSet, IReadOnlyList<ChangedFile>)> IterationChangesAsync()
+        {
+            var iterations = await GetIterationsAsync(path, ct);
+            return (iterations, iterations.LatestId == 0 ? [] : await GetChangedFilesAsync(path, iterations.LatestId, ct));
         }
     }
 
@@ -105,26 +101,18 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             throw new AzureDevOpsException("Invalid file path.", 400);
 
         var prPath = $"{PullRequestPath(project, repositoryId)}/{pullRequestId}";
-        var (iterations, _) = await GetAsync($"{prPath}/iterations?{ApiVersion}", ct);
-        int iterationId;
-        string baseCommit;
-        string sourceCommit;
-        using (iterations)
-        {
-            var latest = Values(iterations.RootElement).EnumerateArray()
-                .OrderByDescending(item => item.GetProperty("id").GetInt32()).FirstOrDefault();
-            if (latest.ValueKind == JsonValueKind.Undefined)
-                throw new AzureDevOpsException("This pull request has no file changes.", 404);
-            iterationId = latest.GetProperty("id").GetInt32();
-            baseCommit = CommitId(latest, "commonRefCommit");
-            sourceCommit = CommitId(latest, "sourceRefCommit");
-        }
+        var iterations = await GetIterationsAsync(prPath, ct);
+        if (iterations.LatestId == 0)
+            throw new AzureDevOpsException("This pull request has no file changes.", 404);
+        if (iterations.BaseCommit is null || iterations.SourceCommit is null)
+            throw new AzureDevOpsException("Azure DevOps did not provide the pull request commit IDs.", 502);
 
-        var file = (await GetChangedFilesAsync(prPath, iterationId, ct))
+        var file = (await GetChangedFilesAsync(prPath, iterations.LatestId, ct))
             .FirstOrDefault(item => item.Path == filePath);
         if (file is null) throw new AzureDevOpsException("File is no longer in this pull request.", 404);
 
-        return await GetFileDiffAtCommitsAsync(project, repositoryId, file, baseCommit, sourceCommit, ct);
+        return await GetFileDiffAtCommitsAsync(project, repositoryId, file,
+            iterations.BaseCommit, iterations.SourceCommit, ct);
     }
 
     public async Task<IReadOnlyList<PrCommentThread>> GetCommentThreadsAsync(
@@ -345,22 +333,27 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         string project, string repositoryId, int pullRequestId, string filePath, int iterationId,
         CancellationToken ct)
     {
+        if (pullRequestId <= 0) throw new AzureDevOpsException("Invalid pull request ID.", 400);
         if (iterationId <= 0) throw new AzureDevOpsException("Invalid iteration.", 400);
-        var details = await GetPullRequestAsync(project, repositoryId, pullRequestId, ct);
-        var file = details.ChangedFiles.FirstOrDefault(item => item.Path == filePath);
+        // The iterations and the change list are all this needs — not the whole details
+        // package, whose pull request, commits and work items would be three wasted calls.
+        var prPath = $"{PullRequestPath(project, repositoryId)}/{pullRequestId}";
+        var iterations = await GetIterationsAsync(prPath, ct);
+        var file = iterations.LatestId == 0 ? null : (await GetChangedFilesAsync(prPath, iterations.LatestId, ct))
+            .FirstOrDefault(item => item.Path == filePath);
         if (file is null) throw new AzureDevOpsException("File is no longer in this pull request.", 404);
 
-        var since = details.Iterations?.FirstOrDefault(item => item.Id == iterationId);
+        var since = iterations.All.FirstOrDefault(item => item.Id == iterationId);
         if (since?.SourceCommitSha is null)
             throw new AzureDevOpsException("That iteration is no longer available.", 404);
-        if (details.HeadCommitSha is null)
+        if (iterations.SourceCommit is null)
             throw new AzureDevOpsException("Azure DevOps did not provide the pull request commit IDs.", 502);
 
         // Both sides are commits inside this pull request, so the file exists on each unless
         // it was added after the iteration being compared from. "edit" is the honest default
         // here: an add would suppress the old side and hide exactly what we came to show.
         return await GetFileDiffAtCommitsAsync(project, repositoryId,
-            file with { ChangeType = "edit" }, since.SourceCommitSha, details.HeadCommitSha, ct);
+            file with { ChangeType = "edit" }, since.SourceCommitSha, iterations.SourceCommit, ct);
     }
 
     public async Task<IReadOnlyList<string>> GetChangedPathsSinceIterationAsync(
@@ -370,16 +363,8 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         if (iterationId <= 0) throw new AzureDevOpsException("Invalid iteration.", 400);
 
         var prPath = $"{PullRequestPath(project, repositoryId)}/{pullRequestId}";
-        var (iterations, _) = await GetAsync($"{prPath}/iterations?{ApiVersion}", ct);
-        int lastId;
-        using (iterations)
-        {
-            var latest = Values(iterations.RootElement).EnumerateArray()
-                .OrderByDescending(item => item.GetProperty("id").GetInt32()).FirstOrDefault();
-            if (latest.ValueKind == JsonValueKind.Undefined)
-                throw new AzureDevOpsException("This pull request has no file changes.", 404);
-            lastId = latest.GetProperty("id").GetInt32();
-        }
+        var lastId = (await GetIterationsAsync(prPath, ct)).LatestId;
+        if (lastId == 0) throw new AzureDevOpsException("This pull request has no file changes.", 404);
         // Asking Azure DevOps to compare the last iteration with a later one is not an error
         // worth a page: nothing arrived after the newest push, and an empty list says exactly
         // that. Only iterations that never existed are refused.
@@ -399,17 +384,55 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         var isDeleted = changes.Contains("delete", StringComparer.OrdinalIgnoreCase);
         var repositoryPath = $"{Segment(project)}/_apis/git/repositories/{Segment(repositoryId)}";
         var oldPath = file.OriginalPath ?? file.Path;
-        var oldFile = isAdded ? new FileContent("text", "") :
-            await GetFileContentAsync(repositoryPath, oldPath, baseCommit, ct);
+        // Both sides at once. A binary old side makes the new one a wasted call, which is
+        // cheaper than paying two sequential round trips on every file that opens.
+        var oldTask = isAdded ? Task.FromResult(new FileContent("text", "")) :
+            GetFileContentAsync(repositoryPath, oldPath, baseCommit, ct);
+        var newTask = isDeleted ? Task.FromResult(new FileContent("text", "")) :
+            GetFileContentAsync(repositoryPath, file.Path, sourceCommit, ct);
+        try
+        {
+            await Task.WhenAll(oldTask, newTask);
+        }
+        catch when (oldTask.IsCompletedSuccessfully && oldTask.Result.Kind != "text")
+        {
+            // The old side alone decides this diff, so a failure on the wasted call is not its error.
+        }
+        var oldFile = await oldTask;
         if (oldFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, oldFile.Kind, null, null);
-        var newFile = isDeleted ? new FileContent("text", "") :
-            await GetFileContentAsync(repositoryPath, file.Path, sourceCommit, ct);
+        var newFile = await newTask;
         if (newFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, newFile.Kind, null, null);
 
         if (TextLineLimit.Exceeded(oldFile.Text, newFile.Text))
             return new FileDiff(file.Path, file.OriginalPath, "tooLarge", null, null);
         return new FileDiff(file.Path, file.OriginalPath, "text", oldFile.Text, newFile.Text);
     }
+
+    private sealed record IterationSet(
+        IReadOnlyList<PrIteration> All, int LatestId, string? BaseCommit, string? SourceCommit);
+
+    /// <summary>
+    /// Every iteration of the pull request, oldest first, plus the two commits of the newest
+    /// one that diffs, the context package and the Summary all derive from. LatestId is 0
+    /// when the pull request has no iteration yet.
+    /// </summary>
+    private async Task<IterationSet> GetIterationsAsync(string prPath, CancellationToken ct)
+    {
+        var (json, _) = await GetAsync($"{prPath}/iterations?{ApiVersion}", ct);
+        using (json)
+        {
+            var items = Values(json.RootElement).EnumerateArray()
+                .OrderBy(item => item.GetProperty("id").GetInt32()).ToArray();
+            var all = items.Select(item =>
+                new PrIteration(item.GetProperty("id").GetInt32(), OptionalCommitId(item, "sourceRefCommit"))).ToArray();
+            return items.Length == 0
+                ? new IterationSet(all, 0, null, null)
+                : new IterationSet(all, all[^1].Id, OptionalCommitId(items[^1], "commonRefCommit"), all[^1].SourceCommitSha);
+        }
+    }
+
+    private static string? OptionalCommitId(JsonElement iteration, string property) =>
+        iteration.TryGetProperty(property, out _) ? CommitId(iteration, property) : null;
 
     private static string CommitId(JsonElement iteration, string property)
     {

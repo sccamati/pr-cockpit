@@ -866,3 +866,49 @@ z cieniem i mocniejszą ramką; wątek podzielony na nagłówek (ze statusem jak
 rozmowę i pasek akcji na osobnym tle; przyciski akcji jednej wielkości; cytat w komentarzu
 szary zamiast morskiego, więc morski oznacza tylko aktywny wątek. Sam CSS, zawężony do
 `.thread--full`. **Niepotwierdzone w przeglądarce.**
+
+## Wdrożone — porządek w kodzie i szybsze wywołania Azure DevOps
+
+### B-29 — `App.vue` na 2659 linii, trzy kopie wątku, sekwencyjne round tripy
+
+Status: zrobione 23 wrz 2026. Backend 145/145 (nowy test
+`DiffSinceIterationComparesThatIterationWithTheHeadWithoutTheDetailsPackage`), frontend
+113/113 (nowa asercja: szuflada pytań stawia kursor w polu pytania), `vue-tsc` i `vite build`
+przechodzą. **Niepotwierdzone:** wygląd w przeglądarce i faktyczny zysk czasu na prawdziwej
+organizacji — żaden test nie mierzy opóźnień.
+
+**Backend.**
+- Szczegóły PR: PR, iteracje, commity i Work Items lecą naraz, lista zmian czeka tylko na
+  iteracje — 2 kolejne round tripy do Azure DevOps zamiast 5.
+- Diff pliku: obie wersje pliku równolegle, 6 → 4 kolejne round tripy. Ta sama ścieżka buduje
+  kontekst Summary, więc zysk jest też tam.
+- Diff od iteracji nie pobiera już pełnych szczegółów PR — PR, commity i Work Items były
+  trzema zbędnymi wywołaniami przy każdym pliku rundy po poprawkach.
+- Odczyt iteracji był w trzech kopiach; jest jeden (`GetIterationsAsync`). Brak
+  `commonRefCommit` w ostatniej iteracji daje teraz 502 z nazwą problemu zamiast
+  nieobsłużonego `KeyNotFoundException` (500).
+- `Execute`: cztery identyczne gałęzie „Local storage is unavailable” w jednym filtrze.
+
+**Frontend.** `App.vue` 2659 → 906 linii. Każda funkcja otwartego PR jest composablem
+(`useSummary`, `useChecklist`, `useReviewProgress`, `useWalkthrough`, `useComments`,
+`useFileAi`), kawałki ekranu są komponentami (`ContextRail`, `WalkEntry`, `WalkDone`,
+`CommentsView`, `CommentThread`, `CommentDraft`, `FileChat`) i biorą stan przez `cockpit.ts`.
+Przy okazji:
+- Wątek komentarza był skopiowany trzy razy (widok komentarzy, blok dokowany, strefa Monaco)
+  i kopie się rozjechały: blok dokowany nie miał edycji, usuwania ani notki „kod się
+  zmienił”, a strefa rozpoznawała edytowany komentarz po samym `commentId` — ID komentarzy
+  zaczynają się od 1 w każdym wątku, więc edycja pokazywała pole we wszystkich strefach pliku
+  z komentarzem o tym numerze. Teraz jest jeden `CommentThread`.
+- Cztery zapisy komentarzy miały tę samą dwudziestoliniową obudowę; teraz jest jedna
+  (`writeThen`).
+- `reviewState` szukało pliku liniowo w liście zmian, a woła się je dla każdego pliku w kilku
+  computed — przy 2000 plików kwadratowo przy każdym oznaczeniu. Teraz mapa po ścieżce.
+- Szkic komentarza do linii przy zmianie pliku zostawał w stanie niewidoczny, a `Esc`
+  zdejmował go jako niewidzialną warstwę. Teraz znika razem z plikiem.
+- Wszystkie cztery wyjścia z PR (zmiana projektu, repozytorium, PR, powrót do listy) idą przez
+  jeden `resetPullRequest()`; powrót do listy nie resetował dotąd wątków.
+
+**Świadomie pominięte (`ponytail`).** Pięć magazynów ma własną kopię `ValidateKey` — wspólny
+helper, gdy dojdzie szósty albo kopie zaczną się różnić. Wycinki w widoku komentarzy nadal
+kosztują pełny `/diff` na plik; wsadowy endpoint, gdy PR z setkami komentowanych plików okaże
+się wolny. Cache danych Azure DevOps — nie, bo pobieranie na żądanie jest decyzją.

@@ -211,19 +211,7 @@ static async Task<IResult> Execute<T>(Func<Task<T>> action)
     {
         return Results.Problem(ex.Message, statusCode: ex.StatusCode);
     }
-    catch (SqlException)
-    {
-        return Results.Problem("Local storage is unavailable.", statusCode: 503);
-    }
-    catch (DbUpdateException)
-    {
-        return Results.Problem("Local storage is unavailable.", statusCode: 503);
-    }
-    catch (IOException)
-    {
-        return Results.Problem("Local storage is unavailable.", statusCode: 503);
-    }
-    catch (UnauthorizedAccessException)
+    catch (Exception ex) when (ex is SqlException or DbUpdateException or IOException or UnauthorizedAccessException)
     {
         return Results.Problem("Local storage is unavailable.", statusCode: 503);
     }

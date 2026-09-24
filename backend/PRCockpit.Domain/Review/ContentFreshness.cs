@@ -7,7 +7,7 @@ namespace PRCockpit.Domain.Review;
 /// the fallback for the case where Azure DevOps gives no blob id, and there a single
 /// unrelated commit is enough to invalidate the entry.
 /// <para>
-/// The same rule runs in the browser for the reviewed marker (App.vue reviewState), on
+/// The same rule runs in the browser for the reviewed marker (reviewState in frontend/src/useReviewProgress.ts), on
 /// data it already holds. Keep the two in step.
 /// </para>
 /// </summary>

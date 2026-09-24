@@ -438,6 +438,8 @@ describe('PR review', () => {
     wrapper.findComponent({ name: 'MonacoDiff' }).vm.$emit('ask', 'var x = 1;')
     await flushPromises()
     expect(wrapper.find('.file-chat-attached').text()).toContain('10 znaków')
+    // The cursor lands where the question gets typed.
+    expect(document.activeElement).toBe(wrapper.find('.file-chat textarea').element)
 
     await wrapper.find('.file-chat textarea').setValue('Co to robi?')
     await wrapper.find('.file-chat .comment-send').trigger('click')
