@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
@@ -889,6 +889,105 @@ public sealed class AzureDevOpsClientTests
 
         Assert.NotEmpty(methods);
         Assert.All(methods, method => Assert.Equal(HttpMethod.Get, method));
+    }
+
+    private static readonly string CommitSha = new('b', 40);
+    private static readonly string TreeSha = new('e', 40);
+    private static string Blob(char c) => new(c, 40);
+
+    private static HttpResponseMessage SnapshotResponse(HttpRequestMessage request, string treeEntries,
+        Func<HttpRequestMessage, HttpResponseMessage>? blobs = null)
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        if (path.EndsWith($"/commits/{CommitSha}")) return Json($$"""{"commitId":"{{CommitSha}}","treeId":"{{TreeSha}}"}""");
+        if (path.EndsWith($"/trees/{TreeSha}")) return Json($$"""{"treeEntries":[{{treeEntries}}]}""");
+        return blobs?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.NotFound);
+    }
+
+    private static string Entry(string path, char blob, long size = 10, string type = "blob") =>
+        $$"""{"relativePath":"{{path}}","objectId":"{{Blob(blob)}}","gitObjectType":"{{type}}","size":{{size}}}""";
+
+    private static HttpResponseMessage Zip(params (string Name, string Text)[] entries)
+    {
+        var memory = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(memory, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            foreach (var (name, text) in entries)
+            {
+                using var writer = new StreamWriter(zip.CreateEntry(name).Open());
+                writer.Write(text);
+            }
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(memory.ToArray()) };
+    }
+
+    [Fact]
+    public async Task SnapshotKeepsSourceFilesAndLeavesBuildOutputOut()
+    {
+        string? zipBody = null;
+        using var http = new HttpClient(new StubHandler(request => SnapshotResponse(request,
+            string.Join(",", Entry("src/App.cs", '1'), Entry("frontend/src/App.vue", '2'), Entry("src/obj/Gen.cs", '3'),
+                Entry("frontend/node_modules/x/index.js", '4'), Entry("README.md", '5'), Entry("src", '6', type: "tree"),
+                Entry("src/Huge.cs", '7', size: 300 * 1024)),
+            blob =>
+            {
+                Assert.Equal(HttpMethod.Post, blob.Method);
+                zipBody = blob.Content!.ReadAsStringAsync().Result;
+                return Zip(($"{Blob('1')}", "class App { }"), ($"{Blob('2')}", "<template />"));
+            })));
+
+        var snapshot = await Client(http).GetSourceSnapshotAsync("proj", "repo", CommitSha, CancellationToken.None);
+
+        Assert.Equal(["/frontend/src/App.vue", "/src/App.cs"], snapshot.Files.Keys.Order());
+        Assert.Equal("class App { }", snapshot.Files["/src/App.cs"]);
+        Assert.Equal(1, snapshot.SkippedFiles);
+        Assert.Equal($"[\"{Blob('1')}\",\"{Blob('2')}\"]", zipBody);
+    }
+
+    [Fact]
+    public async Task SnapshotFetchesOneByOneWhatTheZipDidNotDeliver()
+    {
+        var single = new List<string>();
+        using var http = new HttpClient(new StubHandler(request => SnapshotResponse(request,
+            string.Join(",", Entry("a.cs", '1'), Entry("b.cs", '2')),
+            blob =>
+            {
+                if (blob.Method == HttpMethod.Post) return Zip(("unexpected-name", "ignored"));
+                single.Add(blob.RequestUri!.AbsolutePath);
+                return Bytes(blob.RequestUri.AbsolutePath.EndsWith(Blob('1')) ? "class A { }" : "class B { }");
+            })));
+
+        var snapshot = await Client(http).GetSourceSnapshotAsync("proj", "repo", CommitSha, CancellationToken.None);
+
+        Assert.Equal(2, single.Count);
+        Assert.Equal("class B { }", snapshot.Files["/b.cs"]);
+    }
+
+    [Fact]
+    public async Task SnapshotRefusesARepositoryOverTheBudgetBeforeDownloadingIt()
+    {
+        var downloads = 0;
+        var entries = string.Join(",", Enumerable.Range(0, 200).Select(i => Entry($"src/F{i}.cs", 'a', size: 250 * 1024)));
+        using var http = new HttpClient(new StubHandler(request => SnapshotResponse(request, entries, _ =>
+        {
+            downloads++;
+            return Zip();
+        })));
+
+        var error = await Assert.ThrowsAsync<AzureDevOpsException>(() =>
+            Client(http).GetSourceSnapshotAsync("proj", "repo", CommitSha, CancellationToken.None));
+
+        Assert.Equal(413, error.StatusCode);
+        Assert.Equal(0, downloads);
+    }
+
+    [Fact]
+    public async Task SnapshotRejectsAnInvalidCommitBeforeAnyRequest()
+    {
+        using var http = new HttpClient(new StubHandler(_ => throw new InvalidOperationException("no request expected")));
+
+        var error = await Assert.ThrowsAsync<AzureDevOpsException>(() =>
+            Client(http).GetSourceSnapshotAsync("proj", "repo", "main", CancellationToken.None));
+
+        Assert.Equal(400, error.StatusCode);
     }
 
     private static AzureDevOpsClient Client(HttpClient http, bool allowComments = false)

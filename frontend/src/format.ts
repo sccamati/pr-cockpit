@@ -58,6 +58,26 @@ export const threadStatusLabels: Record<string, string> = {
   closed: 'zamknięty', pending: 'oczekuje', byDesign: 'zgodne z projektem', unknown: '',
 }
 
+// Polish needs three forms: 1 użycie, 2–4 użycia (but 12–14 użyć), 5+ użyć.
+function usageNoun(count: number): string {
+  if (count === 1) return 'użycie'
+  const tens = count % 100
+  const units = count % 10
+  return units >= 2 && units <= 4 && (tens < 12 || tens > 14) ? 'użycia' : 'użyć'
+}
+
+// tests/, __tests__/, Billing.Tests/, UnitTests/, App.test.ts, x.spec.js, InvoiceTests.cs —
+// but not Contest.cs or latest/.
+const testPaths = [/(^|\/)(__)?tests?(__)?\/|[.\-_]tests?\/|\.(test|spec)\.[cm]?[jt]sx?$/i, /Tests?(\/|\.cs$)/]
+const isTestPath = (path: string) => testPaths.some(pattern => pattern.test(path))
+
+// The label over a declaration. "~" marks a count matched by name rather than resolved,
+// and "tylko testy" is the case a reviewer is after: code that nothing but its tests calls.
+export function usageLabel(usages: { path: string }[], mode: 'semantic' | 'name'): string {
+  const count = `${mode === 'name' ? '~' : ''}${usages.length} ${usageNoun(usages.length)}`
+  return usages.length > 0 && usages.every(usage => isTestPath(usage.path)) ? `${count} · tylko testy` : count
+}
+
 // A CSS prefers-reduced-motion block cannot override the JS `behavior` option, so the
 // smooth-scroll call sites have to ask for themselves.
 export function scrollBehavior(): ScrollBehavior {

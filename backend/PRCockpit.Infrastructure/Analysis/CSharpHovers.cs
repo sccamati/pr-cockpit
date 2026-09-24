@@ -11,7 +11,7 @@ namespace PRCockpit.Infrastructure.Analysis;
 public static class CSharpHovers
 {
     private const int MaxFileBytes = 256 * 1024;
-    private static readonly Lazy<MetadataReference[]> References = new(() =>
+    internal static readonly Lazy<MetadataReference[]> References = new(() =>
         ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
         .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
         .Select(path => MetadataReference.CreateFromFile(path))

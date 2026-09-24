@@ -1,3 +1,4 @@
+using PRCockpit.Domain.Analysis;
 using PRCockpit.Domain.PullRequests;
 
 namespace PRCockpit.Application.Ports;
@@ -76,4 +77,12 @@ public interface IAzureDevOpsClient
     /// </summary>
     Task<IReadOnlyList<string>> GetChangedPathsSinceIterationAsync(
         string project, string repositoryId, int pullRequestId, int iterationId, CancellationToken ct);
+
+    /// <summary>
+    /// Every source file of the repository at one commit (see <see cref="SourceFiles"/>), for
+    /// finding where a declaration is used. Refuses with 413 rather than return part of an
+    /// oversized repository, because a partial snapshot would report "unused" falsely.
+    /// </summary>
+    Task<SourceSnapshot> GetSourceSnapshotAsync(
+        string project, string repositoryId, string commitSha, CancellationToken ct);
 }

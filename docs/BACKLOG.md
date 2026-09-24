@@ -911,7 +911,8 @@ Przy okazji:
 **Świadomie pominięte (`ponytail`).** Pięć magazynów ma własną kopię `ValidateKey` — wspólny
 helper, gdy dojdzie szósty albo kopie zaczną się różnić. Wycinki w widoku komentarzy nadal
 kosztują pełny `/diff` na plik; wsadowy endpoint, gdy PR z setkami komentowanych plików okaże
-się wolny. Cache danych Azure DevOps — nie, bo pobieranie na żądanie jest decyzją.
+się wolny. Cache danych Azure DevOps — nie, bo pobieranie na żądanie jest decyzją (jedyny
+wyjątek, za zgodą użytkownika, to snapshot źródeł po SHA z B-31).
 
 ## Wdrożone — zwinięty komentarz nie oddawał miejsca
 
@@ -934,3 +935,49 @@ umiała tylko rosnąć.
 **Poprawka.** Treść trafia do wewnętrznego `.comment-zone-content` (`display: flow-root`, żeby
 marginesy karty liczyły się do wysokości); obserwowany i mierzony (`offsetHeight`) jest ten
 węzeł, a nie kontener Monaco.
+
+## Wdrożone — gdzie jest używana ta funkcja
+
+### B-31 — Liczniki użyć nad deklaracjami i podgląd miejsc wywołania (jak CodeLens w VS Code)
+
+Status: zrobione 24 wrz 2026. Backend 167/167 (nowe: `CSharpUsagesTests`, `NameUsagesTests`,
+`CodeUsageServiceTests`, cztery testy snapshotu w `AzureDevOpsClientTests`), frontend 123/123
+(nowe: `format.test.ts`, blok „Monaco usages”, dwa testy w `App.test.ts`), `vue-tsc` i
+`vite build` przechodzą. **Sprawdzone w prawdziwej przeglądarce** (headless Chrome, samo
+Monaco 0.56 z tą konfiguracją diff editora, bez aplikacji): soczewki renderują się w edytorze
+zmodyfikowanym, „0 użyć” jest tekstem, klik w „1 użycie” otwiera natywny peek z plikiem spoza
+diffu i jego podglądem, `Esc` z listy peeka go zamyka. Ten test znalazł jedyny błąd, którego
+atrapa nie widziała: diff editor wyłącza CodeLens w swoich panelach, dopóki nie dostanie
+`diffCodeLens: true`. **Niepotwierdzone:** pobranie snapshotu z prawdziwego Azure DevOps
+(zwłaszcza nazwy wpisów w zipie z `POST blobs` — przy innych nazwach działa zapas plik po
+pliku, tylko wolniej), czas pierwszego pliku na dużym repozytorium i całość w działającej
+aplikacji.
+
+**Potrzeba.** Recenzent czepia się funkcji, która jeszcze nigdzie nie jest wołana — zalążka pod
+logikę z następnego PR-a. VS Code pokazuje to od razu licznikiem nad deklaracją.
+
+**Jak działa.** `POST .../usages` ze ścieżką w ciele (ta sama allowlista co diff, plik usunięty
+w PR daje 404) zwraca deklaracje otwartego pliku z miejscami użycia w całym repozytorium na
+głowie PR. Nad deklaracją stoi „N użyć”, klik otwiera peek Monaco, a ten sam provider obsługuje
+„Go to References” z menu kontekstowego. Podgląd pliku spoza PR ładuje `POST .../usages/source`
+— wyłącznie z tego samego snapshotu.
+- **C#** semantycznie: Roslyn `SymbolFinder` nad wszystkimi plikami `.cs` jako jednym
+  projektem, z domyślnymi `global using` SDK. Kaskaduje na interfejs i override, więc serwis
+  wołany przez interfejs z DI nie wychodzi jako nieużywany.
+- **TS/JS/Vue** po nazwie, z etykietą „~”: w `.vue` funkcja z `<script setup>` bywa wołana
+  tylko w `<template>`, czego serwis TypeScript nie widzi. Symbol nieeksportowany liczony we
+  własnym pliku, eksportowany także w plikach importujących jego moduł.
+- „· tylko testy”, gdy każde użycie leży w pliku testowym — to jest właśnie zalążek.
+
+**Wyjątek od „bez cache”, za zgodą użytkownika.** Snapshot źródeł leży w pamięci procesu po
+SHA głowy (maks. 2, 10 minut bez użycia), razem z rozparsowanym rozwiązaniem Roslyn. Treść pod
+SHA się nie zmienia, więc nie da się podać nieaktualnego kodu; bez tego każdy plik pobierałby
+repozytorium od nowa. Budżet: 8000 plików, 40 MB, 256 KB na plik — plik za duży jest pomijany
+w całości i liczony w `skippedFiles`, repozytorium ponad budżet dostaje 413 zamiast częściowego
+wyniku, który kłamałby „0 użyć”.
+
+**Świadomie pominięte (`ponytail`).** Jeden projekt Roslyn bez pakietów NuGet — symbol
+sięgający tylko przez typ z pakietu albo typ zdublowany w dwóch projektach może się nie
+rozwiązać. TS/JS/Vue bez parsera: metody klas i pola obiektów nie dostają licznika, a
+zbieżna nazwa w zasięgu liczy się jako użycie. Dwuklik w peeku nie przenosi do pliku w
+aplikacji — podgląd wystarcza, a plik spoza PR i tak nie ma diffu do pokazania.

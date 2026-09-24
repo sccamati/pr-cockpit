@@ -11,7 +11,7 @@ import FileChat from './FileChat.vue'
 import FileTree from './FileTree.vue'
 import WalkDone from './WalkDone.vue'
 import WalkEntry from './WalkEntry.vue'
-import { api, type ChangedFile, type FileDiff, type Project, type PullRequestDetails, type PullRequestSummary, type Repository } from './api'
+import { api, type ChangedFile, type FileDiff, type Project, type PullRequestDetails, type PullRequestSummary, type Repository, type UsageSource } from './api'
 import { cockpitKey } from './cockpit'
 import { commentPreview, renderDescription } from './description'
 import { buildFileTree, flattenTree, type TreeFile } from './fileTree'
@@ -55,6 +55,19 @@ const sideBySide = ref(false)
 const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void; selectedText(): string } | null>(null)
 const helpDialog = ref<HTMLDialogElement | null>(null)
 let diffRequestId = 0
+// Usages for the file on screen, bound to this pull request and path now, so a late call
+// from an editor that is already gone still asks about the file it was made for.
+const usageSource = computed<UsageSource | undefined>(() => {
+  const pullRequest = details.value
+  const path = fileDiff.value?.path
+  if (!pullRequest || !path) return undefined
+  const project = projectId.value
+  const repository = repositoryId.value
+  return {
+    load: signal => api.codeUsages(project, repository, pullRequest.id, path, signal),
+    source: (target, signal) => api.codeSource(project, repository, pullRequest.id, target, signal),
+  }
+})
 
 // --- The tree's filters ---
 const fileSearch = ref('')
@@ -562,6 +575,9 @@ const shortcuts: Record<string, () => void> = {
 function handleKey(event: KeyboardEvent) {
   if (event.ctrlKey || event.metaKey || event.altKey) return
   const target = event.target as HTMLElement | null
+  // An open usages peek belongs to Monaco: Esc from inside the editor closes the peek, and
+  // must not blur the editor or leave the file the way it otherwise would.
+  if (event.key === 'Escape' && target?.closest?.('.monaco-editor') && document.querySelector('.peekview-widget')) return
   if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) {
     // Esc has to work from inside the draft box — that is where it is reached for. Any
     // other field just gives the key back to the page.
@@ -821,7 +837,7 @@ onMounted(async () => {
               <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" ref="diffView" :path="fileDiff.path"
                 :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
                 :side-by-side="sideBySide" :comment-lines="commentLinesForFile" :resolved-lines="resolvedLinesForFile"
-                :zone-lines="zoneLines" @open-line="openLineComments" @zones="zoneTargets = $event" @ask="openQuestions($event)" />
+                :zone-lines="zoneLines" :usages="usageSource" @open-line="openLineComments" @zones="zoneTargets = $event" @ask="openQuestions($event)" />
               <!-- Rendered between the lines of code, inside the containers Monaco made.
                    Ordinary Vue markup, so replying and resolving work the same as in the
                    comments view. -->

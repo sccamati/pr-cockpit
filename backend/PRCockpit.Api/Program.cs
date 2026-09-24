@@ -17,6 +17,7 @@ builder.Services.AddScoped<PullRequestContextService>();
 builder.Services.AddScoped<SummaryService>();
 builder.Services.AddScoped<FileExplanationService>();
 builder.Services.AddScoped<FileQuestionService>();
+builder.Services.AddScoped<CodeUsageService>();
 
 // No authentication, by decision (D-01) — so the port is not offered to the network.
 var remote = LocalOnly.RemoteAddresses(builder.Configuration);
@@ -121,6 +122,19 @@ api.MapGet($"{PullRequests}/{{pullRequestId:int}}/changed-paths", async (
 
 api.MapPost("/csharp/hovers", async (CSharpHoverRequest request, ICSharpHoverAnalyzer analyzer) =>
     await Execute(() => Task.FromResult(analyzer.Build(request))));
+
+// Where the declarations of one open file are used, across the repository at the pull
+// request's head. The path travels in the body, like every user-supplied path here.
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/usages", async (
+    string project, string repositoryId, int pullRequestId, CodeUsagesRequest request,
+    CodeUsageService usages, CancellationToken ct) =>
+    await Execute(() => usages.FindAsync(project, repositoryId, pullRequestId, request.Path ?? "", ct)));
+
+// The text a usage points into, for the preview — any source file of that same snapshot.
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/usages/source", async (
+    string project, string repositoryId, int pullRequestId, CodeSourceRequest request,
+    CodeUsageService usages, CancellationToken ct) =>
+    await Execute(() => usages.GetSourceAsync(project, repositoryId, pullRequestId, request.Path ?? "", ct)));
 
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/context", async (
     string project, string repositoryId, int pullRequestId,

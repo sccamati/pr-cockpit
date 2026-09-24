@@ -30,6 +30,18 @@ export interface CSharpHovers {
   originalTokens: CSharpSemanticToken[]
   modifiedTokens: CSharpSemanticToken[]
 }
+// Where each declaration of the open file is used, anywhere in the repository at the pull
+// request's head. "semantic" is resolved by Roslyn (C#); "name" is matched by identifier
+// text (TS/JS/Vue) and can count a namesake. skippedFiles > 0 means a zero may be incomplete.
+export interface CodeLocation { path: string; line: number; startColumn: number; endColumn: number }
+export interface CodeDeclaration { line: number; startColumn: number; endColumn: number; name: string; usages: CodeLocation[] }
+export interface CodeUsages { mode: 'semantic' | 'name'; declarations: CodeDeclaration[]; skippedFiles: number }
+// What the diff view needs to show usages, bound to one pull request and file by App.vue so
+// the editor never learns about projects, repositories or ids.
+export interface UsageSource {
+  load(signal: AbortSignal): Promise<CodeUsages>
+  source(path: string, signal: AbortSignal): Promise<string>
+}
 
 // Everything except id is optional on purpose — the backend maps Azure DevOps threads
 // tolerantly, because a system thread or a deleted comment must not break the list.
@@ -246,6 +258,11 @@ export const api = {
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>
     post<SummaryResponse>(`${location(project, repository)}/pull-requests/${id}/summary`),
+  codeUsages: (project: string, repository: string, id: number, path: string, signal?: AbortSignal) =>
+    post<CodeUsages>(`${location(project, repository)}/pull-requests/${id}/usages`, { path }, signal),
+  codeSource: (project: string, repository: string, id: number, path: string, signal?: AbortSignal) =>
+    post<{ path: string; text: string }>(`${location(project, repository)}/pull-requests/${id}/usages/source`, { path }, signal)
+      .then(response => response.text),
   explainFile: (project: string, repository: string, id: number, path: string, signal?: AbortSignal) =>
     post<FileExplanation>(`${location(project, repository)}/pull-requests/${id}/summary/file`, { path }, signal),
   askAboutFile: (project: string, repository: string, id: number, path: string, question: string, selection?: string | null) =>

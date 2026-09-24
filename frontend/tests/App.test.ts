@@ -30,13 +30,15 @@ const api = vi.hoisted(() => ({
   editComment: vi.fn(),
   deleteComment: vi.fn(),
   config: vi.fn(),
+  codeUsages: vi.fn(),
+  codeSource: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api }))
 vi.mock('../src/MonacoDiff.vue', () => ({
   default: {
     name: 'MonacoDiff',
-    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines', 'zoneLines'],
+    props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines', 'zoneLines', 'usages'],
     emits: ['openLine', 'zones'],
     // Options-API methods land on the instance, which is what the template ref holds, so
     // App can call revealLine on the stub exactly as it calls it on the real editor.
@@ -1200,6 +1202,46 @@ describe('Skróty klawiszowe', () => {
     press('Escape')
     await flushPromises()
     expect(wrapper.find('.pr-row').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('hands the diff a usages source bound to this pull request and file', async () => {
+    api.commentThreads.mockResolvedValue([])
+    api.codeUsages.mockResolvedValue({ mode: 'semantic', declarations: [], skippedFiles: 0 })
+    api.codeSource.mockResolvedValue('class Other { }')
+    const wrapper = await openFirstFile()
+    const usages = wrapper.findComponent({ name: 'MonacoDiff' }).props('usages')
+    const signal = new AbortController().signal
+
+    await usages.load(signal)
+    expect(await usages.source('/src/Other.cs', signal)).toBe('class Other { }')
+
+    expect(api.codeUsages).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/first.cs', signal)
+    expect(api.codeSource).toHaveBeenCalledWith('project', 'repo-a', 123, '/src/Other.cs', signal)
+    wrapper.unmount()
+  })
+
+  it('leaves Escape to an open usages peek inside the editor', async () => {
+    api.commentThreads.mockResolvedValue([])
+    const wrapper = await openFirstFile()
+    const editorNode = document.createElement('div')
+    editorNode.className = 'monaco-editor'
+    const peek = document.createElement('div')
+    peek.className = 'peekview-widget'
+    const peekTree = document.createElement('div')
+    peek.appendChild(peekTree)
+    editorNode.appendChild(peek)
+    wrapper.find('.test-diff').element.appendChild(editorNode)
+
+    press('Escape', peekTree)
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').text()).toBe('first.cs')
+
+    // Once the peek is closed, Escape is the page's again.
+    peek.remove()
+    press('Escape', editorNode)
+    await flushPromises()
+    expect(wrapper.find('.diff-toolbar h4').exists()).toBe(false)
     wrapper.unmount()
   })
 

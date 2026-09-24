@@ -41,6 +41,14 @@ const mocks = vi.hoisted(() => ({
   addAction: vi.fn(),
   selection: null as unknown,
   selectedText: '',
+  registerCodeLensProvider: vi.fn(),
+  codeLensProvider: null as null | { provideCodeLenses: (model: unknown) => { lenses: { range: unknown; command: { id: string; title: string; arguments: unknown[] } }[] } },
+  registerReferenceProvider: vi.fn(),
+  referenceProvider: null as null | { provideReferences: (model: unknown, position: { lineNumber: number; column: number }) => Promise<{ uri: unknown; range: unknown }[]> },
+  registerCommand: vi.fn(),
+  command: null as null | ((accessor: unknown, ...args: unknown[]) => void),
+  disposeUsages: vi.fn(),
+  trigger: vi.fn(),
 }))
 
 vi.mock('../src/api', () => ({ api: { csharpHovers: mocks.csharpHovers } }))
@@ -48,12 +56,14 @@ vi.mock('monaco-editor', () => ({
   editor: {
     defineTheme: mocks.defineTheme,
     setTheme: mocks.setTheme,
-    createModel: vi.fn(() => {
+    createModel: vi.fn((_text: string, _language: string, uri?: { toString: () => string }) => {
       const id = mocks.models.length
-      const model = { uri: { toString: () => `model-${id}` }, dispose: vi.fn(), getLineCount: () => 500 }
+      const model = { uri: uri ?? { toString: () => `model-${id}` }, dispose: vi.fn(), getLineCount: () => 500 }
       mocks.models.push(model)
       return model
     }),
+    getModel: () => null,
+    registerCommand: mocks.registerCommand,
     TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
     MouseTargetType: { GUTTER_LINE_DECORATIONS: 2, GUTTER_LINE_NUMBERS: 3 },
     createDiffEditor: vi.fn(() => ({
@@ -80,10 +90,13 @@ vi.mock('monaco-editor', () => ({
     })),
   },
   languages: {
-    getLanguages: () => [{ id: 'csharp', extensions: ['.cs'] }, { id: 'typescript', extensions: ['.ts'] }],
+    getLanguages: () => [{ id: 'csharp', extensions: ['.cs'] }, { id: 'typescript', extensions: ['.ts'] }, { id: 'html', extensions: ['.html'] }],
     registerHoverProvider: mocks.registerHoverProvider,
     registerDocumentSemanticTokensProvider: mocks.registerSemanticProvider,
+    registerCodeLensProvider: mocks.registerCodeLensProvider,
+    registerReferenceProvider: mocks.registerReferenceProvider,
   },
+  Uri: { from: ({ scheme, path }: { scheme: string; path: string }) => ({ toString: () => `${scheme}:${path}` }) },
   Range: class {
     constructor(public startLineNumber: number, public startColumn: number,
       public endLineNumber: number, public endColumn: number) {}
@@ -112,6 +125,18 @@ beforeEach(() => {
     mocks.semanticProvider = provider
     return { dispose: mocks.disposeSemanticProvider }
   })
+  mocks.registerCodeLensProvider.mockImplementation((_language, provider) => {
+    mocks.codeLensProvider = provider
+    return { dispose: mocks.disposeUsages }
+  })
+  mocks.registerReferenceProvider.mockImplementation((_language, provider) => {
+    mocks.referenceProvider = provider
+    return { dispose: mocks.disposeUsages }
+  })
+  mocks.registerCommand.mockImplementation((_id, run) => {
+    mocks.command = run
+    return { dispose: mocks.disposeUsages }
+  })
   mocks.onDidUpdateDiff.mockReturnValue({ dispose: vi.fn() })
   mocks.addAction.mockReturnValue({ dispose: vi.fn() })
   mocks.selection = null
@@ -123,6 +148,7 @@ beforeEach(() => {
     getSelection: () => mocks.selection,
     getModel: () => ({ getValueInRange: () => mocks.selectedText }),
     focus: vi.fn(),
+    trigger: mocks.trigger,
     getPosition: () => ({ lineNumber: 12 }),
     setPosition: mocks.setPosition,
     // Monaco's zone accessor, reduced to what the component actually calls.
@@ -158,6 +184,104 @@ beforeEach(() => {
     disconnect() {}
     unobserve() {}
   }
+})
+
+describe('Monaco usages', () => {
+  const declarations = [
+    { line: 3, startColumn: 17, endColumn: 21, name: 'Send', usages: [
+      { path: '/src/Caller.cs', line: 8, startColumn: 5, endColumn: 9 },
+      { path: '/src/Sample.cs', line: 12, startColumn: 9, endColumn: 13 },
+    ] },
+    { line: 5, startColumn: 17, endColumn: 22, name: 'Draft', usages: [] },
+    { line: 7, startColumn: 17, endColumn: 21, name: 'Mock', usages: [{ path: '/tests/SampleTests.cs', line: 2, startColumn: 1, endColumn: 5 }] },
+  ]
+
+  function mountWithUsages(path = '/src/Sample.cs', mode: 'semantic' | 'name' = 'semantic') {
+    const usages = {
+      load: vi.fn().mockResolvedValue({ mode, declarations, skippedFiles: 0 }),
+      source: vi.fn().mockResolvedValue('class Caller { }'),
+    }
+    const wrapper = mount(MonacoDiff, {
+      props: { path, originalPath: null, originalText: 'old', modifiedText: 'new', usages },
+    })
+    return { wrapper, usages }
+  }
+
+  it('puts a count over every declaration of the modified file only', async () => {
+    const { wrapper } = mountWithUsages()
+    await flushPromises()
+
+    // Without it the diff editor hides every lens, whatever the providers return — found in
+    // a real browser, not here.
+    expect(monaco.editor.createDiffEditor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ diffCodeLens: true }))
+    const lens = mocks.codeLensProvider!
+    expect(lens.provideCodeLenses(mocks.models[0]).lenses).toEqual([])
+    const lenses = lens.provideCodeLenses(mocks.models[1]).lenses
+    expect(lenses.map(item => item.command.title)).toEqual(['2 użycia', '0 użyć', '1 użycie · tylko testy'])
+    // Zero usages is plain text: there is nothing to open.
+    expect(lenses[1].command.id).toBe('')
+    expect(lenses[0].command.id).toMatch(/^prcockpit\.usages\./)
+    wrapper.unmount()
+  })
+
+  it('marks name-matched counts as approximate', async () => {
+    const { wrapper } = mountWithUsages('/src/Panel.vue', 'name')
+    await flushPromises()
+
+    expect(mocks.registerCodeLensProvider).toHaveBeenCalledWith('html', expect.any(Object))
+    expect(mocks.codeLensProvider!.provideCodeLenses(mocks.models[1]).lenses[0].command.title).toBe('~2 użycia')
+    wrapper.unmount()
+  })
+
+  it('opens the peek on the declaration and previews files outside the diff', async () => {
+    const { wrapper, usages } = mountWithUsages()
+    await flushPromises()
+
+    mocks.command!(null, declarations[0])
+    expect(mocks.setPosition).toHaveBeenCalledWith({ lineNumber: 3, column: 17 })
+    expect(mocks.trigger).toHaveBeenCalledWith('usages', 'editor.action.referenceSearch.trigger', null)
+
+    const locations = await mocks.referenceProvider!.provideReferences(mocks.models[1], { lineNumber: 3, column: 18 })
+    expect(usages.source).toHaveBeenCalledWith('/src/Caller.cs', expect.any(AbortSignal))
+    expect(locations.map(item => String(item.uri))).toEqual(['pr-ref:/src/Caller.cs', 'model-1'])
+    // A usage in this file finds its declaration too, without fetching anything again.
+    await mocks.referenceProvider!.provideReferences(mocks.models[1], { lineNumber: 12, column: 10 })
+    expect(usages.source).toHaveBeenCalledOnce()
+    expect(await mocks.referenceProvider!.provideReferences(mocks.models[0], { lineNumber: 3, column: 18 })).toEqual([])
+
+    wrapper.unmount()
+    expect(mocks.disposeUsages).toHaveBeenCalledTimes(3)
+    expect(mocks.models[2].dispose).toHaveBeenCalledOnce()
+  })
+
+  it('asks nothing without a usages source or for a file type it cannot count', async () => {
+    const plain = mount(MonacoDiff, {
+      props: { path: '/src/Sample.cs', originalPath: null, originalText: 'old', modifiedText: 'new' },
+    })
+    const { wrapper, usages } = mountWithUsages('/docs/readme.md')
+    await flushPromises()
+
+    expect(usages.load).not.toHaveBeenCalled()
+    expect(mocks.registerCodeLensProvider).not.toHaveBeenCalled()
+    plain.unmount()
+    wrapper.unmount()
+  })
+
+  it('does not register late usages after the file closed', async () => {
+    let finish!: (value: unknown) => void
+    const usages = { load: vi.fn((_signal: AbortSignal) => new Promise(resolve => { finish = resolve })), source: vi.fn() }
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/Sample.cs', originalPath: null, originalText: 'old', modifiedText: 'new', usages },
+    })
+    const signal = usages.load.mock.calls[0]![0]
+
+    wrapper.unmount()
+    finish({ mode: 'semantic', declarations, skippedFiles: 0 })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mocks.registerCodeLensProvider).not.toHaveBeenCalled()
+  })
 })
 
 describe('Monaco C# hover', () => {

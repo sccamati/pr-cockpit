@@ -35,6 +35,9 @@ public static class InfrastructureServices
         // Stateless: one process spawner and one Roslyn wrapper.
         services.AddSingleton<IAiSummaryAnalyzer, CliSummaryAnalyzer>();
         services.AddSingleton<ICSharpHoverAnalyzer, CSharpHoverAnalyzer>();
+        services.AddSingleton<ICodeUsageFinder, CodeUsageFinder>();
+        // Singleton on purpose: it is the process-wide snapshot cache.
+        services.AddSingleton<ISourceSnapshotCache, MemorySourceSnapshotCache>();
 
         return services;
     }

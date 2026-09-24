@@ -1,9 +1,11 @@
 using PRCockpit.Application.Ports;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using PRCockpit.Domain.Analysis;
 using PRCockpit.Domain.PullRequests;
 
 namespace PRCockpit.Infrastructure.AzureDevOps;
@@ -13,6 +15,12 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
     private const string ApiVersion = "api-version=7.1";
     private const int MaxFileBytes = 256 * 1024;
     private const int MaxCommentLength = 10_000;
+    // Enough for a large product repository; past it the answer would be slow to fetch and
+    // a partial one would lie, so the snapshot is refused instead.
+    private const int MaxSnapshotFiles = 8000;
+    private const long MaxSnapshotBytes = 40L * 1024 * 1024;
+    private const int BlobBatchSize = 500;
+    private const int BlobFallbackParallelism = 8;
 
     public async Task<IReadOnlyList<Project>> GetProjectsAsync(CancellationToken ct)
     {
@@ -375,6 +383,111 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         return files.Select(file => file.Path).ToArray();
     }
 
+    public async Task<SourceSnapshot> GetSourceSnapshotAsync(
+        string project, string repositoryId, string commitSha, CancellationToken ct)
+    {
+        if (!IsObjectId(commitSha)) throw new AzureDevOpsException("Invalid commit ID.", 400);
+        var repositoryPath = $"{Segment(project)}/_apis/git/repositories/{Segment(repositoryId)}";
+
+        string treeId;
+        var (commit, _) = await GetAsync($"{repositoryPath}/commits/{commitSha}?{ApiVersion}", ct);
+        using (commit) treeId = commit.RootElement.TryGetProperty("treeId", out var tree) ? tree.GetString() ?? "" : "";
+        if (!IsObjectId(treeId)) throw new AzureDevOpsException("Azure DevOps returned an invalid tree ID.", 502);
+
+        // The tree carries every blob's size, so the budget is decided before a byte of
+        // content is downloaded.
+        var wanted = new List<(string Path, string ObjectId)>();
+        var skipped = 0;
+        long total = 0;
+        var (entries, _) = await GetAsync($"{repositoryPath}/trees/{treeId}?recursive=true&{ApiVersion}", ct);
+        using (entries)
+        {
+            foreach (var entry in entries.RootElement.GetProperty("treeEntries").EnumerateArray())
+            {
+                if (entry.TryGetProperty("gitObjectType", out var type) && type.GetString() != "blob") continue;
+                var path = "/" + (entry.GetProperty("relativePath").GetString() ?? "").TrimStart('/');
+                if (!SourceFiles.IsSource(path)) continue;
+                var size = entry.TryGetProperty("size", out var bytes) ? bytes.GetInt64() : 0;
+                if (size > MaxFileBytes)
+                {
+                    skipped++;
+                    continue;
+                }
+                var objectId = entry.GetProperty("objectId").GetString() ?? "";
+                if (!IsObjectId(objectId)) throw new AzureDevOpsException("Azure DevOps returned an invalid blob ID.", 502);
+                wanted.Add((path, objectId.ToLowerInvariant()));
+                total += size;
+            }
+        }
+        if (wanted.Count > MaxSnapshotFiles || total > MaxSnapshotBytes)
+            throw new AzureDevOpsException(
+                $"The repository has too many source files to find usages ({wanted.Count} files, {total / (1024 * 1024)} MB).", 413);
+
+        var blobs = await GetBlobsAsync(repositoryPath, wanted.Select(item => item.ObjectId).Distinct().ToArray(), ct);
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (path, objectId) in wanted)
+        {
+            if (blobs.TryGetValue(objectId, out var content) && content.Kind == "text") files[path] = content.Text;
+            else skipped++;
+        }
+        return new SourceSnapshot(commitSha, files, skipped);
+    }
+
+    /// <summary>
+    /// Many blobs in few round trips: Azure DevOps zips a list of blob IDs, one entry per ID.
+    /// Anything the zip did not deliver is fetched one by one, so a change in how the entries
+    /// are named costs speed, not correctness.
+    /// </summary>
+    private async Task<Dictionary<string, FileContent>> GetBlobsAsync(
+        string repositoryPath, IReadOnlyList<string> objectIds, CancellationToken ct)
+    {
+        var blobs = new Dictionary<string, FileContent>(StringComparer.OrdinalIgnoreCase);
+        foreach (var batch in objectIds.Chunk(BlobBatchSize))
+        {
+            try
+            {
+                using var response = await SendAsync($"{repositoryPath}/blobs?{ApiVersion}", "application/zip", ct,
+                    HttpMethod.Post, batch, isRead: true);
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+                var requested = batch.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var entry in zip.Entries)
+                {
+                    var id = Path.GetFileNameWithoutExtension(entry.Name);
+                    if (!requested.Contains(id) || entry.Length > MaxFileBytes) continue;
+                    await using var content = entry.Open();
+                    var bytes = await ReadBoundedAsync(content, ct);
+                    if (bytes is not null) blobs[id] = Decode(bytes);
+                }
+            }
+            catch (Exception ex) when (ex is InvalidDataException ||
+                ex is AzureDevOpsException { StatusCode: 400 or 404 or 502 })
+            {
+                // The zip endpoint refused or answered with something that is not a zip; the
+                // one-by-one path below covers the whole batch.
+            }
+        }
+
+        using var gate = new SemaphoreSlim(BlobFallbackParallelism);
+        var missing = objectIds.Where(id => !blobs.ContainsKey(id)).Select(async id =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                return (id, content: await DownloadBlobAsync(repositoryPath, id, ct));
+            }
+            finally
+            {
+                gate.Release();
+            }
+        });
+        foreach (var (id, content) in await Task.WhenAll(missing)) blobs[id] = content;
+        return blobs;
+    }
+
+    private static bool IsObjectId(string value) =>
+        System.Text.RegularExpressions.Regex.IsMatch(value, "^[a-fA-F0-9]{40}$");
+
     private async Task<FileDiff> GetFileDiffAtCommitsAsync(
         string project, string repositoryId, ChangedFile file,
         string baseCommit, string sourceCommit, CancellationToken ct)
@@ -461,20 +574,35 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         if (!System.Text.RegularExpressions.Regex.IsMatch(objectId, "^[a-fA-F0-9]{40}$"))
             throw new AzureDevOpsException("Azure DevOps returned an invalid blob ID.", 502);
 
+        return await DownloadBlobAsync(repositoryPath, objectId, ct);
+    }
+
+    private async Task<FileContent> DownloadBlobAsync(string repositoryPath, string objectId, CancellationToken ct)
+    {
         using var response = await SendAsync($"{repositoryPath}/blobs/{objectId}?$format=octetstream&resolveLfs=true&{ApiVersion}",
             "application/octet-stream", ct);
         if (response.Content.Headers.ContentLength > MaxFileBytes) return new FileContent("tooLarge", "");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var bytes = await ReadBoundedAsync(stream, ct);
+        return bytes is null ? new FileContent("tooLarge", "") : Decode(bytes);
+    }
+
+    private static async Task<byte[]?> ReadBoundedAsync(Stream stream, CancellationToken ct)
+    {
         using var memory = new MemoryStream();
         var buffer = new byte[8192];
         while (true)
         {
             var read = await stream.ReadAsync(buffer, ct);
             if (read == 0) break;
-            if (memory.Length + read > MaxFileBytes) return new FileContent("tooLarge", "");
+            if (memory.Length + read > MaxFileBytes) return null;
             memory.Write(buffer, 0, read);
         }
-        var bytes = memory.ToArray();
+        return memory.ToArray();
+    }
+
+    private static FileContent Decode(byte[] bytes)
+    {
         if (bytes.Contains((byte)0) && !(bytes.Length >= 2 &&
             (bytes[0] == 0xff && bytes[1] == 0xfe || bytes[0] == 0xfe && bytes[1] == 0xff)))
             return new FileContent("binary", "");
@@ -576,7 +704,7 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
     /// </summary>
     private async Task<HttpResponseMessage> SendAsync(
         string path, string accept, CancellationToken ct,
-        HttpMethod? method = null, object? body = null)
+        HttpMethod? method = null, object? body = null, bool isRead = false)
     {
         var organization = configuration["AzureDevOps:Organization"];
         var pat = configuration["AzureDevOps:Pat"];
@@ -599,7 +727,9 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             // A write fails differently from a read. 401/403 on a write is almost always a
             // PAT missing the threads scope, which is a configuration fault on our side, so
             // it maps to 503 and the message names the scope instead of blaming the server.
-            var isWrite = method is not null && method != HttpMethod.Get;
+            // isRead marks a POST that only reads (the blob zip), so it is not blamed on the
+            // comment-writing scope.
+            var isWrite = !isRead && method is not null && method != HttpMethod.Get;
             // Editing or deleting somebody else's comment is refused by Azure DevOps, and
             // that is a 403 about ownership, not a configuration fault on our side.
             var isComment = isWrite && path.Contains("/comments/", StringComparison.Ordinal);

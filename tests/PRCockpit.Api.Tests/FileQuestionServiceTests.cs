@@ -1,4 +1,4 @@
-using PRCockpit.Application.Analysis;
+﻿using PRCockpit.Application.Analysis;
 using PRCockpit.Application.Ports;
 using PRCockpit.Application.PullRequests;
 using PRCockpit.Domain.Analysis;
@@ -132,5 +132,6 @@ public class FileQuestionServiceTests
         public Task<PrCommentThread> SetThreadStatusAsync(string project, string repositoryId, int pullRequestId, int threadId, string? status, CancellationToken ct) => throw new NotSupportedException();
         public Task<FileDiff> GetFileDiffSinceIterationAsync(string project, string repositoryId, int pullRequestId, string path, int iterationId, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> GetChangedPathsSinceIterationAsync(string project, string repositoryId, int pullRequestId, int iterationId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SourceSnapshot> GetSourceSnapshotAsync(string project, string repositoryId, string commitSha, CancellationToken ct) => throw new NotSupportedException();
     }
 }

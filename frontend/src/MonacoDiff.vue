@@ -6,7 +6,8 @@ import JsonWorker from 'monaco-editor/languages/features/json/json.worker?worker
 import CssWorker from 'monaco-editor/languages/features/css/css.worker?worker'
 import HtmlWorker from 'monaco-editor/languages/features/html/html.worker?worker'
 import TsWorker from 'monaco-editor/languages/features/typescript/ts.worker?worker'
-import { api, type CSharpHoverEntry, type CSharpSemanticToken } from './api'
+import { api, type CodeDeclaration, type CSharpHoverEntry, type CSharpSemanticToken, type UsageSource } from './api'
+import { usageLabel } from './format'
 
 const props = defineProps<{
   path: string
@@ -20,6 +21,8 @@ const props = defineProps<{
   resolvedLines?: number[]
   // Lines that should carry a comment block rendered between the code, in place.
   zoneLines?: number[]
+  // Where the declarations of this file are used. Absent, the editor shows no usage counts.
+  usages?: UsageSource
 }>()
 const emit = defineEmits<{
   openLine: [line: number]
@@ -52,6 +55,10 @@ const twinIds = new Map<number, string>()
 const twinZones = new Map<number, monaco.editor.IViewZone>()
 let hoverGlyphs: monaco.editor.IEditorDecorationsCollection | null = null
 let hoveredLine: number | null = null
+let usageAbort: AbortController | null = null
+let usageRegistrations: monaco.IDisposable[] = []
+// Files a usage points into, opened read-only so the peek can preview them. Keyed by path.
+const referenceModels = new Map<string, monaco.editor.ITextModel>()
 
 const semanticTokenTypes = [
   'namespace', 'class', 'interface', 'struct', 'enum', 'delegate', 'typeParameter',
@@ -195,6 +202,89 @@ async function loadCSharpHovers() {
   }
 }
 
+// Command ids are global in Monaco, so each mounted editor registers its own.
+let usageCommands = 0
+const usagePaths = /\.(cs|tsx?|m?js|vue)$/i
+
+/**
+ * A count over every declaration of the modified file, the way VS Code shows references:
+ * CodeLens for the count, a reference provider so the built-in peek lists the places, and
+ * the same provider serves "Go to References" from the context menu.
+ */
+async function loadUsages(language: string) {
+  if (!props.usages || !modifiedModel) return
+  const source = props.usages
+  const modified = modifiedModel
+  usageAbort = new AbortController()
+  const signal = usageAbort.signal
+  try {
+    const result = await source.load(signal)
+    if (signal.aborted) return
+    const commandId = `prcockpit.usages.${++usageCommands}`
+    usageRegistrations.push(monaco.editor.registerCommand(commandId,
+      (_accessor, declaration: CodeDeclaration) => peekUsages(declaration)))
+    usageRegistrations.push(monaco.languages.registerCodeLensProvider(language, {
+      provideCodeLenses(model) {
+        const lenses = model.uri.toString() !== modified.uri.toString() ? [] : result.declarations.map(declaration => ({
+          range: new monaco.Range(declaration.line, 1, declaration.line, 1),
+          // Nothing to open for zero usages: an empty id renders the lens as plain text.
+          command: {
+            id: declaration.usages.length > 0 ? commandId : '',
+            title: usageLabel(declaration.usages, result.mode),
+            arguments: [declaration],
+          },
+        }))
+        return { lenses, dispose() {} }
+      },
+    }))
+    usageRegistrations.push(monaco.languages.registerReferenceProvider(language, {
+      async provideReferences(model, position) {
+        if (model.uri.toString() !== modified.uri.toString()) return []
+        const declaration = declarationAt(result.declarations, position)
+        return declaration ? await usageLocations(source, declaration, signal) : []
+      },
+    }))
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      console.error('Nie udało się policzyć użyć.', error)
+    }
+  }
+}
+
+// The declaration under the cursor, or the one whose usage in this same file it is on.
+function declarationAt(declarations: CodeDeclaration[], position: monaco.Position): CodeDeclaration | undefined {
+  const on = (line: number, start: number, end: number) =>
+    line === position.lineNumber && start <= position.column && position.column <= end
+  return declarations.find(item => on(item.line, item.startColumn, item.endColumn)) ??
+    declarations.find(item => item.usages.some(usage =>
+      usage.path === props.path && on(usage.line, usage.startColumn, usage.endColumn)))
+}
+
+async function usageLocations(source: UsageSource, declaration: CodeDeclaration, signal: AbortSignal) {
+  const missing = [...new Set(declaration.usages.map(usage => usage.path))]
+    .filter(path => path !== props.path && !referenceModels.has(path))
+  await Promise.all(missing.map(async path => {
+    const text = await source.source(path, signal)
+    if (signal.aborted || referenceModels.has(path)) return
+    const uri = monaco.Uri.from({ scheme: 'pr-ref', path })
+    referenceModels.set(path, monaco.editor.getModel(uri) ?? monaco.editor.createModel(text, languageForPath(path), uri))
+  }))
+  return declaration.usages.flatMap(usage => {
+    const uri = usage.path === props.path ? modifiedModel?.uri : referenceModels.get(usage.path)?.uri
+    return uri ? [{ uri, range: new monaco.Range(usage.line, usage.startColumn, usage.line, usage.endColumn) }] : []
+  })
+}
+
+// The lens only moves the cursor onto the name and asks for Monaco's own peek, so the
+// click and "Peek References" from the context menu are one code path.
+function peekUsages(declaration: CodeDeclaration) {
+  const pane = editor?.getModifiedEditor()
+  if (!pane) return
+  pane.setPosition({ lineNumber: declaration.line, column: declaration.startColumn })
+  pane.focus()
+  pane.trigger('usages', 'editor.action.referenceSearch.trigger', null)
+}
+
 onMounted(() => {
   if (!container.value) return
   const language = languageForPath(props.path)
@@ -218,6 +308,9 @@ onMounted(() => {
     renderWhitespace: 'selection',
     // The gutter menu only offers revert/stage, which a read-only viewer cannot do.
     renderGutterMenu: false,
+    // The diff editor switches CodeLens off in its panes unless asked; the usage counts
+    // ride on it. No other provider registers lenses, so nothing else appears.
+    diffCodeLens: true,
     // Comment markers ride the line-decorations strip, not the glyph margin: the glyph
     // margin is ~26px of empty gutter that pushed the code sideways, and an inline diff
     // already spends two number columns on the left.
@@ -270,6 +363,7 @@ onMounted(() => {
   refreshGlyphs()
   syncZones()
   if (language === 'csharp' || originalLanguage === 'csharp') void loadCSharpHovers()
+  if (usagePaths.test(props.path) && !/\.min\.js$/i.test(props.path) && props.modifiedText) void loadUsages(language)
 })
 
 watch(() => props.zoneLines, syncZones, { deep: true })
@@ -478,6 +572,11 @@ function refreshGlyphs() {
 
 onBeforeUnmount(() => {
   hoverAbort?.abort()
+  usageAbort?.abort()
+  usageRegistrations.forEach(registration => registration.dispose())
+  usageRegistrations = []
+  referenceModels.forEach(model => model.dispose())
+  referenceModels.clear()
   askActions.forEach(action => action.dispose())
   clearZones()
   diffZoneListener?.dispose()
