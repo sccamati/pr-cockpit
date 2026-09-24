@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // US-P3. Opening a pull request of 83 files on a tree of 83 files is the problem this screen
 // exists for: one sentence, eight files, one decision.
-import { useCockpit } from './cockpit'
-import { fileDirectory, fileName } from './format'
+import { useCockpit } from '@/cockpit'
+import { fileDirectory, fileName } from '@/lib/format'
 
 const { details, summary: summaryState, review, walk, comments } = useCockpit()
 const { summary, summaryLoading, summaryReadLoading, summaryError, summaryFreshness, criticalProposal, fullProposal, roleByPath, generateSummary } = summaryState
@@ -119,3 +119,32 @@ const { myOpenThreads, openMyThreads } = comments
     </template>
   </section>
 </template>
+
+<style scoped>
+.walk-entry { max-width: 900px; margin: 0 auto; padding: 18px 20px 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.walk-entry h3 { margin: 0 0 8px; }
+.walk-entry-summary { margin-bottom: 16px; }
+.walk-round { margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+.walk-round h3 { margin: 0 0 6px; }
+.walk-round-counts { margin: 0; }
+.walk-round-threads { margin-top: 8px; border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.walk-entry-files h3 { margin-top: 4px; }
+.walk-entry-rest { margin: 10px 0 0; color: var(--text-muted); font-size: 13px; }
+/* Dwa zakresy tej samej ścieżki. Liczba przy nazwie mówi, na co się zgadzasz. */
+.walk-mode { display: flex; gap: 6px; margin: 0 0 4px; }
+.walk-mode-option { display: flex; align-items: baseline; gap: 6px; }
+.walk-mode-option small { color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.walk-mode--on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.walk-mode--on small { color: inherit; }
+.walk-file--off { opacity: .55; }
+.walk-file-pick { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1 1 auto; cursor: pointer; }
+.walk-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.walk-file-path small { margin-left: 6px; color: var(--text-muted); font-weight: 400; font-size: 11px; }
+.walk-file-role { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 12px; }
+.walk-file-read { flex: none; color: var(--accent); font-size: 11px; font-weight: 700; }
+.walk-resume { padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+.walk-resume p { margin: 0 0 6px; }
+.walk-changed { margin: 6px 0; }
+.walk-no-summary { padding: 10px 0; }
+.walk-stale { margin: 8px 0 0; }
+</style>

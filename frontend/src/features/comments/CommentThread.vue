@@ -3,9 +3,9 @@
 // and the reply box — wherever a thread is shown: the comments view, the block docked above
 // a diff without an editor, and a Monaco zone between the lines. The heading stays with the
 // caller, because each of those places heads a thread differently.
-import { useCockpit } from './cockpit'
-import { renderComment } from './description'
-import { formatDate } from './format'
+import { useCockpit } from '@/cockpit'
+import { renderComment } from '@/lib/description'
+import { formatDate } from '@/lib/format'
 import { isResolved, type ReadableThread } from './useComments'
 
 defineProps<{
@@ -69,3 +69,28 @@ const {
     <button v-if="full && !isResolved(thread)" type="button" :disabled="commentSaving" @click="setThreadStatus(thread.id, 'wontFix')">Nie naprawimy</button>
   </div>
 </template>
+
+<style scoped>
+/* The first comment opens the thread; every reply sits indented under it on its own
+   tinted strip with a marker, so where one remark ends and the answer begins is visible
+   at a glance, not only from the next author's name. */
+.thread-comment { margin-top: 4px; }
+.thread-comment + .thread-comment { margin: 10px 0 0 16px; padding: 6px 10px; border-left: 3px solid var(--line-strong); border-radius: 0 6px 6px 0; background: var(--surface-muted); }
+.thread-comment + .thread-comment::before { content: "↳ odpowiedź"; display: block; margin-bottom: 2px; font-size: 11px; color: var(--text-muted); }
+.thread-moved { margin: 6px 0 0; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.thread-since { font-size: 12px; }
+.comment-own-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.comment-own-actions button { font-size: 11px; padding: 1px 6px; }
+.comment-delete { border-color: var(--error-line); background: var(--error-bg); color: var(--error-text); font-weight: 700; }
+.thread-resolve { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.comment-remove { color: var(--error-text); }
+/* Rendered Markdown inside a thread: the rail is narrow and a comment can carry code
+   blocks and long identifiers, so nothing is allowed to push the panel sideways. */
+.thread-content.markdown-body { font-size: 13px; }
+.thread-content.markdown-body :deep(pre) { overflow-x: auto; font-size: 12px; }
+.thread-content.markdown-body :deep(h1), .thread-content.markdown-body :deep(h2),
+.thread-content.markdown-body :deep(h3), .thread-content.markdown-body :deep(h4) { margin: 10px 0 4px; font-size: 13px; }
+.thread-content.markdown-body :deep(p) { margin: 4px 0; }
+.thread-content.markdown-body :deep(ul), .thread-content.markdown-body :deep(ol) { margin: 4px 0; padding-left: 20px; }
+.thread-content.markdown-body :deep(hr) { margin: 8px 0; border: 0; border-top: 1px solid var(--line); }
+</style>

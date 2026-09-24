@@ -3,11 +3,11 @@
 // Check, the reading path and the plain PR metadata. Hidden in focus mode and in the
 // walkthrough, which is why the header carries the checklist and comment counters too.
 import { computed } from 'vue'
-import { useCockpit } from './cockpit'
-import { commentPreview } from './description'
-import { commitTitle, fileDirectory, fileName, formatDate, omissionLabel, reviewerVote, threadStatusLabels } from './format'
+import { useCockpit } from '@/cockpit'
+import { commentPreview } from '@/lib/description'
+import { commitTitle, fileDirectory, fileName, formatDate, omissionLabel, reviewerVote, threadStatusLabels } from '@/lib/format'
 import { checklistItems } from './useChecklist'
-import { threadLocation } from './useComments'
+import { threadLocation } from '@/features/comments/useComments'
 
 const { details, projectId, repositoryId, summary: summaryState, checklist: checklistState, review, comments, openCriticalFile } = useCockpit()
 const {
@@ -185,3 +185,87 @@ function acceptProposal() {
     </details>
   </aside>
 </template>
+
+<style scoped>
+.metadata { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; padding: 28px 0; }
+.metadata div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.metadata span { color: var(--text-muted); font-size: 12px; }
+.metadata strong { overflow-wrap: anywhere; font-size: 14px; }
+.details-section { padding: 22px 0; border-top: 1px solid var(--line); }
+.details-section:last-child { padding-bottom: 0; }
+.checklist-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.checklist-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--text-soft); cursor: pointer; }
+.checklist-item--done { border-color: var(--ok-line); background: var(--ok-bg); color: var(--ok); }
+.checklist-item:has(input:disabled) { opacity: .65; cursor: wait; }
+.checklist-item input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+/* Szyna jest jednym przewijanym słupkiem: bez position: sticky tekst Summary zaczyna się
+   w środku zdania, bez nagłówka nad nim. To samo niżej dla sekcji <details> szyny. */
+.summary-heading { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px 0; background: var(--surface); }
+.summary-heading .muted { margin-bottom: 0; font-size: 13px; }
+.summary-button { flex: none; min-height: 40px; padding: 0 16px; border: 0; border-radius: 7px; background: var(--accent); color: #ffffff; font-weight: 700; }
+.summary-button:hover:not(:disabled) { background: var(--accent-strong); }
+.summary-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 18px; font-size: 12px; }
+.summary-saved { color: var(--text-muted); }
+.summary-current { color: var(--ok); font-weight: 700; }
+.summary-stale { max-width: 80ch; margin: 12px 0 0; border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-text); }
+.summary-omissions { margin-top: 12px; color: var(--text-soft); font-size: 13px; }
+.summary-omissions summary { cursor: pointer; font-weight: 700; }
+.summary-omissions ul { max-height: 180px; margin: 8px 0 0; padding-left: 20px; overflow: auto; }
+.summary-omissions li { padding: 3px 0; overflow-wrap: anywhere; }
+.critical-empty { margin: 14px 0 0; font-size: 13px; }
+.critical-list { margin: 16px 0 0; padding: 0; list-style: none; border: 1px solid var(--line-mid); border-radius: var(--radius); overflow: hidden; }
+.critical-list li { display: flex; align-items: center; gap: 12px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.critical-list li:last-child { border-bottom: 0; }
+.critical-order { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font: 700 12px Inter, 'Segoe UI', sans-serif; }
+.critical-actions { display: flex; flex: none; gap: 6px; }
+.critical-actions button { min-width: 32px; min-height: 30px; padding: 3px 7px; border: 1px solid var(--border-control); border-radius: 5px; background: var(--surface); color: var(--text-strong); font-size: 12px; }
+.plain-list { margin: 0; padding-left: 20px; line-height: 1.9; }
+.commit-list { max-height: 280px; margin: 0; padding: 0; list-style: none; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.commit-list li { display: flex; align-items: baseline; gap: 14px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.commit-list li:last-child { border-bottom: 0; }
+.commit-id { flex: none; color: var(--accent); font-size: 12px; }
+.commit-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.commit-info strong { font-size: 13px; font-weight: 600; }
+.commit-info small { color: var(--text-muted); }
+.details-section .muted { margin-bottom: 0; }
+.context-rail { min-width: 0; min-height: 0; overflow-y: auto; padding: 0 14px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
+.context-rail .details-section { padding-top: 14px; border-top: 0; }
+.context-rail .checklist-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.context-rail .metadata { grid-template-columns: 1fr; gap: 10px; padding: 10px 0; }
+.context-rail h4 { margin: 16px 0 6px; font-size: 13px; }
+.rail-block { padding: 12px 0; border-top: 1px solid var(--line); }
+.rail-block > summary { position: sticky; top: 0; z-index: 1; padding: 2px 0; background: var(--surface); cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-strong); }
+.rail-block > summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.rail-block > summary span { color: var(--accent); font-weight: 700; }
+.rail-block .muted { margin: 8px 0 0; font-size: 12px; }
+.critical-proposal { border: 1px dashed var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+.critical-proposal-heading { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.critical-proposal-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.critical-proposal-why { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
+.critical-proposal-actions { display: flex; gap: 8px; margin-top: 8px; }
+.critical-accept { font-weight: 600; }
+.debug-question { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.debug-hint-later { font-size: 12px; margin: 0 0 6px; }
+.debug-save { font-weight: 600; }
+.debug-saved { font-size: 12px; color: var(--text-muted); }
+.thread-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.thread-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.comments-open { margin-top: 10px; width: 100%; }
+.thread-moved-flag { color: var(--warn-text); }
+/* Ścieżka po przejściu całego PR bywa długa; szyna pokazuje początek i tak mówi. */
+.critical-more { margin: 8px 0 0; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .checklist-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .critical-list li { align-items: stretch; flex-direction: column; gap: 4px; }
+  .critical-actions { padding-left: 34px; }
+  .summary-heading { align-items: stretch; flex-direction: column; }
+  .commit-list li { flex-direction: column; gap: 4px; }
+  .metadata { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (prefers-color-scheme: dark) {
+  /* The accent is light-on-dark here, so the filled button needs dark text. */
+  .summary-button { color: #0b1219; }
+}
+</style>

@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
-import { api, type SummaryResponse } from './api'
-import type { PrScope } from './cockpit'
-import { message } from './format'
+import { api, type SummaryResponse } from '@/api'
+import type { PrScope } from '@/cockpit'
+import { message } from '@/lib/format'
 
 // ponytail: the brief calls this configuration. A one-person local tool has no settings
 // file, so it is a named rule here; a settings screen is the upgrade path.

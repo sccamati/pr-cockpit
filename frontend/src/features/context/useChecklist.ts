@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
-import { api, type ChecklistItem, type ChecklistState } from './api'
-import type { PrScope } from './cockpit'
-import { message } from './format'
+import { api, type ChecklistItem, type ChecklistState } from '@/api'
+import type { PrScope } from '@/cockpit'
+import { message } from '@/lib/format'
 
 export const checklistItems: { key: ChecklistItem; label: string }[] = [
   // Kolejnosc jak w PRODUCT.md par. 6; klucze ida do API i bazy, wiec zmieniaja sie tylko napisy.

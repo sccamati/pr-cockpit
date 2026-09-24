@@ -213,10 +213,12 @@ dotnet test PRCockpit.slnx
 cd frontend
 npm test          # vitest
 npm run build     # vue-tsc --noEmit + vite build
+npm run visual:baseline   # screenshots before a UI change (headless Chrome/Edge)
+npm run visual            # screenshots after it, compared pixel by pixel
 ```
 
 Backend tests use HTTP fakes; frontend tests use a simulated DOM and a mocked API. Neither needs an Azure DevOps account —
-and neither replaces checking a real pull request or the layout in a browser.
+and neither replaces checking a real pull request or the layout in a browser. `npm run visual` catches layout regressions on fixture data (`frontend/visual/`), still not on a real pull request.
 
 ```text
 backend/

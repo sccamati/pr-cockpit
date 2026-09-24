@@ -2,8 +2,8 @@
 // A drawer on the right rather than a block above the diff: stacked, it pushed the code off
 // the screen exactly while you were reading it. It overlays instead of reflowing, so opening
 // it never moves a line of code.
-import { useCockpit } from './cockpit'
-import { fileName } from './format'
+import { useCockpit } from '@/cockpit'
+import { fileName } from '@/lib/format'
 
 const { selectedFilePath, fileAi } = useCockpit()
 const { questionOpen, questionTurns, questionLoading, questionError, questionSelection, questionDraft, questionBox, askQuestion } = fileAi
@@ -44,3 +44,37 @@ const { questionOpen, questionTurns, questionLoading, questionError, questionSel
     </div>
   </aside>
 </template>
+
+<style scoped>
+/* A drawer, not a block in the flow: it overlays the diff, so opening it never reflows the
+   code you are reading. Fixed to the viewport, because the walkthrough and the tree view
+   put the diff panel in different places. */
+.file-chat { position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(420px, 92vw);
+  display: flex; flex-direction: column; background: var(--surface); border-left: 3px solid var(--accent);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.28); animation: file-chat-in 120ms ease-out; }
+@keyframes file-chat-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.file-chat-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line-mid); }
+.file-chat-head span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+/* The thread takes whatever height is left; the question box stays put at the bottom. */
+.file-chat-thread { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.file-chat-draft { padding: 10px 12px; border-top: 1px solid var(--line-mid); }
+.file-chat-draft .debug-answer { width: 100%; box-sizing: border-box; }
+/* Each turn is a block you read as one thing, so it gets air and a rule under it rather
+   than being one more paragraph in a wall of them. */
+.file-chat-turn { margin: 0 0 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line-mid); }
+.file-chat-turn:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+.file-chat-turn p { margin: 0 0 9px; font-size: 13px; line-height: 1.55; }
+.file-chat-turn p:last-child { margin-bottom: 0; }
+/* The question reads as the heading of its answer, not as its first sentence. */
+.file-chat-question { font-weight: 700; color: var(--text-strong); border-left: 3px solid var(--accent);
+  padding-left: 9px; margin-bottom: 11px !important; }
+/* --surface is the drawer's own background, so the snippet needs the muted one to show at all. */
+.file-chat-selection { margin: 0 0 11px; padding: 8px 10px; background: var(--surface-muted);
+  border: 1px solid var(--line-mid); border-radius: 5px; font-size: 12px; line-height: 1.5;
+  max-height: 180px; overflow: auto; }
+.file-chat-attached { font-size: 12px; margin: 0 0 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .file-chat { animation: none; }
+}
+</style>

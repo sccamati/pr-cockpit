@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { usageLabel } from '../src/format'
+import { usageLabel } from '@/lib/format'
 
 const at = (...paths: string[]) => paths.map(path => ({ path }))
 

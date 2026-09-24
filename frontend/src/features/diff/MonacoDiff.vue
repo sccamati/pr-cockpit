@@ -6,8 +6,8 @@ import JsonWorker from 'monaco-editor/languages/features/json/json.worker?worker
 import CssWorker from 'monaco-editor/languages/features/css/css.worker?worker'
 import HtmlWorker from 'monaco-editor/languages/features/html/html.worker?worker'
 import TsWorker from 'monaco-editor/languages/features/typescript/ts.worker?worker'
-import { api, type CodeDeclaration, type CSharpHoverEntry, type CSharpSemanticToken, type UsageSource } from './api'
-import { usageLabel } from './format'
+import { api, type CodeDeclaration, type CSharpHoverEntry, type CSharpSemanticToken, type UsageSource } from '@/api'
+import { usageLabel } from '@/lib/format'
 
 const props = defineProps<{
   path: string
@@ -599,3 +599,30 @@ onBeforeUnmount(() => {
 <template>
   <div ref="container" class="monaco-diff" role="region" :aria-label="`Zmiany w pliku ${path}`" />
 </template>
+
+<style scoped>
+.monaco-diff { flex: 1; min-width: 0; min-height: 0; }
+</style>
+
+<style>
+/* Not scoped: Monaco creates these nodes itself, outside this template. */
+/* The gutter marker for a line that already has a thread, and the hover affordance for
+   starting one on a line that does not. */
+.comment-glyph, .comment-add-glyph { cursor: pointer; }
+.comment-glyph::before { content: '💬'; display: block; font-size: 10px; line-height: 22px; text-align: center; }
+.comment-add-glyph::before { content: '+'; display: block; font-size: 14px; line-height: 22px; text-align: center; color: var(--accent); font-weight: 700; }
+/* A comment block rendered between the lines of code by a Monaco view zone. The editor
+   gives it the full width of the content area, so the card provides its own inset. */
+/* Monaco appends .view-lines AFTER .view-zones (view.js), and the line layer is an
+   absolutely positioned box over the whole content — so it paints over the comment
+   block and eats every click in it, cursor included. The zone node is already
+   position:absolute, so one z-index lifts it back above the code. */
+/* Monaco wylacza zaznaczanie na calym edytorze, zeby samemu zarzadzac selekcja kodu,
+   a nasze karty komentarzy siedza w jego strefach i to dziedzicza. Tutaj jest zwykly
+   tekst do przeczytania i skopiowania, wiec zaznaczanie wraca. Kod obok zostaje pod
+   kontrola Monaka. */
+.comment-zone { width: 100%; z-index: 2; cursor: default; -webkit-user-select: text; user-select: text; }
+/* flow-root keeps the card's margins inside, so offsetHeight is the height the zone needs. */
+.comment-zone-content { display: flow-root; }
+.comment-glyph--resolved { opacity: .45; }
+</style>

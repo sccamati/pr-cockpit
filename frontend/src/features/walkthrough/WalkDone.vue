@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // US-P6. One question, one decision, and the walkthrough has an end.
-import { useCockpit } from './cockpit'
-import { fileDirectory, fileName } from './format'
+import { useCockpit } from '@/cockpit'
+import { fileDirectory, fileName } from '@/lib/format'
 
 const { summary, checklist, walk, backToList } = useCockpit()
 const { criticalProposal } = summary
@@ -47,3 +47,11 @@ const { walkPaths, walkReadCount, walkSkippedPaths, walkOutsideCount, returnToSk
     </div>
   </section>
 </template>
+
+<style scoped>
+.walk-done { max-width: 900px; margin: 0 auto; padding: 18px 20px 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.walk-done h3 { margin: 0 0 8px; }
+.walk-done-counts { margin: 0; font-size: 14px; }
+.walk-skipped { margin-top: 14px; }
+.walk-debug { margin-top: 16px; }
+</style>

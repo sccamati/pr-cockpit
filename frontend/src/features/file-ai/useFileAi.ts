@@ -1,7 +1,7 @@
 import { nextTick, ref, type Ref } from 'vue'
-import { api, type FileExplanation, type FileQuestionTurn } from './api'
-import type { PrScope } from './cockpit'
-import { message } from './format'
+import { api, type FileExplanation, type FileQuestionTurn } from '@/api'
+import type { PrScope } from '@/cockpit'
+import { message } from '@/lib/format'
 
 /**
  * The two per-file AI paths: "Wyjaśnij ten plik" and the conversation about the open file.

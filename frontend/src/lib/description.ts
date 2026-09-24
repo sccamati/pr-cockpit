@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
-import type { WorkItem } from './api'
+import type { WorkItem } from '@/api'
 
 // A pull request description is untrusted text written by other people, so it gets two
 // independent layers: `html: false` makes markdown-it escape raw HTML instead of passing

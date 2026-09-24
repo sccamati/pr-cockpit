@@ -3,7 +3,7 @@
 // brief names — picking the path, counting progress along it, and the prefetch — not layout.
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import App from '../src/App.vue'
+import App from '@/App.vue'
 
 const api = vi.hoisted(() => ({
   projects: vi.fn(), repositories: vi.fn(), pullRequests: vi.fn(), checklistProgress: vi.fn(),
@@ -15,8 +15,8 @@ const api = vi.hoisted(() => ({
   editComment: vi.fn(), deleteComment: vi.fn(), config: vi.fn(),
 }))
 
-vi.mock('../src/api', () => ({ api }))
-vi.mock('../src/MonacoDiff.vue', () => ({
+vi.mock('@/api', () => ({ api }))
+vi.mock('@/features/diff/MonacoDiff.vue', () => ({
   default: {
     name: 'MonacoDiff',
     props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines', 'zoneLines'],

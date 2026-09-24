@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // A new comment — on the whole pull request or on one line. Two steps, always: Enter inserts
 // a newline and only the button sends, because a comment cannot be taken back.
-import { useCockpit } from './cockpit'
+import { useCockpit } from '@/cockpit'
 
 defineProps<{
   label: string
@@ -25,3 +25,7 @@ const { draft, commentSaving, sendDraft } = useCockpit().comments
     </div>
   </div>
 </template>
+
+<style scoped>
+.comment-warning { font-size: 12px; }
+</style>

@@ -1,8 +1,8 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import type { PullRequestDetails } from './api'
-import { same } from './format'
+import type { PullRequestDetails } from '@/api'
+import { same } from '@/lib/format'
 import type { useReviewProgress } from './useReviewProgress'
-import type { useSummary } from './useSummary'
+import type { useSummary } from '@/features/context/useSummary'
 
 // ponytail: a named rule, not configuration — a one-person local tool has no settings file.
 // The path grows more slowly than the ranking (criticalFileLimit in useSummary.ts), because

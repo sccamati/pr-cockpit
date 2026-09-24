@@ -1,8 +1,8 @@
 import { computed, ref } from 'vue'
-import { api, type FileReviewEntry } from './api'
-import type { PrScope } from './cockpit'
-import { message, same } from './format'
-import { criticalFileLimit } from './useSummary'
+import { api, type FileReviewEntry } from '@/api'
+import type { PrScope } from '@/cockpit'
+import { message, same } from '@/lib/format'
+import { criticalFileLimit } from '@/features/context/useSummary'
 
 /**
  * The per-file "Obejrzałem" markers and the stored reading path, with where a walkthrough

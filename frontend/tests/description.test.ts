@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { commentPreview, renderComment, renderDescription } from '../src/description'
+import { commentPreview, renderComment, renderDescription } from '@/lib/description'
 
 function render(text: string, workItems: { id: string; url: string }[] = []) {
   const host = document.createElement('div')

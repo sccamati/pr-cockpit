@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as monaco from 'monaco-editor'
-import MonacoDiff from '../src/MonacoDiff.vue'
+import MonacoDiff from '@/features/diff/MonacoDiff.vue'
 
 const mocks = vi.hoisted(() => ({
   csharpHovers: vi.fn(),
@@ -51,7 +51,7 @@ const mocks = vi.hoisted(() => ({
   trigger: vi.fn(),
 }))
 
-vi.mock('../src/api', () => ({ api: { csharpHovers: mocks.csharpHovers } }))
+vi.mock('@/api', () => ({ api: { csharpHovers: mocks.csharpHovers } }))
 vi.mock('monaco-editor', () => ({
   editor: {
     defineTheme: mocks.defineTheme,

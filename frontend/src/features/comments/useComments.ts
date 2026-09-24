@@ -1,7 +1,7 @@
 import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
-import { api, type FileDiff, type PrComment, type PrCommentThread } from './api'
-import type { PrScope } from './cockpit'
-import { fileName, message } from './format'
+import { api, type FileDiff, type PrComment, type PrCommentThread } from '@/api'
+import type { PrScope } from '@/cockpit'
+import { fileName, message } from '@/lib/format'
 
 // What is left after the deleted comments are dropped, so the templates never have to ask
 // whether a comment still has content.

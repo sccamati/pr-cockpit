@@ -981,3 +981,58 @@ sięgający tylko przez typ z pakietu albo typ zdublowany w dwóch projektach mo
 rozwiązać. TS/JS/Vue bez parsera: metody klas i pola obiektów nie dostają licznika, a
 zbieżna nazwa w zasięgu liczy się jako użycie. Dwuklik w peeku nie przenosi do pliku w
 aplikacji — podgląd wystarcza, a plik spoza PR i tak nie ma diffu do pokazania.
+
+## Wdrożone — porządek w `frontend/src`
+
+### B-32 — Płaski `src/` z 23 plikami, `App.vue` na 922 linie, globalny `style.css`
+
+Status: zrobione 24 wrz 2026. Frontend 123/123 bez zmian w testach, `vue-tsc` i `vite build`
+przechodzą. Wygląd sprawdzony zrzutami ekranu przed i po (Chrome headless, `fetch` z atrapami,
+1600×1000 jasny i ciemny oraz 700 px): lista PR, otwarty plik z komentarzami w kodzie, opis PR,
+plik binarny z zadokowanym wątkiem, wyjaśnienie AI, szuflada pytań, widok komentarzy, tryb
+skupienia, pomoc skrótów, wejście, krok i koniec przejścia, szyna z rozwiniętymi sekcjami, tryb
+tylko do odczytu i widok obok siebie. Różnice mieszczą się w szumie antyaliasingu między dwoma
+przebiegami tej samej wersji (do kilkudziesięciu pikseli na rogach przycisków).
+**Niepotwierdzone:** prawdziwe dane PR, szkic komentarza w strefie Monaco (w trybie headless
+nie ma pozycji kursora), pliki „za duże”, stany błędów i druga runda przejścia.
+
+**Struktura.** `src/` ma foldery per funkcja: `features/{pull-requests,diff,file-tree,comments,
+context,walkthrough,file-ai,shortcuts}` — komponent leży obok swojego composabla. Czyste
+funkcje bez Vue (`format.ts`, `description.ts`) są w `lib/`. W korzeniu zostały `App.vue`,
+`main.ts`, `style.css` i to, czego używa każda funkcja: `api.ts` i `cockpit.ts`. Import spoza
+własnego folderu idzie przez alias `@/` (Vite i `tsconfig.json`), w obrębie folderu przez `./`.
+
+**`App.vue` 922 → 297 linii.** Kod przeniesiony bez zmian logiki: wybór projektu, repozytorium
+i PR z listą i postępem do `usePullRequests` (+ `PullRequestPicker`, `PullRequestList`,
+`PrHeader`), otwarty plik do `useDiff` (+ `DiffPanel`), filtry i kolejność drzewa do
+`useFileList` (+ `FileListPane`), karta komentarza w strefie Monaco do `CommentZoneCard`,
+obsługa klawiatury do `useShortcuts` (+ `ShortcutHelp`). Liczniki żądań jadą razem ze swoim
+stanem. W `App.vue` zostało to, co przecina funkcje: reset PR, przechodzenie między plikami,
+warstwy `Esc` i mapa skrótów.
+
+**Style.** `style.css` 673 → 234 linie: tokeny, domyślne style elementów, klocki używane przez
+kilka komponentów i Markdown z `v-html`. Reszta to `<style scoped>` w komponencie, który ją
+renderuje; węzły tworzone przez Monaco mają zwykły `<style>` w `MonacoDiff.vue`. Selektory
+sięgające do dziecka albo do `v-html` dostały `:deep()`. Usunięte martwe reguły
+`details-heading`, `checklist-heading` i `critical-heading`. `.description` zostało globalne
+celowo: w scoped podniesiona specyficzność przebiłaby `.markdown-body` i opis PR dostałby
+`white-space: pre-wrap`.
+
+### B-33 — Wygląd nie był sprawdzany niczym
+
+Status: zrobione 24 wrz 2026. `npm run visual:baseline` przed zmianą UI, `npm run visual` po
+niej. Skrypt (`frontend/visual/shots.mjs`) sam stawia Vite, otwiera prawdziwe `App` na atrapach
+`fetch` (`frontend/visual/main.ts`), przeprowadza 15 scenariuszy (lista, otwarty plik, opis,
+plik binarny, wyjaśnienie, pytania, komentarze, skupienie, pomoc, tylko do odczytu, obok
+siebie, wejście, krok i koniec przejścia, szyna) w trzech wariantach (jasny, ciemny, 700 px),
+robi zrzuty w Chrome albo Edge headless i liczy różne piksele. Powyżej 150 px na zrzut kończy
+się kodem 1 i zostawia obraz różnic w `visual/out/diff`. Wzorca nie commitujemy: piksele
+zależą od fontów i wersji przeglądarki na danej maszynie. Sprawdzone: dwa przebiegi tej samej
+wersji różnią się o 0–41 px, zmiana `gap` w nagłówku PR o 6 px daje ~7500 px i kod 1.
+Przebieg trwa około 2,5 minuty.
+
+**Świadomie pominięte (`ponytail`).** Zwykłe liczenie pikseli z progiem zamiast porównania
+percepcyjnego (pixelmatch) — ulepszenie, gdyby próg kiedyś ukrył prawdziwą zmianę. Brak
+scenariusza szkicu komentarza w strefie Monaco: w trybie headless edytor nie ma pozycji
+kursora. Nie w CI: wzorzec jest lokalny z założenia.
+

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFileTree, flattenTree, type TreeFile } from '../src/fileTree'
+import { buildFileTree, flattenTree, type TreeFile } from '@/features/file-tree/fileTree'
 
 function file(path: string, overrides: Partial<TreeFile> = {}): TreeFile {
   return {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import App from '../src/App.vue'
+import App from '@/App.vue'
 
 const revealed = vi.hoisted(() => [] as number[])
 const api = vi.hoisted(() => ({
@@ -34,8 +34,8 @@ const api = vi.hoisted(() => ({
   codeSource: vi.fn(),
 }))
 
-vi.mock('../src/api', () => ({ api }))
-vi.mock('../src/MonacoDiff.vue', () => ({
+vi.mock('@/api', () => ({ api }))
+vi.mock('@/features/diff/MonacoDiff.vue', () => ({
   default: {
     name: 'MonacoDiff',
     props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines', 'zoneLines', 'usages'],

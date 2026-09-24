@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Visual regression screenshots (machine-specific, never committed)
+visual/out/
