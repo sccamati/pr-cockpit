@@ -444,6 +444,8 @@ select:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
    tekst do przeczytania i skopiowania, wiec zaznaczanie wraca. Kod obok zostaje pod
    kontrola Monaka. */
 .comment-zone { width: 100%; z-index: 2; cursor: default; -webkit-user-select: text; user-select: text; }
+/* flow-root keeps the card's margins inside, so offsetHeight is the height the zone needs. */
+.comment-zone-content { display: flow-root; }
 .zone-card { margin: 4px 10px 6px 8px; padding: 8px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-muted); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 .zone-card--draft { border-left-style: dashed; }
 .zone-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; cursor: pointer; }

@@ -282,7 +282,7 @@ describe('Monaco reading options', () => {
     // Must stay false: suppressMouseDown makes the editor preventDefault the mousedown,
     // which kills focus in the textarea and every button click inside the block.
     expect(zone.suppressMouseDown).toBe(false)
-    expect(wrapper.emitted('zones')?.at(-1)?.[0]).toEqual([{ line: 12, el: zone.domNode }])
+    expect(wrapper.emitted('zones')?.at(-1)?.[0]).toEqual([{ line: 12, el: zone.domNode.firstElementChild }])
 
     // A line that no longer has a comment loses its container.
     await wrapper.setProps({ zoneLines: [] })
@@ -306,11 +306,19 @@ describe('Monaco reading options', () => {
     expect(twin.afterLineNumber).toBe(12)
 
     const zone = mocks.addZone.mock.calls[0]![0] as { domNode: HTMLElement; heightInPx: number }
-    Object.defineProperty(zone.domNode, 'scrollHeight', { value: 180, configurable: true })
+    const content = zone.domNode.firstElementChild!
+    Object.defineProperty(content, 'offsetHeight', { value: 180, configurable: true })
     mocks.resizeCallbacks.forEach(callback => callback())
     expect(zone.heightInPx).toBe(180)
     expect(twin.heightInPx).toBe(180)
     expect(mocks.originalLayoutZone).toHaveBeenCalled()
+
+    // Folding the comment has to give the space back. Monaco pins the outer node's height,
+    // so only the inner one can report that it got smaller.
+    Object.defineProperty(content, 'offsetHeight', { value: 30, configurable: true })
+    mocks.resizeCallbacks.forEach(callback => callback())
+    expect(zone.heightInPx).toBe(30)
+    expect(twin.heightInPx).toBe(30)
 
     await wrapper.setProps({ zoneLines: [] })
     await flushPromises()

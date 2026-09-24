@@ -366,6 +366,12 @@ function syncZones() {
     for (const line of fresh) {
       const container = document.createElement('div')
       container.className = 'comment-zone'
+      // Monaco pins the container to the zone's height, so its scrollHeight never shrinks
+      // and a folded comment would keep its old space. The content goes in an inner node
+      // that sizes itself, and that is what gets measured.
+      const content = document.createElement('div')
+      content.className = 'comment-zone-content'
+      container.appendChild(content)
       const zone: monaco.editor.IViewZone = {
         afterLineNumber: line,
         domNode: container,
@@ -377,16 +383,16 @@ function syncZones() {
       }
       const id = accessor.addZone(zone)
       zoneIds.set(line, id)
-      zoneNodes.set(line, container)
+      zoneNodes.set(line, content)
 
       const observer = new ResizeObserver(() => {
-        const height = container.scrollHeight
+        const height = content.offsetHeight
         if (height === zone.heightInPx) return
         zone.heightInPx = height
         modified.changeViewZones(inner => inner.layoutZone(id))
         resizeTwin(line, height)
       })
-      observer.observe(container)
+      observer.observe(content)
       zoneObservers.set(line, observer)
     }
   })
@@ -402,7 +408,7 @@ function syncZones() {
       const twin: monaco.editor.IViewZone = {
         afterLineNumber: originalLineFor(line),
         domNode: document.createElement('div'),
-        heightInPx: zoneNodes.get(line)?.scrollHeight ?? 0,
+        heightInPx: zoneNodes.get(line)?.offsetHeight ?? 0,
         suppressMouseDown: true,
       }
       twinIds.set(line, accessor.addZone(twin))

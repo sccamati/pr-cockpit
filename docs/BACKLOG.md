@@ -912,3 +912,25 @@ Przy okazji:
 helper, gdy dojdzie szósty albo kopie zaczną się różnić. Wycinki w widoku komentarzy nadal
 kosztują pełny `/diff` na plik; wsadowy endpoint, gdy PR z setkami komentowanych plików okaże
 się wolny. Cache danych Azure DevOps — nie, bo pobieranie na żądanie jest decyzją.
+
+## Wdrożone — zwinięty komentarz nie oddawał miejsca
+
+### B-30 — Zwijanie bloku komentarza nie zmniejszało strefy w edytorze
+
+Status: naprawione, pokryte testem frontendu (`mirrors a comment block into the original
+editor, at the same height` — przypadek zmniejszenia). **Niepotwierdzone w przeglądarce** —
+atrapa Monaco nie liczy układu, test sprawdza tylko, że mniejsza wysokość treści trafia do
+strefy i jej bliźniaka.
+
+**Objaw.** Zgłoszenie z 24 wrz 2026: chcę schować komentarz, przeczytać kod bez niego, potem
+go pokazać. Zwijanie kliknięciem w nagłówek (B-27) istniało, ale pod zwiniętym nagłówkiem
+zostawała pusta przestrzeń wysokości całego komentarza.
+
+**Przyczyna.** Monaco ustawia kontenerowi strefy stałą wysokość równą `heightInPx`, a pomiar
+brał `scrollHeight` tego kontenera — ten nigdy nie spada poniżej wysokości ustawionej, a
+`ResizeObserver` na kontenerze o stałym rozmiarze nie odpala się przy zmianie treści. Strefa
+umiała tylko rosnąć.
+
+**Poprawka.** Treść trafia do wewnętrznego `.comment-zone-content` (`display: flow-root`, żeby
+marginesy karty liczyły się do wysokości); obserwowany i mierzony (`offsetHeight`) jest ten
+węzeł, a nie kontener Monaco.
