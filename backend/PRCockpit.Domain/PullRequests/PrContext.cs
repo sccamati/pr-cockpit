@@ -20,7 +20,11 @@ public record ContextChangedFile(
     string Path, string ChangeType, string? OriginalPath,
     string? OriginalText, string? ModifiedText, string? OmissionReason);
 
+/// <summary>
+/// <c>Usages</c> is filled only for the one-file tasks (explain, ask), and only for a file
+/// usages exist for; the whole-PR Summary never carries it.
+/// </summary>
 public record PrContext(
     PrContextMetadata PullRequest, IReadOnlyList<string> CommitTitles,
     IReadOnlyList<ContextChangedFile> ChangedFiles, ContextBudget Budget,
-    int IncludedDiffCharacters, bool WasLimited);
+    int IncludedDiffCharacters, bool WasLimited, Analysis.UsageContext? Usages = null);

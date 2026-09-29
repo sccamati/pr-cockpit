@@ -14,7 +14,8 @@ public sealed class FileExplanationService(
     IAzureDevOpsClient client,
     PullRequestContextService contexts,
     IAiSummaryAnalyzer analyzer,
-    IFileExplanationStore store)
+    IFileExplanationStore store,
+    CodeUsageService usages)
 {
     public async Task<FileExplanation> ExplainAsync(
         string project, string repositoryId, int pullRequestId, string path, CancellationToken ct)
@@ -30,7 +31,10 @@ public sealed class FileExplanationService(
             project, repositoryId, pullRequestId, path, changed.ObjectId, details.HeadCommitSha, ct);
         if (saved is not null) return saved.Result;
 
-        var context = await contexts.BuildAsync(project, repositoryId, details, ct, path);
+        var context = await contexts.BuildAsync(project, repositoryId, details, ct, path) with
+        {
+            Usages = await usages.ForAiAsync(project, repositoryId, details, path, ct)
+        };
         var result = await SummaryRunner.RunFileAsync(context, analyzer, ct);
         await store.SaveAsync(project, repositoryId, pullRequestId, result, changed.ObjectId, ct);
         return result;

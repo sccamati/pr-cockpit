@@ -192,6 +192,62 @@ public sealed class NameUsagesTests
     }
 }
 
+public sealed class UsageExcerptTests
+{
+    private static SourceSnapshot Snapshot(params (string Path, string Text)[] files) =>
+        new(new string('c', 40), files.ToDictionary(file => file.Path, file => file.Text), 0);
+
+    private static string Lines(int count, string prefix) =>
+        string.Join("\r\n", Enumerable.Range(1, count).Select(line => $"{prefix} {line}"));
+
+    [Fact]
+    public void GivesEveryDeclarationItsFirstCallerBeforeAnyoneItsSecond()
+    {
+        var snapshot = Snapshot(("/src/A.cs", Lines(40, "a")), ("/src/B.cs", Lines(40, "b")), ("/src/Own.cs", Lines(40, "own")));
+        var usages = new CodeUsagesResponse("semantic",
+        [
+            new CodeDeclaration(1, 1, 4, "First", [
+                new CodeLocation("/src/Own.cs", 10, 1, 2),
+                new CodeLocation("/src/A.cs", 5, 1, 2),
+                new CodeLocation("/src/A.cs", 20, 1, 2),
+                new CodeLocation("/src/B.cs", 30, 1, 2)]),
+            new CodeDeclaration(2, 1, 4, "Second", [new CodeLocation("/src/A.cs", 35, 1, 2)]),
+        ], 0);
+
+        var context = CodeUsageService.Excerpts(usages, snapshot, "/src/Own.cs", new HashSet<string> { "/src/B.cs" });
+
+        // The file itself is skipped, the caller the pull request changed comes first, and
+        // Second's only caller comes before First's second one.
+        Assert.Equal([("First", "/src/B.cs", 30), ("Second", "/src/A.cs", 35), ("First", "/src/A.cs", 5), ("First", "/src/A.cs", 20)],
+            context.Excerpts.Select(item => (item.Name, item.Path, item.Line)));
+        Assert.True(context.Excerpts[0].InPullRequest);
+        Assert.Equal([4, 1], context.Declarations.Select(item => item.Usages));
+        var first = context.Excerpts[0];
+        Assert.Equal(24, first.StartLine);
+        Assert.Equal(Enumerable.Range(24, 13).Select(line => $"b {line}"), first.Text.Split('\n'));
+    }
+
+    // The same property as the diff budget: an excerpt goes in whole or not at all.
+    [Fact]
+    public void DropsWholeExcerptsOverTheBudgetAndCountsThem()
+    {
+        var wide = string.Join("\n", Enumerable.Range(1, 2000).Select(_ => new string('x', 150)));
+        var snapshot = Snapshot(("/src/Big.cs", wide));
+        var usages = new CodeUsagesResponse("name",
+            [.. Enumerable.Range(0, 30).Select(index => new CodeDeclaration(index + 1, 1, 2, $"D{index}",
+                [new CodeLocation("/src/Big.cs", 100 + index * 50, 1, 2)]))], 0);
+
+        var context = CodeUsageService.Excerpts(usages, snapshot, "/src/Own.ts", new HashSet<string>());
+
+        Assert.NotEmpty(context.Excerpts);
+        Assert.True(context.OmittedExcerpts > 0);
+        Assert.Equal(30, context.Excerpts.Count + context.OmittedExcerpts);
+        Assert.True(context.Excerpts.Sum(item => item.Text.Length) <= CodeUsageService.MaxUsageCharacters);
+        Assert.All(context.Excerpts, item => Assert.Equal(2 * CodeUsageService.ExcerptRadius + 1, item.Text.Split('\n').Length));
+        Assert.Equal("name", context.Mode);
+    }
+}
+
 public sealed class CodeUsageServiceTests
 {
     [Fact]

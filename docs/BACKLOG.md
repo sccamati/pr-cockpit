@@ -1036,3 +1036,32 @@ percepcyjnego (pixelmatch) — ulepszenie, gdyby próg kiedyś ukrył prawdziwą
 scenariusza szkicu komentarza w strefie Monaco: w trybie headless edytor nie ma pozycji
 kursora. Nie w CI: wzorzec jest lokalny z założenia.
 
+
+## Wdrożone — AI widzi, kto używa pliku
+
+### B-34 — Wyjaśnienie i pytanie o plik z miejscami użycia jego kodu
+
+Status: zrobione 29 wrz 2026. Backend 171/171 (nowe: `UsageExcerptTests` — kolejność
+i budżet, dwa testy w `FileQuestionServiceTests` — wycinki trafiają do kontekstu, a nieczytelne
+repozytorium nie blokuje odpowiedzi). **Niepotwierdzone:** jakość odpowiedzi prawdziwego modelu
+z tą sekcją, czas pierwszego wyjaśnienia pliku, gdy snapshot repozytorium nie jest jeszcze
+w pamięci, i całość w działającej aplikacji na prawdziwym PR.
+
+**Potrzeba.** Model dostawał przy „Wyjaśnij ten plik” i przy pytaniu tylko ten jeden plik. Cel
+pliku często widać dopiero po tym, kto go woła — a backend to już wiedział (B-31).
+
+**Jak działa.** `FileExplanationService` i `FileQuestionService` dokładają do kontekstu
+`usages` z `CodeUsageService.ForAiAsync`: każda deklaracja z liczbą użyć (także 0) i do 3
+wycinków kodu na deklarację, ±6 linii wokół użycia, z tego samego snapshotu na głowie PR.
+Najpierw pliki zmienione w tym PR (`inPullRequest`), potem reszta; kolejka po kolei po
+deklaracjach, żeby pierwsza metoda nie zjadła budżetu. Użycia we własnym pliku pomijane. Budżet
+2000 znaków na wycinek i 15 000 na sekcję — wycinek wchodzi cały albo wcale, pominięte liczy
+`omittedExcerpts`. Plik bez użyć (inny język, usunięty) i nieczytelne repozytorium dają brak
+sekcji, a instrukcja każe wtedy nie zgadywać wywołujących. Wycinki są danymi w `context`
+(u pytania: `pullRequest.usages`), instrukcja zostaje stała; adapter bez zmian. Summary
+całego PR sekcji nie dostaje.
+
+**Świadomie pominięte (`ponytail`).** Dwa użycia kilka linii od siebie dają dwa nakładające się
+wycinki. Kierunek odwrotny („czego ten plik używa” — definicje wołanych metod) i pętla narzędzi
+dla modelu — dopiero, gdy trzy wycinki na deklarację okażą się za mało. Zapisane wcześniej
+wyjaśnienia zostają bez tej wiedzy, dopóki plik się nie zmieni.

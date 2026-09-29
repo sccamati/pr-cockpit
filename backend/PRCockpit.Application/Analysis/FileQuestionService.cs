@@ -17,7 +17,8 @@ public sealed class FileQuestionService(
     IAzureDevOpsClient client,
     PullRequestContextService contexts,
     IAiSummaryAnalyzer analyzer,
-    IFileQuestionStore store)
+    IFileQuestionStore store,
+    CodeUsageService usages)
 {
     // Three turns is a follow-up, not a transcript: enough for "a to drugie?" to resolve,
     // while the prompt stays the file plus a few lines.
@@ -53,7 +54,10 @@ public sealed class FileQuestionService(
             throw new AzureDevOpsException("File is no longer in this pull request.", 404);
 
         var history = await store.GetAsync(project, repositoryId, pullRequestId, path, ct);
-        var context = await contexts.BuildAsync(project, repositoryId, details, ct, path);
+        var context = await contexts.BuildAsync(project, repositoryId, details, ct, path) with
+        {
+            Usages = await usages.ForAiAsync(project, repositoryId, details, path, ct)
+        };
         var turn = await SummaryRunner.RunAskAsync(context,
             new FileQuestion(asked, snippet, changed.ObjectId,
                 Current(history, changed.ObjectId, details.HeadCommitSha)),

@@ -20,6 +20,20 @@ public sealed record CodeDeclaration(
 
 public sealed record CodeLocation(string Path, int Line, int StartColumn, int EndColumn);
 
+/// <summary>
+/// Who uses one changed file, handed to the per-file AI tasks: what calls a function says
+/// what it is for. Every declaration with its usage count (zero included — nobody calls it
+/// yet), and a few usages as code. An excerpt is sent whole or left out and counted in
+/// <see cref="OmittedExcerpts"/>, never cut.
+/// </summary>
+public sealed record UsageContext(
+    string Mode, IReadOnlyList<UsageCount> Declarations, IReadOnlyList<UsageExcerpt> Excerpts, int OmittedExcerpts);
+
+public sealed record UsageCount(string Name, int Line, int Usages);
+
+/// <summary>A few lines around one usage. InPullRequest: the using file is changed here too.</summary>
+public sealed record UsageExcerpt(string Name, string Path, int Line, int StartLine, bool InPullRequest, string Text);
+
 public sealed record CodeUsagesRequest(string? Path);
 
 public sealed record CodeSourceRequest(string? Path);

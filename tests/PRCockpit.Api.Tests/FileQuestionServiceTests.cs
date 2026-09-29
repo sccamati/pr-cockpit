@@ -4,6 +4,7 @@ using PRCockpit.Application.PullRequests;
 using PRCockpit.Domain.Analysis;
 using PRCockpit.Domain.PullRequests;
 using PRCockpit.Domain.Review;
+using PRCockpit.Infrastructure.Analysis;
 
 namespace PRCockpit.Api.Tests;
 
@@ -65,18 +66,48 @@ public class FileQuestionServiceTests
         Assert.Equal(["drugie", "trzecie", "czwarte"], sent.Select(turn => turn.Question));
     }
 
+    // What calls the file travels as data in the context the analyzer gets; the instruction
+    // is a constant in CliSummaryAnalyzer and never sees it.
+    [Fact]
+    public async Task AsksWithTheCodeThatUsesTheFile()
+    {
+        var (service, analyzer, _) = Build();
+
+        await service.AskAsync("project", "repo", 1, "/src/file.cs", "Po co to?", null, CancellationToken.None);
+
+        var usages = analyzer.LastContext?.Usages;
+        Assert.NotNull(usages);
+        var excerpt = Assert.Single(usages.Excerpts);
+        Assert.Equal(("/src/Caller.cs", false), (excerpt.Path, excerpt.InPullRequest));
+        Assert.Contains("thing.Run()", excerpt.Text);
+    }
+
+    [Fact]
+    public async Task StillAnswersWhenTheRepositoryCannotBeRead()
+    {
+        var (service, analyzer, client) = Build();
+        client.SnapshotFails = true;
+
+        await service.AskAsync("project", "repo", 1, "/src/file.cs", "Po co to?", null, CancellationToken.None);
+
+        Assert.Equal(1, analyzer.Calls);
+        Assert.Null(analyzer.LastContext?.Usages);
+    }
+
     private static (FileQuestionService Service, FakeAnalyzer Analyzer, FakeClient Client) Build()
     {
         var analyzer = new FakeAnalyzer();
         var client = new FakeClient();
         var service = new FileQuestionService(
-            client, new PullRequestContextService(client), analyzer, new FakeStore());
+            client, new PullRequestContextService(client), analyzer, new FakeStore(),
+            new CodeUsageService(client, new MemorySourceSnapshotCache(), new CodeUsageFinder()));
         return (service, analyzer, client);
     }
 
     private sealed class FakeAnalyzer : IAiSummaryAnalyzer
     {
         public int Calls { get; private set; }
+        public PrContext? LastContext { get; private set; }
 
         private Task<SummaryDraft> Answer()
         {
@@ -86,7 +117,11 @@ public class FileQuestionServiceTests
 
         public Task<SummaryDraft> AnalyzeAsync(PrContext context, CancellationToken ct) => Answer();
         public Task<SummaryDraft> ExplainFileAsync(PrContext context, CancellationToken ct) => Answer();
-        public Task<SummaryDraft> AskFileAsync(PrContext context, FileQuestion question, CancellationToken ct) => Answer();
+        public Task<SummaryDraft> AskFileAsync(PrContext context, FileQuestion question, CancellationToken ct)
+        {
+            LastContext = context;
+            return Answer();
+        }
     }
 
     private sealed class FakeStore : IFileQuestionStore
@@ -132,6 +167,15 @@ public class FileQuestionServiceTests
         public Task<PrCommentThread> SetThreadStatusAsync(string project, string repositoryId, int pullRequestId, int threadId, string? status, CancellationToken ct) => throw new NotSupportedException();
         public Task<FileDiff> GetFileDiffSinceIterationAsync(string project, string repositoryId, int pullRequestId, string path, int iterationId, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<string>> GetChangedPathsSinceIterationAsync(string project, string repositoryId, int pullRequestId, int iterationId, CancellationToken ct) => throw new NotSupportedException();
-        public Task<SourceSnapshot> GetSourceSnapshotAsync(string project, string repositoryId, string commitSha, CancellationToken ct) => throw new NotSupportedException();
+        public bool SnapshotFails { get; set; }
+
+        public Task<SourceSnapshot> GetSourceSnapshotAsync(string project, string repositoryId, string commitSha, CancellationToken ct) =>
+            SnapshotFails
+                ? throw new AzureDevOpsException("Azure DevOps request failed.", 502)
+                : Task.FromResult(new SourceSnapshot(commitSha, new Dictionary<string, string>
+                {
+                    ["/src/file.cs"] = "namespace App; public class Thing { public void Run() { } }",
+                    ["/src/Caller.cs"] = "namespace App;\npublic class Caller\n{\n    public void Go(Thing thing) => thing.Run();\n}",
+                }, 0));
     }
 }
