@@ -28,6 +28,7 @@ public sealed class CliSummaryAnalyzer(
         "A backend change usually reads domain, then data access, then endpoint, then the UI that calls it; " +
         "a change that starts from a button in the UI reads the other way round. Decide from this pull request, not from folder names. " +
         $"Give that order twice: as criticalFiles, up to {criticalFileLimit} files that alone explain the change, " +
+        "never test files, and at least half of the changed files that are not tests, noise or generated, when that fits the limit; " +
         "and as readingOrder, every path in context.changedFiles exactly once, same logic, paths only. " +
         "Every path must be copied exactly from context.changedFiles; never invent one, never repeat one. " +
         "In readingOrder include files whose text was omitted as well; leave nothing out. " +
@@ -69,7 +70,7 @@ public sealed class CliSummaryAnalyzer(
 
     public Task<SummaryDraft> AnalyzeAsync(PrContext context, CancellationToken ct) =>
         // The bigger the pull request, the longer the shortlist is allowed to be — ten files
-        // is a sample, not a starting point, when eighty changed.
+        // is a sample, not a starting point, when eighty changed. "Up to" alone got ten of 77.
         RunAsync("summary", Instruction(SummaryContract.CriticalFileLimit(context.ChangedFiles.Count)), context, ct);
 
     public Task<SummaryDraft> ExplainFileAsync(PrContext context, CancellationToken ct) =>

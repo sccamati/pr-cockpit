@@ -1066,6 +1066,26 @@ wycinki. Kierunek odwrotny („czego ten plik używa” — definicje wołanych 
 dla modelu — dopiero, gdy trzy wycinki na deklarację okażą się za mało. Zapisane wcześniej
 wyjaśnienia zostają bez tej wiedzy, dopóki plik się nie zmieni.
 
+## Wdrożone — dłuższe przejście „kluczowe”
+
+### B-35 — Przy 77 plikach przejście proponowało 10
+
+Status: zrobione 29 wrz 2026. Backend 170/170, frontend 123/123 (zmienione:
+`TheRankingGrowsWithTheChangeAndThenStops` — nowe progi; „duży PR dostaje dłuższą propozycję” —
+40 z 85 plików, plik testu odfiltrowany). **Niepotwierdzone:** czy prawdziwy model przy
+77 plikach faktycznie poda około połowy nietestowych plików i ile dłużej potrwa Summary.
+
+**Przyczyna.** Dwa hamulce: ranking AI mógł mieć do jednej czwartej PR (77 → 20), a domyślna
+ścieżka trybu „kluczowe” była cięta dalej przez `walkPathLength` (jeden plik na osiem, 8–12,
+77 → 10). Instrukcja mówiła tylko „up to N”, więc model i tak podawał mniej.
+
+**Jak działa.** `SummaryContract.CriticalFileLimit` = połowa zmienionych plików, podłoga 10,
+sufit 40 (lustro: `criticalFileLimit` w `useSummary.ts`). Instrukcja każe pomijać testy
+i podać co najmniej połowę plików, które nie są testami, szumem ani plikami generowanymi.
+Frontend dodatkowo wyrzuca z propozycji ścieżki testów (`isTestPath` z `format.ts`), tak jak
+wyrzuca szum; ręcznie z drzewa nadal można je dodać. `walkPathLength` usunięte — domyślny
+wybór w trybie „kluczowe” to cała propozycja.
+
 ## Wdrożone — „Czeka na autora” i link do PR
 
 ### B-36 — Ustawienie „Czeka na autora” i skopiowanie linku do PR bez wychodzenia z aplikacji

@@ -205,11 +205,10 @@ public class SummaryRunnerTests
     [Theory]
     [InlineData(1, 10)]
     [InlineData(20, 10)]
-    [InlineData(40, 10)]
-    [InlineData(44, 11)]
-    [InlineData(84, 21)]
-    [InlineData(100, 25)]
-    [InlineData(208, 25)]   // past this the shortlist stops being short
+    [InlineData(21, 11)]
+    [InlineData(77, 39)]    // half of it, not the ten that proved too few
+    [InlineData(79, 40)]
+    [InlineData(208, 40)]   // past this the shortlist stops being short
     public void TheRankingGrowsWithTheChangeAndThenStops(int changedFiles, int expected)
     {
         Assert.Equal(expected, SummaryContract.CriticalFileLimit(changedFiles));

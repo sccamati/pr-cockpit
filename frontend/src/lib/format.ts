@@ -70,7 +70,7 @@ function usageNoun(count: number): string {
 // tests/, __tests__/, Billing.Tests/, UnitTests/, App.test.ts, x.spec.js, InvoiceTests.cs —
 // but not Contest.cs or latest/.
 const testPaths = [/(^|\/)(__)?tests?(__)?\/|[.\-_]tests?\/|\.(test|spec)\.[cm]?[jt]sx?$/i, /Tests?(\/|\.cs$)/]
-const isTestPath = (path: string) => testPaths.some(pattern => pattern.test(path))
+export const isTestPath = (path: string) => testPaths.some(pattern => pattern.test(path))
 
 // The label over a declaration. "~" marks a count matched by name rather than resolved,
 // and "tylko testy" is the case a reviewer is after: code that nothing but its tests calls.

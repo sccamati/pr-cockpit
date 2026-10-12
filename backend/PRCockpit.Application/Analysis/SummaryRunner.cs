@@ -158,14 +158,15 @@ public static class SummaryContract
 
     /// <summary>
     /// Ten files is enough to open a pull request of twenty and far too few to open one of
-    /// eighty: at that size a ranking of ten is not a starting point, it is a sample. So the
-    /// ranking grows with the change, roughly one named file per four changed ones, and
-    /// stops at <see cref="MaxCriticalFiles"/> — past that the list stops being a shortlist.
+    /// eighty: at that size a ranking of ten is not a starting point, it is a sample. Ten of
+    /// seventy-seven proved too few in use, so the ranking may name up to half the change —
+    /// the model is asked to leave tests out, which the reader skips anyway — and stops at
+    /// <see cref="MaxCriticalFiles"/>, past which the list stops being a shortlist.
     /// <para>The same rule runs in the browser (criticalFileLimit in frontend/src/useSummary.ts). Keep them in step.</para>
     /// </summary>
     public const int MinCriticalFiles = 10;
-    public const int MaxCriticalFiles = 25;
+    public const int MaxCriticalFiles = 40;
 
     public static int CriticalFileLimit(int changedFileCount) =>
-        Math.Clamp((changedFileCount + 3) / 4, MinCriticalFiles, MaxCriticalFiles);
+        Math.Clamp((changedFileCount + 1) / 2, MinCriticalFiles, MaxCriticalFiles);
 }

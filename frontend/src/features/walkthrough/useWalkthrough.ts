@@ -4,13 +4,6 @@ import { same } from '@/lib/format'
 import type { useReviewProgress } from './useReviewProgress'
 import type { useSummary } from '@/features/context/useSummary'
 
-// ponytail: a named rule, not configuration — a one-person local tool has no settings file.
-// The path grows more slowly than the ranking (criticalFileLimit in useSummary.ts), because
-// a walkthrough with no visible end is the thing it replaces.
-export function walkPathLength(changedFiles: number): number {
-  return Math.min(12, Math.max(8, Math.ceil(changedFiles / 8)))
-}
-
 /**
  * Przejście, the guided walkthrough: the entry screen with its three scopes, walking the
  * accepted path, and the closing screen. The path itself and the position on it are
@@ -112,7 +105,6 @@ export function useWalkthrough({
     if (walkMode.value === 'all') return fullProposal.value
     return criticalProposal.value
       .filter(file => reviewState(file.path) !== 'current')
-      .slice(0, walkPathLength(details.value?.changedFiles.length ?? 0))
       .map(file => file.path)
   })
   const walkPick = computed(() => walkPicked.value ?? walkDefaultPick.value)

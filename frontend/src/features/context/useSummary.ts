@@ -1,17 +1,16 @@
 import { computed, ref } from 'vue'
 import { api, type SummaryResponse } from '@/api'
 import type { PrScope } from '@/cockpit'
-import { message } from '@/lib/format'
+import { isTestPath, message } from '@/lib/format'
 
 // ponytail: the brief calls this configuration. A one-person local tool has no settings
 // file, so it is a named rule here; a settings screen is the upgrade path.
 // Ten files is enough to open a pull request of twenty and far too few to open one of
 // eighty — at that size a ranking of ten is a sample, not a starting point, so the ranking
-// grows with the change. It is the same rule the backend applies
-// (SummaryContract.CriticalFileLimit); the walkthrough's path grows more slowly
-// (walkPathLength in useWalkthrough.ts).
+// grows with the change, up to half of it. It is the same rule the backend applies
+// (SummaryContract.CriticalFileLimit), and the walkthrough's "kluczowe" path is this list.
 export function criticalFileLimit(changedFiles: number): number {
-  return Math.min(25, Math.max(10, Math.ceil(changedFiles / 4)))
+  return Math.min(40, Math.max(10, Math.ceil(changedFiles / 2)))
 }
 
 /** The saved or freshly generated whole-PR Summary, and the AI ranking it carries. */
@@ -37,9 +36,10 @@ export function useSummary({ details, projectId, repositoryId }: PrScope) {
   const criticalProposal = computed(() => {
     // US-P3: a file classified as noise never enters the AI proposal. It can still be added
     // by hand from the tree, which is the whole difference between a proposal and a rule.
+    // Tests likewise: the model is told to leave them out, and nobody walks them anyway.
     const paths = new Map((details.value?.changedFiles ?? []).map(file => [file.path, file]))
     return (summary.value?.criticalFiles ?? [])
-      .filter(file => paths.get(file.path) && !paths.get(file.path)!.category)
+      .filter(file => paths.get(file.path) && !paths.get(file.path)!.category && !isTestPath(file.path))
       .slice(0, criticalFileLimit(details.value?.changedFiles.length ?? 0))
   })
   // The other half of the same ranking: every file of the pull request, in the order the AI

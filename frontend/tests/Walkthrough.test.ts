@@ -290,36 +290,37 @@ describe('tryb wszystkich plików', () => {
 
 describe('duży PR dostaje dłuższą propozycję', () => {
   const many = Array.from({ length: 84 }, (_unused, index) => `/src/file${index}.cs`)
+  const test = '/tests/file0.test.ts'
 
   beforeEach(() => {
     const big = {
-      ...details, changedFilesCount: many.length,
-      changedFiles: many.map((path, index) => ({
+      ...details, changedFilesCount: many.length + 1,
+      changedFiles: [test, ...many].map((path, index) => ({
         path, changeType: 'edit', originalPath: null, objectId: String(index % 10).repeat(40),
       })),
     }
     api.pullRequests.mockResolvedValue([big])
     api.pullRequest.mockResolvedValue(big)
-    // 84 changed files allow a ranking of 21; the model names all of them.
+    // 85 changed files allow a ranking of 40; the model names all of them, and a test first
+    // that never reaches the proposal.
     api.savedSummary.mockResolvedValue({
-      result: summary(many.slice(0, 21).map((path, index) => ({
+      result: summary([test, ...many.slice(0, 40)].map((path, index) => ({
         path, role: `Rola ${index + 1}.`, why: `Powód ${index + 1}.`,
-      })), many),
+      })), [test, ...many]),
       savedAt: '2026-09-01T12:00:00Z',
     })
   })
 
-  it('offers more than ten files and a path longer than eight', async () => {
+  it('offers half of a big pull request and leaves the tests out', async () => {
     const wrapper = await openPr()
 
-    // The whole ranking is on offer...
-    expect(wrapper.findAll('.walk-file-pick input')).toHaveLength(21)
-    // ...and the path picked by default grows too, but far more slowly: 84 / 8 = 11.
-    expect(pickedPaths(wrapper)).toEqual(many.slice(0, 11))
+    // The whole ranking is on offer and picked by default, the test file is not.
+    expect(wrapper.findAll('.walk-file-pick input')).toHaveLength(40)
+    expect(pickedPaths(wrapper)).toEqual(many.slice(0, 40))
 
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.walk-progress').text()).toBe('Krok 1 z 11')
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 1 z 40')
     wrapper.unmount()
   })
 
