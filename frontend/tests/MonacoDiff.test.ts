@@ -368,6 +368,23 @@ describe('Monaco reading options', () => {
     wrapper.unmount()
   })
 
+  // A bare layout() re-measures the editor's own root, pinned to its first height, so the
+  // editor never shrank when the comment chips appeared above it — found in a real browser.
+  it('lays the editor out at the size of its container', () => {
+    const wrapper = mount(MonacoDiff, {
+      props: { path: '/src/sample.ts', originalPath: null, originalText: 'old', modifiedText: 'new' },
+    })
+    const host = wrapper.element as HTMLElement
+    Object.defineProperty(host, 'clientWidth', { value: 800 })
+    Object.defineProperty(host, 'clientHeight', { value: 420 })
+
+    mocks.resizeCallbacks[0]!()
+
+    const editor = vi.mocked(monaco.editor.createDiffEditor).mock.results[0]!.value
+    expect(editor.layout).toHaveBeenCalledWith({ width: 800, height: 420 })
+    wrapper.unmount()
+  })
+
   it('switches between inline and side-by-side without recreating the editor', async () => {
     const wrapper = mount(MonacoDiff, {
       props: {

@@ -324,8 +324,13 @@ onMounted(() => {
   editor.setModel({ original: originalModel, modified: modifiedModel })
   editor.getOriginalEditor().updateOptions({ 'semanticHighlighting.enabled': true })
   editor.getModifiedEditor().updateOptions({ 'semanticHighlighting.enabled': true })
-  resizeObserver = new ResizeObserver(() => editor?.layout())
-  resizeObserver.observe(container.value)
+  // The size has to be passed in: a bare layout() measures the editor's own root, which the
+  // first layout pinned to a pixel height. The editor then never shrinks when something
+  // appears above it — the comment chips, an explanation — and its tail ends up under the
+  // walkthrough bar, out of reach.
+  const host = container.value
+  resizeObserver = new ResizeObserver(() => editor?.layout({ width: host.clientWidth, height: host.clientHeight }))
+  resizeObserver.observe(host)
   darkQuery?.addEventListener?.('change', applyTheme)
   // Open on the first change rather than an unchanged prologue. Disposed after one
   // shot so later recomputes never yank the view away from where the reader is.

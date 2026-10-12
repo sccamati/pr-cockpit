@@ -1116,3 +1116,25 @@ odpowiada komunikatem z nazwą zakresu, a reszta aplikacji działa jak dotąd.
 **Świadomie pominięte (`ponytail`).** Zatwierdzanie i odrzucanie — zostają w przeglądarce, gdzie
 widać polityki. Zapasowe kopiowanie bez `navigator.clipboard` — aplikacja działa tylko na localhost,
 gdzie to API jest dostępne.
+
+## Wdrożone — edytor nie oddawał wysokości
+
+### B-37 — Przy komentarzu w pliku dół diffu chował się pod paskiem przejścia
+
+Status: naprawione 12 paź 2026, pokryte testem frontendu (`lays the editor out at the size of
+its container`), frontend 128/128, `vue-tsc` przechodzi, `npm run visual` bez zmian.
+**Sprawdzone w prawdziwej przeglądarce** (headless Chrome, aplikacja na atrapach): przed
+poprawką po dosunięciu 60 px nad edytor jego korzeń zostawał na 700 px w kontenerze 650 px
+i wystawał pod pasek przejścia, po poprawce oba mają 650 px, a przewinięcie dojeżdża do
+ostatniej linii. **Niepotwierdzone na prawdziwym PR** (#2102 ze zgłoszenia).
+
+**Objaw.** Zgłoszenie z 12 paź 2026: w pliku z komentarzem dół pliku był ucięty — ostatnie
+linie siedziały pod paskiem „Przeczytane, dalej”.
+
+**Przyczyna.** Bez `automaticLayout` diff editor przy pierwszym układzie przypina swojemu
+korzeniowi wysokość w pikselach, a `layout()` bez argumentu mierzy ten korzeń, nie nasz
+kontener. `ResizeObserver` na kontenerze odpalał się, ale edytor odczytywał własną, starą
+wysokość — nigdy nie malał. Wszystko, co pojawia się nad edytorem po jego zamontowaniu
+(wiersz „Komentarze w pliku”, wyjaśnienie, czat), wypychało jego dół poza panel.
+
+**Poprawka.** `ResizeObserver` podaje `layout()` wymiary kontenera wprost.
