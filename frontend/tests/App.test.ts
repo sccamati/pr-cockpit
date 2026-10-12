@@ -32,6 +32,7 @@ const api = vi.hoisted(() => ({
   config: vi.fn(),
   codeUsages: vi.fn(),
   codeSource: vi.fn(),
+  setVote: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({ api }))
@@ -552,6 +553,7 @@ describe('PR review', () => {
     await flushPromises()
 
     expect(wrapper.find('.pr-workspace').classes()).toContain('pr-workspace--readonly')
+    expect(wrapper.find('.pr-header-vote').exists()).toBe(false)
     await wrapper.find('.comments-open').trigger('click')
     expect(wrapper.find('.comments-off').exists()).toBe(true)
     expect(wrapper.find('.thread-new').attributes('disabled')).toBeDefined()
@@ -1310,6 +1312,65 @@ describe('moje nierozwiązane wątki', () => {
 
     // Every comment would say "not mine", so the filter could only ever show an empty list.
     expect(wrapper.findAll('.comments-toolbar .file-filter button')).toHaveLength(2)
+    wrapper.unmount()
+  })
+})
+
+describe('PR header actions', () => {
+  async function openPr(pr: object) {
+    api.pullRequest.mockResolvedValue(pr)
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('sets waiting for author and takes it back', async () => {
+    api.setVote.mockImplementation(async (_project, _repository, _id, vote) => ({ name: 'Ja', vote, isMine: true }))
+    const wrapper = await openPr({ ...details, reviewers: [{ name: 'Jan', vote: 10 }] })
+    const vote = () => wrapper.find('.pr-header-vote')
+    expect(vote().attributes('aria-pressed')).toBe('false')
+
+    await vote().trigger('click')
+    await flushPromises()
+    expect(api.setVote).toHaveBeenLastCalledWith('project', 'repo-a', 123, -5)
+    expect(vote().attributes('aria-pressed')).toBe('true')
+    expect(wrapper.text()).toContain('Ja · Czeka na autora')
+
+    await vote().trigger('click')
+    await flushPromises()
+    expect(api.setVote).toHaveBeenLastCalledWith('project', 'repo-a', 123, 0)
+    expect(vote().attributes('aria-pressed')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('drops a vote answer that arrives after leaving the pull request', async () => {
+    let answer!: (value: unknown) => void
+    api.setVote.mockReturnValue(new Promise(resolve => { answer = resolve }))
+    const wrapper = await openPr(details)
+
+    await wrapper.find('.pr-header-vote').trigger('click')
+    await wrapper.find('.back-button').trigger('click')
+    answer({ name: 'Ja', vote: -5, isMine: true })
+    await flushPromises()
+
+    expect(details.reviewers).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('copies the link to the pull request', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const url = 'https://dev.azure.com/org/Project/_git/Repo%20A/pullrequest/123'
+    const wrapper = await openPr({ ...details, webUrl: url })
+
+    const link = wrapper.find('.pr-header-link')
+    await link.trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledWith(url)
+    expect(link.text()).toContain('Skopiowano')
     wrapper.unmount()
   })
 })

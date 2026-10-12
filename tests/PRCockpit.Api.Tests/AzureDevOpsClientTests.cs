@@ -110,7 +110,7 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal(["First change", "Second change"], details.Commits.Select(commit => commit.Message));
         Assert.Equal("78", Assert.Single(details.WorkItems).Id);
         Assert.Contains(visited, path => path.Contains("Project%20A"));
-        Assert.Equal(6, visited.Count);
+        Assert.Equal(7, visited.Count);   // including who the PAT belongs to, for the own vote
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public sealed class AzureDevOpsClientTests
         {
             var path = request.RequestUri!.PathAndQuery;
             if (path.Contains("/iterations?")) return Json("""{"value":[]}""");
-            if (path.Contains("/workitems?")) return Json("""{"value":[]}""");
+            if (path.Contains("/workitems?") || path.Contains("connectionData")) return Json("""{"value":[]}""");
             if (path.Contains("/commits?"))
             {
                 commitRequests.Add(path);
@@ -198,6 +198,7 @@ public sealed class AzureDevOpsClientTests
                 return Json("""{"objectId":"BLOB"}""".Replace("BLOB", blob));
             }
             if (path.Contains("/blobs/")) return Bytes("text");
+            if (path.Contains("connectionData")) return Json("{}");
             if (path.EndsWith("/123?api-version=7.1")) return Json("""
                 {"pullRequestId":123,"title":"Change","status":"active","creationDate":"2026-09-01T12:00:00Z",
                  "createdBy":{"displayName":"Anna"},"repository":{"name":"Repo"},
@@ -684,6 +685,7 @@ public sealed class AzureDevOpsClientTests
             () => client.SetThreadStatusAsync("proj", "repo", 1, 2, "fixed", CancellationToken.None),
             () => client.UpdateCommentAsync("proj", "repo", 1, 2, 3, new EditComment("Nowa."), CancellationToken.None),
             () => client.DeleteCommentAsync("proj", "repo", 1, 2, 3, CancellationToken.None),
+            () => client.SetMyVoteAsync("proj", "repo", 1, -5, CancellationToken.None),
         })
         {
             var error = await Assert.ThrowsAsync<AzureDevOpsException>(write);
@@ -752,6 +754,63 @@ public sealed class AzureDevOpsClientTests
             .SetThreadStatusAsync("proj", "repo", 1, 2, "resolved", CancellationToken.None))).StatusCode);
         Assert.Equal(400, (await Assert.ThrowsAsync<AzureDevOpsException>(() => client
             .CreateCommentThreadAsync("proj", "repo", 1, new NewCommentThread("   ", null, null), CancellationToken.None))).StatusCode);
+        // Approve and reject stay in the web UI.
+        Assert.Equal(400, (await Assert.ThrowsAsync<AzureDevOpsException>(() => client
+            .SetMyVoteAsync("proj", "repo", 1, 10, CancellationToken.None))).StatusCode);
+    }
+
+    [Fact]
+    public async Task VotesAsThePatOwnerAndReadsTheVoteBack()
+    {
+        var sent = new List<(HttpMethod Method, string Path, string? Body)>();
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            if (request.RequestUri!.PathAndQuery.Contains("connectionData"))
+                return Json("""{"authenticatedUser":{"id":"ME"}}""");
+            sent.Add((request.Method, request.RequestUri.AbsolutePath, request.Content?.ReadAsStringAsync().Result));
+            return Json("""{"id":"ME","displayName":"Ja","vote":-5}""");
+        }));
+
+        var reviewer = await Client(http, allowComments: true)
+            .SetMyVoteAsync("proj", "repo", 123, -5, CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Put, sent[0].Method);
+        Assert.EndsWith("/pullrequests/123/reviewers/ME", sent[0].Path);
+        Assert.Equal("""{"vote":-5}""", sent[0].Body);
+        Assert.Equal(HttpMethod.Get, sent[1].Method);
+        Assert.Equal(new Reviewer("Ja", -5, IsMine: true), reviewer);
+    }
+
+    [Fact]
+    public async Task NamesTheCodeWriteScopeWhenAVoteIsRefused()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+            request.RequestUri!.PathAndQuery.Contains("connectionData")
+                ? Json("""{"authenticatedUser":{"id":"ME"}}""")
+                : new HttpResponseMessage(HttpStatusCode.Forbidden)));
+
+        var error = await Assert.ThrowsAsync<AzureDevOpsException>(() => Client(http, allowComments: true)
+            .SetMyVoteAsync("proj", "repo", 123, -5, CancellationToken.None));
+
+        Assert.Equal(503, error.StatusCode);
+        Assert.Contains("Code (read & write)", error.Message);
+    }
+
+    [Fact]
+    public void MarksTheOwnVoteAndBuildsTheWebLink()
+    {
+        using var json = JsonDocument.Parse("""
+            {"pullRequestId":123,"title":"T","status":"active","creationDate":"2026-09-01T12:00:00Z",
+             "createdBy":{"displayName":"Anna"},"repository":{"name":"Shop Api","project":{"name":"Sklep"}},
+             "sourceRefName":"refs/heads/f","targetRefName":"refs/heads/main",
+             "reviewers":[{"id":"ME","displayName":"Ja","vote":-5},{"id":"X","displayName":"Jan","vote":10}]}
+            """);
+
+        var details = AzureDevOpsMapper.Details(json.RootElement, [], [], [], me: "ME");
+
+        Assert.Equal([true, false], details.Reviewers.Select(reviewer => reviewer.IsMine));
+        Assert.Equal("https://dev.azure.com/org/Sklep/_git/Shop%20Api/pullrequest/123",
+            AzureDevOpsMapper.WebUrl(json.RootElement, "org"));
     }
 
     // A PAT without the threads scope is our configuration fault, not an Azure DevOps

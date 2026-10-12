@@ -21,6 +21,7 @@ const bigFiles = Array.from({ length: 9 }, (_, i) => ({ path: `/src/Billing/Step
 const base = {
   author: 'Anna Nowak', repository: 'Shop', status: 'active', createdAt: '2026-09-01T12:00:00Z',
   sourceBranch: 'feature/orders-total', targetBranch: 'main', reviewers: [{ name: 'Jan Kowalski', vote: 10 }],
+  webUrl: 'https://dev.azure.com/org/Sklep/_git/Shop/pullrequest/123',
   commits: [
     { id: 'aaaaaaaaa1', message: 'Compute order total\nBody', author: 'Anna Nowak', authoredAt: '2026-09-01T12:00:00Z' },
     { id: 'bbbbbbbbb2', message: 'Validate orders', author: 'Jan Kowalski', authoredAt: null },

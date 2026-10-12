@@ -56,6 +56,14 @@ public interface IAzureDevOpsClient
         CancellationToken ct);
 
     /// <summary>
+    /// The PAT owner's vote, limited to "waiting for author" (-5) and taking it back (0) —
+    /// approving and rejecting stay in the web UI. Guarded by AzureDevOps:AllowComments
+    /// like the comment writes, and returns the vote as Azure DevOps stored it.
+    /// </summary>
+    Task<Reviewer> SetMyVoteAsync(
+        string project, string repositoryId, int pullRequestId, int vote, CancellationToken ct);
+
+    /// <summary>
     /// Serves a diff from an already-fetched pull request, so building a context package
     /// does not refetch the iteration and change list once per file.
     /// </summary>

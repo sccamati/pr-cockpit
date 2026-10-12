@@ -135,6 +135,10 @@ The PAT also needs **PR threads (read & write)**. Leave **Code** on Read — `vs
 and deleting refs, which this app never does. With the switch off or the scope missing, the backend refuses the write
 before any request leaves the machine and says which of the two is wrong.
 
+The header's **⏳ Czeka na autora** button (your "waiting for author" vote, and taking it back) is behind the same switch
+but is the one exception to the rule above: Azure DevOps only accepts a vote from a PAT with **Code (read & write)**.
+Without that scope the button answers with a message naming it; everything else keeps working on Code: Read.
+
 </details>
 
 <details>

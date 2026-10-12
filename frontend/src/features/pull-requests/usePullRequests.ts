@@ -25,12 +25,37 @@ export function usePullRequests({ onReset, onOpened }: {
   const progressLoading = ref(false)
   const progressError = ref('')
   const fileReviewProgress = ref<Record<number, { reviewed: number; total: number }>>({})
+  const voteSaving = ref(false)
+  const voteError = ref('')
   let requestId = 0
 
   function resetPullRequest() {
     onReset()
     details.value = null
     error.value = ''
+    voteSaving.value = false
+    voteError.value = ''
+  }
+
+  // "Waiting for author" and taking it back — the only vote offered here; approving stays
+  // in the web UI. The answer is Azure DevOps' stored vote, put in place of our own row.
+  async function toggleWaitingForAuthor() {
+    const pr = details.value
+    if (!pr || voteSaving.value) return
+    const current = requestId
+    const vote = pr.reviewers.find(reviewer => reviewer.isMine)?.vote === -5 ? 0 : -5
+    voteSaving.value = true
+    voteError.value = ''
+    try {
+      const mine = await api.setVote(projectId.value, repositoryId.value, pr.id, vote)
+      if (current !== requestId) return
+      const index = pr.reviewers.findIndex(reviewer => reviewer.isMine)
+      pr.reviewers = index < 0 ? [...pr.reviewers, mine] : pr.reviewers.map((reviewer, i) => i === index ? mine : reviewer)
+    } catch (cause) {
+      if (current === requestId) voteError.value = message(cause)
+    } finally {
+      if (current === requestId) voteSaving.value = false
+    }
   }
 
   function resetListProgress() {
@@ -169,7 +194,8 @@ export function usePullRequests({ onReset, onOpened }: {
 
   return {
     projects, repositories, pullRequests, details, projectId, repositoryId, loading, error,
-    checklistProgress, progressLoading, progressError, fileReviewProgress,
+    checklistProgress, progressLoading, progressError, fileReviewProgress, voteSaving, voteError,
     loadProjects, loadRepositories, loadPullRequests, openPullRequest, backToList, retryChecklistProgress,
+    toggleWaitingForAuthor,
   }
 }

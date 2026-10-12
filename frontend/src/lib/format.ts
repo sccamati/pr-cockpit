@@ -27,7 +27,8 @@ export function commitTitle(message: string): string {
 
 export function reviewerVote(vote: number): string {
   if (vote >= 5) return 'Zatwierdzono'
-  if (vote < 0) return 'Zmiany wymagane'
+  if (vote === -5) return 'Czeka na autora'
+  if (vote < 0) return 'Odrzucono'
   return 'Bez decyzji'
 }
 

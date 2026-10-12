@@ -2,7 +2,9 @@ namespace PRCockpit.Domain.PullRequests;
 
 public record Project(string Id, string Name);
 public record Repository(string Id, string Name);
-public record Reviewer(string Name, int Vote);
+// IsMine marks the PAT owner, so the UI can show and take back its own vote.
+public record Reviewer(string Name, int Vote, bool IsMine = false);
+public record VoteUpdate(int Vote);
 public record WorkItem(string Id, string Url);
 // ObjectId is the blob id of the file at this iteration. It changes if and only if this
 // file's content changed, which is what lets a reviewed marker survive an unrelated commit.
@@ -76,7 +78,9 @@ public record PullRequestDetails(
     IReadOnlyList<WorkItem> WorkItems,
     string? BaseCommitSha = null,
     string? HeadCommitSha = null,
-    IReadOnlyList<PrIteration>? Iterations = null);
+    IReadOnlyList<PrIteration>? Iterations = null,
+    // The pull request in the Azure DevOps web UI; null when Azure DevOps left out the project name.
+    string? WebUrl = null);
 
 public sealed class AzureDevOpsException(string message, int statusCode) : Exception(message)
 {

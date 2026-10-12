@@ -73,9 +73,11 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         var commitsTask = GetCommitsAsync(path, ct);
         var workItemsTask = GetWorkItemsAsync(path, ct);
         var changesTask = IterationChangesAsync();
+        // Who the PAT belongs to, so the header can show and take back your own vote.
+        var meTask = CurrentUserIdAsync(ct);
         try
         {
-            await Task.WhenAll(prTask, commitsTask, workItemsTask, changesTask);
+            await Task.WhenAll(prTask, commitsTask, workItemsTask, changesTask, meTask);
         }
         catch
         {
@@ -87,11 +89,14 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         var (iterations, changedFiles) = await changesTask;
         var (pr, _) = await prTask;
         using (pr)
-            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, await commitsTask, await workItemsTask) with
+            return AzureDevOpsMapper.Details(pr.RootElement, changedFiles, await commitsTask, await workItemsTask,
+                await meTask) with
             {
                 BaseCommitSha = iterations.BaseCommit,
                 HeadCommitSha = iterations.SourceCommit,
-                Iterations = iterations.All
+                Iterations = iterations.All,
+                // SendAsync has validated the organization by now; every call above went through it.
+                WebUrl = AzureDevOpsMapper.WebUrl(pr.RootElement, configuration["AzureDevOps:Organization"]!)
             };
 
         async Task<(IterationSet, IReadOnlyList<ChangedFile>)> IterationChangesAsync()
@@ -282,6 +287,23 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         return await WriteAsync(HttpMethod.Patch,
             $"{PullRequestPath(project, repositoryId)}/{pullRequestId}/threads/{threadId}?{ApiVersion}",
             new { status = value }, ct);
+    }
+
+    public async Task<Reviewer> SetMyVoteAsync(
+        string project, string repositoryId, int pullRequestId, int vote, CancellationToken ct)
+    {
+        RequireCommentsEnabled();
+        if (pullRequestId <= 0) throw new AzureDevOpsException("Invalid pull request ID.", 400);
+        // A closed set on purpose: waiting for author and no vote. Approve and reject stay
+        // in the web UI, where the policies and the merge they unlock are visible.
+        if (vote is not (-5 or 0)) throw new AzureDevOpsException("Only waiting for author or no vote can be set.", 400);
+        var me = await CurrentUserIdAsync(ct) ??
+            throw new AzureDevOpsException("Azure DevOps did not say who the access token belongs to.", 502);
+
+        var path = $"{PullRequestPath(project, repositoryId)}/{pullRequestId}/reviewers/{Uri.EscapeDataString(me)}?{ApiVersion}";
+        (await SendAsync(path, "application/json", ct, HttpMethod.Put, new { vote })).Dispose();
+        var (json, _) = await GetAsync(path, ct);
+        using (json) return AzureDevOpsMapper.Reviewer(json.RootElement, me);
     }
 
     private async Task<PrCommentThread> WriteAsync(
@@ -733,6 +755,8 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             // Editing or deleting somebody else's comment is refused by Azure DevOps, and
             // that is a 403 about ownership, not a configuration fault on our side.
             var isComment = isWrite && path.Contains("/comments/", StringComparison.Ordinal);
+            // A vote needs a different scope than a comment, so the fix named must differ too.
+            var isVote = isWrite && path.Contains("/reviewers/", StringComparison.Ordinal);
             var status = response.StatusCode switch
             {
                 HttpStatusCode.Forbidden when isComment => 403,
@@ -747,6 +771,8 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
             {
                 HttpStatusCode.Forbidden when isComment =>
                     "Azure DevOps refused this change. You can only edit or delete your own comments.",
+                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden when isVote =>
+                    "The personal access token cannot vote. Voting needs the \"Code (read & write)\" scope.",
                 HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden when isWrite =>
                     "The personal access token cannot write comments. Add the \"PR threads (read & write)\" scope; Code stays on Read.",
                 HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "Azure DevOps rejected the configured credentials or access.",

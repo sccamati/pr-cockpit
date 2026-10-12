@@ -1,6 +1,7 @@
 export interface Project { id: string; name: string }
 export interface Repository { id: string; name: string }
-export interface Reviewer { name: string; vote: number }
+// isMine marks the PAT owner, whose "waiting for author" vote the header can set and take back.
+export interface Reviewer { name: string; vote: number; isMine?: boolean }
 export interface WorkItem { id: string; url: string }
 // category is computed by the backend: null for ordinary code, otherwise the kind of
 // noise (lockFile, snapshot, generated, minified, buildOutput).
@@ -94,6 +95,8 @@ export interface PullRequestDetails extends PullRequestSummary {
   baseCommitSha?: string | null
   headCommitSha?: string | null
   iterations?: PrIteration[] | null
+  // The pull request in the Azure DevOps web UI; null when the backend could not build it.
+  webUrl?: string | null
 }
 
 export interface CriticalFile { path: string; role: string; why: string }
@@ -254,6 +257,9 @@ export const api = {
     del<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}/comments/${commentId}`),
   setThreadStatus: (project: string, repository: string, id: number, threadId: number, status: string) =>
     patch<PrCommentThread>(`${location(project, repository)}/pull-requests/${id}/threads/${threadId}`, { status }),
+  // Only -5 (waiting for author) and 0 (no vote); the backend refuses anything else.
+  setVote: (project: string, repository: string, id: number, vote: -5 | 0) =>
+    put<Reviewer>(`${location(project, repository)}/pull-requests/${id}/vote`, { vote }),
   csharpHovers: (originalText: string, modifiedText: string, signal?: AbortSignal) =>
     post<CSharpHovers>('/csharp/hovers', { originalText, modifiedText }, signal),
   generateSummary: (project: string, repository: string, id: number) =>

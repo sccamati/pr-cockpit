@@ -107,6 +107,11 @@ api.MapPatch($"{PullRequests}/{{pullRequestId:int}}/threads/{{threadId:int}}", a
     IAzureDevOpsClient client, CancellationToken ct) =>
     await Execute(() => client.SetThreadStatusAsync(project, repositoryId, pullRequestId, threadId, update.Status, ct)));
 
+api.MapPut($"{PullRequests}/{{pullRequestId:int}}/vote", async (
+    string project, string repositoryId, int pullRequestId, VoteUpdate update,
+    IAzureDevOpsClient client, CancellationToken ct) =>
+    await Execute(() => client.SetMyVoteAsync(project, repositoryId, pullRequestId, update.Vote, ct)));
+
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/diff", async (
     string project, string repositoryId, int pullRequestId, string path, int? sinceIteration,
     IAzureDevOpsClient client, CancellationToken ct) =>

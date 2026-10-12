@@ -21,11 +21,10 @@ public static class AzureDevOpsMapper
 
     public static PullRequestDetails Details(
         JsonElement value, IReadOnlyList<ChangedFile> changedFiles, IReadOnlyList<Commit> commits,
-        IReadOnlyList<WorkItem> workItems)
+        IReadOnlyList<WorkItem> workItems, string? me = null)
     {
         var reviewers = value.TryGetProperty("reviewers", out var array)
-            ? array.EnumerateArray().Select(item => new Reviewer(
-                RequiredString(item, "displayName"), RequiredInt(item, "vote"))).ToArray()
+            ? array.EnumerateArray().Select(item => Reviewer(item, me)).ToArray()
             : [];
 
         return new PullRequestDetails(
@@ -44,6 +43,22 @@ public static class AzureDevOpsMapper
             commits.Count,
             commits,
             workItems);
+    }
+
+    public static Reviewer Reviewer(JsonElement value, string? me) => new(
+        RequiredString(value, "displayName"), RequiredInt(value, "vote"),
+        me is not null && OptionalString(value, "id") == me);
+
+    // Azure DevOps sends no browser link for a pull request, so it is built from the names
+    // the way the web UI addresses it. No project name, no link — never a guessed one.
+    public static string? WebUrl(JsonElement value, string organization)
+    {
+        var repository = value.GetProperty("repository");
+        var project = repository.TryGetProperty("project", out var item) && item.ValueKind == JsonValueKind.Object
+            ? OptionalString(item, "name") : null;
+        return project is null ? null :
+            $"https://dev.azure.com/{organization}/{Uri.EscapeDataString(project)}/_git/" +
+            $"{Uri.EscapeDataString(RequiredString(repository, "name"))}/pullrequest/{RequiredInt(value, "pullRequestId")}";
     }
 
     public static ChangedFile ChangedFile(JsonElement value) => new(

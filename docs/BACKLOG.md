@@ -1065,3 +1065,34 @@ całego PR sekcji nie dostaje.
 wycinki. Kierunek odwrotny („czego ten plik używa” — definicje wołanych metod) i pętla narzędzi
 dla modelu — dopiero, gdy trzy wycinki na deklarację okażą się za mało. Zapisane wcześniej
 wyjaśnienia zostają bez tej wiedzy, dopóki plik się nie zmieni.
+
+## Wdrożone — „Czeka na autora” i link do PR
+
+### B-36 — Ustawienie „Czeka na autora” i skopiowanie linku do PR bez wychodzenia z aplikacji
+
+Status: zrobione 12 paź 2026 na prośbę użytkownika. Backend 173/173 (nowe:
+`VotesAsThePatOwnerAndReadsTheVoteBack`, `NamesTheCodeWriteScopeWhenAVoteIsRefused`,
+`MarksTheOwnVoteAndBuildsTheWebLink`, głos dopisany do `RefusesToWriteWhileTheSwitchIsOff`
+i do odrzucenia nieznanych wartości), frontend 126/126 (nowe: ustawienie i cofnięcie głosu,
+spóźniona odpowiedź po wyjściu z PR, kopiowanie linku; w trybie tylko do odczytu przycisku głosu
+nie ma). `npm run visual`: zmienił się tylko nagłówek PR. **Niepotwierdzone:** głos na prawdziwym
+PR (wymaga PAT z „Code (read & write)” — patrz niżej) i czy złożony link otwiera PR przy nazwach
+projektu lub repozytorium ze spacją.
+
+**Jak działa.** W nagłówku PR są dwa przyciski. „⏳ Czeka na autora” woła `PUT .../vote`
+z -5, a gdy mój głos już jest -5 — z 0; backend przyjmuje tylko te dwie wartości, robi
+`PUT .../reviewers/{ja}` i czyta głos z powrotem. Szczegóły PR niosą `isMine` przy reviewerach
+(tożsamość z `connectionData`, pobierana równolegle), więc stan przycisku przetrwa ponowne
+otwarcie PR. Głos stoi za `AzureDevOps:AllowComments`; gdy pisanie jest wyłączone, przycisku nie
+ma. „🔗 Link” kopiuje `webUrl` — Azure DevOps nie zwraca adresu PR w przeglądarce, więc backend
+składa go z organizacji i nazw projektu i repozytorium. W szynie głos -5 czyta się teraz
+„Czeka na autora”, a -10 „Odrzucono” (wcześniej oba „Zmiany wymagane”). Poniżej 1200 px
+przyciski tracą podpisy, poniżej 900 px znika gałąź, żeby tytuł nie zniknął pierwszy.
+
+**Zakres PAT.** Głos wymaga `vso.code_write` („Code (read & write)”) — to wyjątek od zasady
+„Code zostaje na Read” z PLAN.md, bo ten zakres pozwala też pushować kod. Bez niego przycisk
+odpowiada komunikatem z nazwą zakresu, a reszta aplikacji działa jak dotąd.
+
+**Świadomie pominięte (`ponytail`).** Zatwierdzanie i odrzucanie — zostają w przeglądarce, gdzie
+widać polityki. Zapasowe kopiowanie bez `navigator.clipboard` — aplikacja działa tylko na localhost,
+gdzie to API jest dostępne.
