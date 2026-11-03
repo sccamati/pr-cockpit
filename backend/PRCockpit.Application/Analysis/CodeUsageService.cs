@@ -78,6 +78,58 @@ public sealed class CodeUsageService(
         }
     }
 
+    // A question that crosses files needs the files it crosses into. ~40k tokens on top of the
+    // file itself: room for the rest of a typical pull request's code, not its whole test suite.
+    public const int MaxRelatedFileCharacters = 60_000;
+    public const int MaxRelatedCharacters = 150_000;
+
+    /// <summary>
+    /// The other files of the pull request for a question about one of them, read from the
+    /// snapshot the usages already hold — no further Azure DevOps calls. Null when the
+    /// repository cannot be read, like the usages.
+    /// </summary>
+    public async Task<IReadOnlyList<RelatedFile>?> RelatedForAiAsync(
+        string project, string repositoryId, PullRequestDetails details, string path,
+        IEnumerable<string> callers, CancellationToken ct)
+    {
+        try
+        {
+            return RelatedFiles(await SnapshotAsync(project, repositoryId, details, ct), details, path, callers);
+        }
+        catch (AzureDevOpsException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Files that call this one first — they are the other half of its change — then code
+    /// before notes before tests (<see cref="FileCategory.ReadPriority"/>). Each is sent whole
+    /// or listed without text, never cut. The head version only: what a file calls into is
+    /// what it calls now. Every changed path stays in the list, so the model knows what
+    /// exists even where it cannot read it.
+    /// </summary>
+    public static IReadOnlyList<RelatedFile> RelatedFiles(
+        SourceSnapshot snapshot, PullRequestDetails details, string path, IEnumerable<string> callers)
+    {
+        var first = callers.ToHashSet(StringComparer.Ordinal);
+        var result = new List<RelatedFile>();
+        var used = 0;
+        foreach (var file in details.ChangedFiles
+            .Where(file => file.Path != path)
+            .OrderBy(file => first.Contains(file.Path) ? 0 : 1)
+            .ThenBy(file => FileCategory.ReadPriority(file.Path)))
+        {
+            var fits = FileCategory.Of(file.Path) is null &&
+                snapshot.Files.TryGetValue(file.Path, out var text) &&
+                text.Length <= MaxRelatedFileCharacters && used + text.Length <= MaxRelatedCharacters;
+            var included = fits ? snapshot.Files[file.Path] : null;
+            used += included?.Length ?? 0;
+            result.Add(new RelatedFile(file.Path, file.ChangeType, included));
+        }
+        return result;
+    }
+
     /// <summary>
     /// Round-robin over the declarations — everyone's first usage before anyone's second — so
     /// a file with twenty methods does not spend the budget on the first one. Within one

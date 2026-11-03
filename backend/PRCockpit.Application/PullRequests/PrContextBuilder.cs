@@ -17,31 +17,34 @@ public static class PrContextBuilder
         if (budget.MaxDiffCharactersPerFile <= 0 || budget.MaxDiffCharactersPerPullRequest <= 0)
             throw new ArgumentOutOfRangeException(nameof(budget), "Diff character limits must be positive.");
 
-        var files = new List<ContextChangedFile>(details.ChangedFilesCount);
         var used = 0;
-        // onlyPath narrows the package to a single file for the per-file explanation. The
-        // budget rules stay exactly the same, so one file cannot be handled more loosely
-        // than the same file inside a whole-PR package.
-        foreach (var change in details.ChangedFiles.Where(file => onlyPath is null || file.Path == onlyPath))
+        // onlyPath narrows the package to a single file for the per-file tasks. The rules stay
+        // the same — whole or nothing — and only the budget the caller passes differs.
+        var selected = details.ChangedFiles.Where(file => onlyPath is null || file.Path == onlyPath).ToList();
+        var decided = new Dictionary<string, ContextChangedFile>(StringComparer.Ordinal);
+        // The budget is handed out code first, tests last (FileCategory.ReadPriority) — a stable
+        // sort, so files of one kind keep the pull request's order. The package itself still
+        // lists them in that order; only who gets the budget changes.
+        foreach (var change in selected.OrderBy(file => FileCategory.ReadPriority(file.Path)))
         {
             ct.ThrowIfCancellationRequested();
             var reason = FileCategory.Of(change.Path) ??
                 (used >= budget.MaxDiffCharactersPerPullRequest ? "pullRequestCharacterLimit" : null);
             if (reason is not null)
             {
-                files.Add(Omitted(change, reason));
+                decided[change.Path] = Omitted(change, reason);
                 continue;
             }
 
             var diff = await getDiff(change.Path, ct);
             if (diff.Kind != "text")
             {
-                files.Add(Omitted(change, diff.Kind switch
+                decided[change.Path] = Omitted(change, diff.Kind switch
                 {
                     "binary" => "binary",
                     "tooLarge" => "sourceTooLarge",
                     _ => throw new InvalidOperationException($"Unexpected diff kind: {diff.Kind}")
-                }));
+                });
                 continue;
             }
 
@@ -52,14 +55,15 @@ public static class PrContextBuilder
                 length > budget.MaxDiffCharactersPerPullRequest - used ? "pullRequestCharacterLimit" : null;
             if (reason is not null)
             {
-                files.Add(Omitted(change, reason));
+                decided[change.Path] = Omitted(change, reason);
                 continue;
             }
 
             used += (int)length;
-            files.Add(new ContextChangedFile(change.Path, change.ChangeType, change.OriginalPath,
-                original, modified, null));
+            decided[change.Path] = new ContextChangedFile(change.Path, change.ChangeType, change.OriginalPath,
+                original, modified, null);
         }
+        var files = selected.Select(change => decided[change.Path]).ToList();
 
         var metadata = new PrContextMetadata(details.Id, details.Title, details.Description,
             details.Author, details.Repository, details.SourceBranch, details.TargetBranch,

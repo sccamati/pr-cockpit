@@ -201,6 +201,27 @@ public class SummaryRunnerTests
         Assert.Equal("AI CLI returned invalid JSON.", error.Message);
     }
 
+    // The effort reaches a command line, so anything but a known level stops before a process
+    // starts — "dotnet --version" would otherwise answer with the 502 above.
+    [Theory]
+    [InlineData("Ai:Summary:Effort")]
+    [InlineData("Ai:Summary:AskEffort")]
+    public async Task CliRejectsAnUnknownEffortBeforeStartingAProcess(string key)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Ai:Summary:Executable"] = "dotnet",
+            ["Ai:Summary:Arguments:0"] = "--version",
+            [key] = "high & calc"
+        }).Build();
+        var analyzer = new CliSummaryAnalyzer(config, NullLogger<CliSummaryAnalyzer>.Instance);
+
+        var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
+            analyzer.AskFileAsync(Context(), new FileQuestion("Co to robi?", null, null, []), CancellationToken.None));
+
+        Assert.Equal(503, error.StatusCode);
+    }
+
     // Ten files opens a pull request of twenty; it only samples one of eighty.
     [Theory]
     [InlineData(1, 10)]

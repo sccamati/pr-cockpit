@@ -298,7 +298,7 @@ public sealed class AzureDevOpsClientTests
     [Theory]
     [InlineData("binary", true, 1)]
     [InlineData("binary", false, 1)]
-    [InlineData("tooLarge", false, 262145)]
+    [InlineData("tooLarge", false, 5 * 1024 * 1024 + 1)]
     public async Task DiffReportsBinaryAndOversizedFiles(string expectedKind, bool isBinary, int bytes)
     {
         var blob = new string('c', 40);
@@ -342,34 +342,12 @@ public sealed class AzureDevOpsClientTests
         Assert.Equal(404, exception.StatusCode);
     }
 
+    // The 4000-line and 256 KB limits are gone: a big file is exactly the one worth reading
+    // in the diff rather than skipping. 60 000 lines is ~300 KB, past both old limits.
     [Fact]
-    public async Task DiffLimitsLineCountEvenWhenFileIsSmallInBytes()
+    public async Task DiffShowsFilesPastTheFormerLineAndSizeLimits()
     {
-        var blob = new string('c', 40);
-        using var http = new HttpClient(new StubHandler(request =>
-        {
-            var path = request.RequestUri!.PathAndQuery;
-            if (path.Contains("/iterations?")) return Iteration();
-            if (path.Contains("/changes?"))
-                return Json("""{"changeEntries":[{"item":{"path":"/many.txt"},"changeType":"add"}],"nextSkip":0}""");
-            if (path.Contains("/items?"))
-                return Json("""{"objectId":"BLOB","contentMetadata":{"isBinary":false}}""".Replace("BLOB", blob));
-            if (path.Contains("/blobs/")) return Bytes(string.Concat(Enumerable.Repeat("x\n", 4001)));
-            throw new Xunit.Sdk.XunitException($"Unexpected request: {path}");
-        }));
-
-        var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/many.txt", CancellationToken.None);
-
-        Assert.Equal("tooLarge", diff.Kind);
-        Assert.Null(diff.OriginalText);
-        Assert.Null(diff.ModifiedText);
-    }
-
-    [Theory]
-    [InlineData(2000, "text")]
-    [InlineData(2001, "tooLarge")]
-    public async Task DiffAppliesCombinedLineLimitToBothVersions(int modifiedLines, string expectedKind)
-    {
+        const int modifiedLines = 60_000;
         var oldBlob = new string('c', 40);
         var newBlob = new string('d', 40);
         using var http = new HttpClient(new StubHandler(request =>
@@ -388,11 +366,9 @@ public sealed class AzureDevOpsClientTests
 
         var diff = await Client(http).GetFileDiffAsync("project", "repo", 123, "/file.txt", CancellationToken.None);
 
-        Assert.Equal(expectedKind, diff.Kind);
-        Assert.Equal(expectedKind == "text" ? string.Concat(Enumerable.Repeat("old\r\n", 2000)) : null,
-            diff.OriginalText);
-        Assert.Equal(expectedKind == "text" ? string.Concat(Enumerable.Repeat("new\r\n", modifiedLines)) : null,
-            diff.ModifiedText);
+        Assert.Equal("text", diff.Kind);
+        Assert.Equal(string.Concat(Enumerable.Repeat("old\r\n", 2000)), diff.OriginalText);
+        Assert.Equal(string.Concat(Enumerable.Repeat("new\r\n", modifiedLines)), diff.ModifiedText);
     }
 
     [Fact]

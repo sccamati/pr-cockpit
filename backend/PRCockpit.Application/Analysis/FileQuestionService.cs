@@ -18,7 +18,8 @@ public sealed class FileQuestionService(
     PullRequestContextService contexts,
     IAiSummaryAnalyzer analyzer,
     IFileQuestionStore store,
-    CodeUsageService usages)
+    CodeUsageService usages,
+    ISummaryStore summaries)
 {
     // Three turns is a follow-up, not a transcript: enough for "a to drugie?" to resolve,
     // while the prompt stays the file plus a few lines.
@@ -54,9 +55,19 @@ public sealed class FileQuestionService(
             throw new AzureDevOpsException("File is no longer in this pull request.", 404);
 
         var history = await store.GetAsync(project, repositoryId, pullRequestId, path, ct);
+        var callers = await usages.ForAiAsync(project, repositoryId, details, path, ct);
+        var summary = await summaries.GetAsync(project, repositoryId, pullRequestId, ct);
         var context = await contexts.BuildAsync(project, repositoryId, details, ct, path) with
         {
-            Usages = await usages.ForAiAsync(project, repositoryId, details, path, ct)
+            Usages = callers,
+            RelatedFiles = await usages.RelatedForAiAsync(project, repositoryId, details, path,
+                callers?.Excerpts.Where(excerpt => excerpt.InPullRequest).Select(excerpt => excerpt.Path) ?? [], ct),
+            // The Summary describes the head it was made for; after a push it describes code
+            // that may be gone, so it is left out by the same rule the history follows.
+            Summary = summary is not null &&
+                ContentFreshness.IsCurrent(null, null, summary.Result.HeadCommitSha, details.HeadCommitSha)
+                    ? new SummaryDigest(summary.Result.Sentences, summary.Result.CriticalFiles)
+                    : null
         };
         var turn = await SummaryRunner.RunAskAsync(context,
             new FileQuestion(asked, snippet, changed.ObjectId,

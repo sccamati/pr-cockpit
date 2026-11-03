@@ -10,7 +10,8 @@ namespace PRCockpit.Infrastructure.Analysis;
 
 public static class CSharpHovers
 {
-    private const int MaxFileBytes = 256 * 1024;
+    // The same ceiling as the diff itself: anything the diff shows can be analyzed.
+    private const int MaxFileBytes = 5 * 1024 * 1024;
     internal static readonly Lazy<MetadataReference[]> References = new(() =>
         ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
         .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
@@ -21,8 +22,7 @@ public static class CSharpHovers
     {
         if (request.OriginalText is null || request.ModifiedText is null ||
             Encoding.UTF8.GetByteCount(request.OriginalText) > MaxFileBytes ||
-            Encoding.UTF8.GetByteCount(request.ModifiedText) > MaxFileBytes ||
-            TextLineLimit.Exceeded(request.OriginalText, request.ModifiedText))
+            Encoding.UTF8.GetByteCount(request.ModifiedText) > MaxFileBytes)
             throw new AzureDevOpsException("C# source exceeds the diff limits.", 400);
 
         var original = Analyze(request.OriginalText);

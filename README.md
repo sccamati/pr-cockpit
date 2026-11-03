@@ -163,18 +163,22 @@ dotnet user-secrets set "Ai:Summary:Executable" "C:\path\to\summary-adapter.exe"
 dotnet user-secrets set "Ai:Summary:Model" "your-model-id" --project backend/PRCockpit.Api
 ```
 
-[`scripts/summary-adapter.mjs`](scripts/summary-adapter.mjs) is a working reference adapter.
+[`scripts/summary-adapter.mjs`](scripts/summary-adapter.mjs) is a working reference adapter. It runs
+`claude -p --safe-mode`, so your own CLAUDE.md, hooks and plugins stay out of every request, and it needs a Claude Code
+CLI recent enough to know the configured model ids.
 
 | Setting | Meaning |
 |---|---|
 | `Ai:Summary:Arguments:0`, `:1`, … | Literal arguments, one per entry |
 | `Ai:Summary:TimeoutSeconds` | Default 600, allowed 1–1800 — a ~100-file PR takes a while |
+| `Ai:Summary:Effort` | `low`, `medium`, `high`, `xhigh` or `max`; empty leaves the CLI's default for the model |
 | `Ai:Summary:AskModel` | Separate model for questions; falls back to `Model` |
+| `Ai:Summary:AskEffort` | Separate effort for questions; falls back to `Effort` |
 
 The executable is started directly, without a shell, in the backend's directory. It never receives a repository path or
 repository tools.
 
-**Protocol.** One JSON object on stdin with `task`, `schemaVersion: 2`, `model`, a fixed `instruction` and the bounded
+**Protocol.** One JSON object on stdin with `task`, `schemaVersion: 2`, `model`, `effort`, a fixed `instruction` and the bounded
 `context`. The program writes **only** one JSON object to stdout; diagnostics go to stderr.
 
 `task: "summary"` — the whole PR:

@@ -92,16 +92,61 @@ public class FileQuestionServiceTests
 
         Assert.Equal(1, analyzer.Calls);
         Assert.Null(analyzer.LastContext?.Usages);
+        Assert.Null(analyzer.LastContext?.RelatedFiles);
     }
 
-    private static (FileQuestionService Service, FakeAnalyzer Analyzer, FakeClient Client) Build()
+    // The rest of the pull request rides along, so "co to woła?" has an answer: the caller
+    // that is changed here first, the file asked about never twice.
+    [Fact]
+    public async Task AsksWithTheOtherFilesOfThePullRequest()
+    {
+        var (service, analyzer, client) = Build();
+        client.AlsoChanged = ["/src/Unrelated.cs", "/src/Caller.cs"];
+
+        await service.AskAsync("project", "repo", 1, "/src/file.cs", "Kto to woła?", null, CancellationToken.None);
+
+        var related = analyzer.LastContext?.RelatedFiles;
+        Assert.NotNull(related);
+        Assert.Equal(["/src/Caller.cs", "/src/Unrelated.cs"], related.Select(file => file.Path));
+        Assert.Contains("thing.Run()", related[0].Text);
+    }
+
+    [Theory]
+    [InlineData('b', true)]
+    [InlineData('c', false)]
+    public async Task AsksWithTheSummaryOnlyWhileItDescribesTheCurrentHead(char head, bool expected)
+    {
+        var (service, analyzer, _) = Build(new SummaryResponse(2, "Zmiana.", new string('a', 40), new string(head, 40),
+            new SummaryContextReport(1, 1, 6, false, []), ["Zmiana."],
+            [new CriticalFile("/src/file.cs", "Rdzeń.", "Od niego zacząć.")], ["/src/file.cs"]));
+
+        await service.AskAsync("project", "repo", 1, "/src/file.cs", "Po co to?", null, CancellationToken.None);
+
+        var summary = analyzer.LastContext?.Summary;
+        Assert.Equal(expected, summary is not null);
+        if (expected) Assert.Equal("Rdzeń.", Assert.Single(summary!.CriticalFiles).Role);
+    }
+
+    private static (FileQuestionService Service, FakeAnalyzer Analyzer, FakeClient Client) Build(
+        SummaryResponse? summary = null)
     {
         var analyzer = new FakeAnalyzer();
         var client = new FakeClient();
         var service = new FileQuestionService(
             client, new PullRequestContextService(client), analyzer, new FakeStore(),
-            new CodeUsageService(client, new MemorySourceSnapshotCache(), new CodeUsageFinder()));
+            new CodeUsageService(client, new MemorySourceSnapshotCache(), new CodeUsageFinder()),
+            new FakeSummaryStore(summary));
         return (service, analyzer, client);
+    }
+
+    private sealed class FakeSummaryStore(SummaryResponse? summary) : ISummaryStore
+    {
+        public Task<StoredSummary?> GetAsync(string project, string repositoryId, int pullRequestId, CancellationToken ct) =>
+            Task.FromResult(summary is null ? null : new StoredSummary(summary, DateTimeOffset.UtcNow));
+
+        public Task<StoredSummary> SaveAsync(
+            string project, string repositoryId, int pullRequestId, SummaryResponse result, CancellationToken ct) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeAnalyzer : IAiSummaryAnalyzer
@@ -140,14 +185,16 @@ public class FileQuestionServiceTests
     private sealed class FakeClient : IAzureDevOpsClient
     {
         public int Calls { get; private set; }
+        public string[] AlsoChanged { get; set; } = [];
 
         public Task<PullRequestDetails> GetPullRequestAsync(
             string project, string repositoryId, int pullRequestId, CancellationToken ct)
         {
             Calls++;
+            ChangedFile[] files = [new ChangedFile("/src/file.cs", "edit", null, "blob-1"),
+                .. AlsoChanged.Select(path => new ChangedFile(path, "edit", null))];
             return Task.FromResult(new PullRequestDetails(1, "Change", null, "Author", "Repo", "feature", "main",
-                "active", DateTimeOffset.UtcNow, [], 1,
-                [new ChangedFile("/src/file.cs", "edit", null, "blob-1")], 0, [], [],
+                "active", DateTimeOffset.UtcNow, [], files.Length, files, 0, [], [],
                 new string('a', 40), new string('b', 40)));
         }
 

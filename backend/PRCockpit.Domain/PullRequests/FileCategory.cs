@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace PRCockpit.Domain.PullRequests;
 
 /// <summary>
@@ -7,6 +9,25 @@ namespace PRCockpit.Domain.PullRequests;
 /// </summary>
 public static class FileCategory
 {
+    // The same two rules as isTestPath in frontend/src/lib/format.ts, so "a test" means one
+    // thing on both sides: tests/, __tests__/, Billing.Tests/, UnitTests/, App.test.ts,
+    // x.spec.js, InvoiceTests.cs — but not Contest.cs or latest/.
+    private static readonly Regex[] TestPaths =
+    [
+        new(@"(^|/)(__)?tests?(__)?/|[.\-_]tests?/|\.(test|spec)\.[cm]?[jt]sx?$", RegexOptions.IgnoreCase),
+        new(@"Tests?(/|\.cs$)")
+    ];
+
+    public static bool IsTest(string path) => TestPaths.Any(pattern => pattern.IsMatch(path));
+
+    /// <summary>
+    /// Which files get a context budget first when it cannot hold them all: the code that is
+    /// the change, then the notes that explain it, then the tests that check it. A large pull
+    /// request otherwise spends the budget on whatever Azure DevOps happened to list first.
+    /// </summary>
+    public static int ReadPriority(string path) =>
+        IsTest(path) ? 2 : path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+
     public static string? Of(string path)
     {
         var name = Path.GetFileName(path);

@@ -13,10 +13,14 @@ namespace PRCockpit.Infrastructure.AzureDevOps;
 public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configuration) : IAzureDevOpsClient
 {
     private const string ApiVersion = "api-version=7.1";
-    private const int MaxFileBytes = 256 * 1024;
+    // ponytail: not a display limit — a file this size is ~100k lines, which Monaco shows fine.
+    // It only keeps one runaway blob from being read into memory. Raise it if a real source
+    // file ever reaches it.
+    private const int MaxDiffFileBytes = 5 * 1024 * 1024;
     private const int MaxCommentLength = 10_000;
     // Enough for a large product repository; past it the answer would be slow to fetch and
     // a partial one would lie, so the snapshot is refused instead.
+    private const int MaxSnapshotFileBytes = 256 * 1024;
     private const int MaxSnapshotFiles = 8000;
     private const long MaxSnapshotBytes = 40L * 1024 * 1024;
     private const int BlobBatchSize = 500;
@@ -430,7 +434,7 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
                 var path = "/" + (entry.GetProperty("relativePath").GetString() ?? "").TrimStart('/');
                 if (!SourceFiles.IsSource(path)) continue;
                 var size = entry.TryGetProperty("size", out var bytes) ? bytes.GetInt64() : 0;
-                if (size > MaxFileBytes)
+                if (size > MaxSnapshotFileBytes)
                 {
                     skipped++;
                     continue;
@@ -476,9 +480,9 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
                 foreach (var entry in zip.Entries)
                 {
                     var id = Path.GetFileNameWithoutExtension(entry.Name);
-                    if (!requested.Contains(id) || entry.Length > MaxFileBytes) continue;
+                    if (!requested.Contains(id) || entry.Length > MaxSnapshotFileBytes) continue;
                     await using var content = entry.Open();
-                    var bytes = await ReadBoundedAsync(content, ct);
+                    var bytes = await ReadBoundedAsync(content, MaxSnapshotFileBytes, ct);
                     if (bytes is not null) blobs[id] = Decode(bytes);
                 }
             }
@@ -538,8 +542,6 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         var newFile = await newTask;
         if (newFile.Kind != "text") return new FileDiff(file.Path, file.OriginalPath, newFile.Kind, null, null);
 
-        if (TextLineLimit.Exceeded(oldFile.Text, newFile.Text))
-            return new FileDiff(file.Path, file.OriginalPath, "tooLarge", null, null);
         return new FileDiff(file.Path, file.OriginalPath, "text", oldFile.Text, newFile.Text);
     }
 
@@ -603,13 +605,13 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
     {
         using var response = await SendAsync($"{repositoryPath}/blobs/{objectId}?$format=octetstream&resolveLfs=true&{ApiVersion}",
             "application/octet-stream", ct);
-        if (response.Content.Headers.ContentLength > MaxFileBytes) return new FileContent("tooLarge", "");
+        if (response.Content.Headers.ContentLength > MaxDiffFileBytes) return new FileContent("tooLarge", "");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        var bytes = await ReadBoundedAsync(stream, ct);
+        var bytes = await ReadBoundedAsync(stream, MaxDiffFileBytes, ct);
         return bytes is null ? new FileContent("tooLarge", "") : Decode(bytes);
     }
 
-    private static async Task<byte[]?> ReadBoundedAsync(Stream stream, CancellationToken ct)
+    private static async Task<byte[]?> ReadBoundedAsync(Stream stream, int limit, CancellationToken ct)
     {
         using var memory = new MemoryStream();
         var buffer = new byte[8192];
@@ -617,7 +619,7 @@ public sealed class AzureDevOpsClient(HttpClient http, IConfiguration configurat
         {
             var read = await stream.ReadAsync(buffer, ct);
             if (read == 0) break;
-            if (memory.Length + read > MaxFileBytes) return null;
+            if (memory.Length + read > limit) return null;
             memory.Write(buffer, 0, read);
         }
         return memory.ToArray();

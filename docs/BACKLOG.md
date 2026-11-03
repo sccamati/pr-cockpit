@@ -1138,3 +1138,52 @@ wysokość — nigdy nie malał. Wszystko, co pojawia się nad edytorem po jego 
 (wiersz „Komentarze w pliku”, wyjaśnienie, czat), wypychało jego dół poza panel.
 
 **Poprawka.** `ResizeObserver` podaje `layout()` wymiary kontenera wprost.
+
+## Wdrożone — więcej kontekstu dla AI i duże pliki w diffie
+
+### B-38 — Summary widziało 20 z 90 plików, czat do pliku nie widział reszty PR, duże pliki się nie wyświetlały
+
+Status: zrobione 3 lis 2026 na prośbę użytkownika.
+- **Testy:** backend 190/190, frontend 127/127, `vue-tsc` i `vite build` przechodzą. Nowe testy:
+  - `GivesTheBudgetToCodeBeforeNotesAndTests`, `ReadsCodeFirstNotesNextTestsLast`;
+  - `RelatedFilesSendCallersFirstAndWholeFilesOnly`;
+  - `AsksWithTheOtherFilesOfThePullRequest`, `AsksWithTheSummaryOnlyWhileItDescribesTheCurrentHead`;
+  - `CliRejectsAnUnknownEffortBeforeStartingAProcess`, `DiffShowsFilesPastTheFormerLineAndSizeLimits`.
+- **`npm run visual`:** zgłosił różnice tylko w scenariuszach `*-walk`, bo zdjęcie bazowe złapało je w trakcie „Pobieranie diffu…”, a bieżące pokazuje gotowy diff. Zmieniony komunikat `tooLarge` nie ma scenariusza.
+- **Adapter sprawdzony ręcznie:** z `--safe-mode` i Sonnetem 5.5 zwraca poprawny JSON w 5,4 s, a model nie widzi żadnego `CLAUDE.md` ani hooka. To samo żądanie bez `--safe-mode` trwało 26,7 s, a model wymienił globalny i projektowy `CLAUDE.md`, `MEMORY.md`, hook SessionStart i kontekst CodeGraph.
+- **Opus 5.5:** CLI 2.1.278 odrzucało `claude-opus-5-5` („2.1.280 or newer is required”). Po aktualizacji do 2.1.317 adapter z Opusem 5.5 i `--effort medium` odpowiada w 6,4 s.
+- **Niepotwierdzone:**
+  - nowe Summary na PR `PpeSellerChange` i duży plik w diffie na prawdziwym PR;
+  - pytanie o zależności na prawdziwym PR i jego czas odpowiedzi.
+
+**Objaw.** Summary PR `PpeSellerChange` (90 plików) dostało treść 20 plików: 19 z klienta, w tym 8 testów. Sam zapisało, że „treść wielu plików serwerowych i testów została pominięta”. Czat do pliku przy dużym pliku nie dostawał kodu wcale, a o innych plikach PR nie wiedział nic. Pliki ponad 4000 linii (obie wersje razem) albo 256 KB nie wyświetlały się w diffie.
+
+**Przyczyny.**
+- Budżet 100 000 znaków na PR był przydzielany w kolejności z Azure DevOps, więc testy zjadały go przed domeną.
+- Limit 20 000 znaków na plik liczy obie pełne wersje, więc odpadał każdy plik ponad ok. 250 linii. Czat miał ten sam limit.
+- Adapter dziedziczył konfigurację Claude Code z maszyny.
+
+**Zmiany.**
+- **Diff:** limit linii usunięty (`TextLineLimit` skasowany), 5 MB na wersję jako bezpiecznik pamięci (`ponytail`). Snapshot użyć zostaje przy 256 KB na plik, podpowiedzi C# przy tych samych 5 MB.
+- **Summary:**
+  - `ContextBudget.Default` to 60 000 / 400 000;
+  - budżet przydzielany kolejno: kod, `.md`, testy (`FileCategory.ReadPriority`, port `isTestPath`);
+  - pakiet zachowuje kolejność plików z PR.
+- **Wyjaśnienie i pytanie:** `ContextBudget.OneFile` = 300 000.
+- **Pytanie:**
+  - `RelatedFiles` ze snapshotu: wołający najpierw, 60 000 na plik, 150 000 łącznie;
+  - `Summary` (zdania i kluczowe pliki) tylko przy aktualnej głowie;
+  - instrukcja pozwala tłumaczyć powiązania z innymi plikami;
+  - `pullRequest` na początku żądania, pod cache promptu.
+- **Adapter:**
+  - `--safe-mode --no-session-persistence`;
+  - `--effort` z `Ai:Summary:Effort` / `AskEffort`, sprawdzane przed startem procesu.
+
+**Konfiguracja (User Secrets, ustawiona).**
+- `Ai:Summary:Effort = high` — wcześniej high przychodziło z globalnych ustawień, które `--safe-mode` odcina.
+- `Ai:Summary:AskModel = claude-opus-5-5`, `Ai:Summary:AskEffort = medium`.
+
+**Świadomie pominięte (`ponytail`).**
+- Diff zamiast pełnych plików w kontekście: większa zmiana, a podniesiony budżet wystarcza.
+- Wyjaśnienie pliku bez `RelatedFiles` i `Summary`: ma 1–3 zdania i ma być szybkie.
+- Budżety ustawione tak, by zmieścić się w 200 tys. tokenów, które CLI zakłada dla nieznanego modelu. Podnieść, gdy adapter zacznie prosić o `[1m]`.

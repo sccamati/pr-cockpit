@@ -21,5 +21,5 @@ public sealed class PullRequestContextService(IAzureDevOpsClient client)
         string? onlyPath = null) =>
         PrContextBuilder.BuildAsync(details,
             (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
-            ContextBudget.Default, ct, onlyPath);
+            onlyPath is null ? ContextBudget.Default : ContextBudget.OneFile, ct, onlyPath);
 }

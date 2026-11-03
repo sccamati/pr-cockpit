@@ -27,6 +27,12 @@ public record SummaryResponse(
 
 public record StoredSummary(SummaryResponse Result, DateTimeOffset SavedAt);
 
+/// <summary>
+/// The part of a stored Summary a question about one file can use: what the whole change is
+/// and which files carry it. The reading order and the context report would be noise there.
+/// </summary>
+public record SummaryDigest(IReadOnlyList<string> Sentences, IReadOnlyList<CriticalFile> CriticalFiles);
+
 /// <summary>What one file does and what changed in it. Same draft shape as a Summary.</summary>
 public record FileExplanation(
     int SchemaVersion, string Path, string? HeadCommitSha, IReadOnlyList<string> Sentences);

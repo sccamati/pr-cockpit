@@ -10,6 +10,10 @@
 // ponytail: the instruction goes through a temp file (--system-prompt-file),
 // not a --system-prompt argument — cmd.exe's shell:true concatenation mangles
 // quotes/braces in a plain argument, a temp file sidesteps that entirely.
+// --safe-mode keeps the login and the model but drops this machine's CLAUDE.md,
+// hooks, plugins and MCP servers: the backend starts us inside the PRCockpit
+// repository, and a prompt hook there would add PRCockpit's own code to every
+// request. Without --effort the CLI's default level for the model applies.
 
 import { spawn } from 'node:child_process';
 import { writeFile, unlink } from 'node:fs/promises';
@@ -27,7 +31,7 @@ async function main() {
   const instructionFile = join(tmpdir(), `pr-cockpit-summary-${randomUUID()}.txt`);
   await writeFile(instructionFile, request.instruction, 'utf8');
   try {
-    const output = await runClaude(instructionFile, request.model, JSON.stringify(request.context));
+    const output = await runClaude(instructionFile, request.model, request.effort, JSON.stringify(request.context));
     // The model is asked for bare JSON; what it sends is another matter.
     process.stdout.write(extractJson(output));
   } finally {
@@ -35,10 +39,13 @@ async function main() {
   }
 }
 
-function runClaude(instructionFile, model, contextJson) {
+function runClaude(instructionFile, model, effort, contextJson) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--system-prompt-file', instructionFile, '--output-format', 'text'];
+    const args = ['-p', '--safe-mode', '--no-session-persistence',
+      '--system-prompt-file', instructionFile, '--output-format', 'text'];
     if (model) args.push('--model', model);
+    // The backend checked it against the known levels before it got here.
+    if (effort) args.push('--effort', effort);
 
     // claude's npm global bin dir isn't on PATH here, so we point straight at
     // its shim instead of adding a system-wide PATH entry for one script.

@@ -147,7 +147,7 @@ const readingStatus = computed(() => filePosition.value && details.value
       <p v-if="diffLoading" class="diff-message muted" role="status">Pobieranie diffu…</p>
       <p v-else-if="diffError" class="diff-message notice error" role="alert">{{ diffError }}</p>
       <p v-else-if="fileDiff?.kind === 'binary'" class="diff-message muted">Plik binarny — diff tekstowy jest niedostępny.</p>
-      <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 256 KB na wersję lub 4000 linii łącznie).</p>
+      <p v-else-if="fileDiff?.kind === 'tooLarge'" class="diff-message muted">Plik jest zbyt duży, aby pokazać diff (limit 5 MB na wersję).</p>
       <component :is="monacoComponent" v-else-if="fileDiff?.kind === 'text' && monacoComponent" :ref="diff.diffView" :path="fileDiff.path"
         :original-path="fileDiff.originalPath" :original-text="fileDiff.originalText" :modified-text="fileDiff.modifiedText"
         :side-by-side="sideBySide" :comment-lines="commentLinesForFile" :resolved-lines="resolvedLinesForFile"

@@ -246,6 +246,25 @@ public sealed class UsageExcerptTests
         Assert.All(context.Excerpts, item => Assert.Equal(2 * CodeUsageService.ExcerptRadius + 1, item.Text.Split('\n').Length));
         Assert.Equal("name", context.Mode);
     }
+
+    // For a question: callers first, then code before notes before tests, each file whole or
+    // without text — and every other changed path listed, the asked file never.
+    [Fact]
+    public void RelatedFilesSendCallersFirstAndWholeFilesOnly()
+    {
+        var snapshot = Snapshot(("/src/Own.cs", "own"), ("/src/A.cs", "a"), ("/src/Caller.cs", "caller"),
+            ("/src/Big.cs", new string('x', CodeUsageService.MaxRelatedFileCharacters + 1)), ("/src/ATests.cs", "test"));
+        ChangedFile[] files = [.. new[] { "/src/Own.cs", "/src/ATests.cs", "/src/A.cs", "/src/Big.cs", "/README.md",
+            "/src/Caller.cs", "/package-lock.json" }.Select(path => new ChangedFile(path, "edit", null))];
+        var details = new PullRequestDetails(1, "Change", null, "Author", "Repo", "feature", "main", "active",
+            DateTimeOffset.UtcNow, [], files.Length, files, 0, [], []);
+
+        var related = CodeUsageService.RelatedFiles(snapshot, details, "/src/Own.cs", ["/src/Caller.cs"]);
+
+        Assert.Equal(["/src/Caller.cs", "/src/A.cs", "/src/Big.cs", "/package-lock.json", "/README.md", "/src/ATests.cs"],
+            related.Select(file => file.Path));
+        Assert.Equal(["caller", "a", null, null, null, "test"], related.Select(file => file.Text));
+    }
 }
 
 public sealed class CodeUsageServiceTests

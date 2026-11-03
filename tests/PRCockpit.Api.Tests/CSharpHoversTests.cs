@@ -67,7 +67,7 @@ public sealed class CSharpHoversTests
     [Fact]
     public void RejectsSourcesLargerThanTheDiffLimit()
     {
-        var source = new string('x', 256 * 1024 + 1);
+        var source = new string('x', 5 * 1024 * 1024 + 1);
 
         var error = Assert.Throws<AzureDevOpsException>(() =>
             CSharpHovers.Build(new CSharpHoverRequest("", source)));

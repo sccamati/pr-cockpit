@@ -110,6 +110,49 @@ public class PrContextBuilderTests
         Assert.Equal("hello", context.ChangedFiles[2].ModifiedText);
     }
 
+    // The 90-file pull request that prompted this spent its whole budget on client tests and
+    // left the domain model out. Code gets the budget first, notes next, tests last — and the
+    // package still lists the files in the pull request's own order.
+    [Fact]
+    public async Task GivesTheBudgetToCodeBeforeNotesAndTests()
+    {
+        var details = Details(
+            new ChangedFile("/client/View.test.ts", "edit", null),
+            new ChangedFile("/docs/adr/ADR-1.md", "add", null),
+            new ChangedFile("/server/Domain/Entity.cs", "edit", null),
+            new ChangedFile("/server/App.Tests/EntityTests.cs", "add", null),
+            new ChangedFile("/client/View.vue", "edit", null));
+        var fetched = new List<string>();
+
+        var context = await PrContextBuilder.BuildAsync(details, (path, _) =>
+        {
+            fetched.Add(path);
+            return Task.FromResult(new FileDiff(path, null, "text", "", "12345"));
+        }, new ContextBudget(5, 15), CancellationToken.None);
+
+        Assert.Equal(["/server/Domain/Entity.cs", "/client/View.vue", "/docs/adr/ADR-1.md"], fetched);
+        Assert.Equal(details.ChangedFiles.Select(file => file.Path), context.ChangedFiles.Select(file => file.Path));
+        Assert.Equal(["pullRequestCharacterLimit", null, null, "pullRequestCharacterLimit", null],
+            context.ChangedFiles.Select(file => file.OmissionReason));
+    }
+
+    // Ported with isTestPath (frontend/src/lib/format.ts), so a test is the same file to both.
+    [Theory]
+    [InlineData("/src/Program.cs", 0)]
+    [InlineData("/src/Contest.cs", 0)]
+    [InlineData("/latest/notes.ts", 0)]
+    [InlineData("/docs/adr/ADR-0167.md", 1)]
+    [InlineData("/CLAUDE.md", 1)]
+    [InlineData("/tests/Api/HandlerTests.cs", 2)]
+    [InlineData("/src/__tests__/view.ts", 2)]
+    [InlineData("/server/Billing.Tests/Fake.cs", 2)]
+    [InlineData("/server/UnitTests/Fake.cs", 2)]
+    [InlineData("/src/InvoiceTests.cs", 2)]
+    [InlineData("/src/App.test.ts", 2)]
+    [InlineData("/src/x.spec.js", 2)]
+    public void ReadsCodeFirstNotesNextTestsLast(string path, int expected) =>
+        Assert.Equal(expected, FileCategory.ReadPriority(path));
+
     [Fact]
     public async Task CountsBothVersionsAgainstTotalLimit()
     {
