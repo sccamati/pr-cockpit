@@ -136,6 +136,30 @@ public class PrContextBuilderTests
             context.ChangedFiles.Select(file => file.OmissionReason));
     }
 
+    // The quiz asks about what the reviewer read, so on a pull request bigger than the budget
+    // those files must not be the ones pushed out — even when they are tests.
+    [Fact]
+    public async Task GivesTheBudgetToTheFilesReadFirst()
+    {
+        var details = Details(
+            new ChangedFile("/server/Domain/Entity.cs", "edit", null),
+            new ChangedFile("/server/App.Tests/EntityTests.cs", "add", null),
+            new ChangedFile("/client/View.vue", "edit", null));
+        var fetched = new List<string>();
+
+        var context = await PrContextBuilder.BuildAsync(details, (path, _) =>
+        {
+            fetched.Add(path);
+            return Task.FromResult(new FileDiff(path, null, "text", "", "12345"));
+        }, new ContextBudget(5, 10), CancellationToken.None,
+            readFirst: new HashSet<string> { "/server/App.Tests/EntityTests.cs", "/client/View.vue" });
+
+        // Within the files read, code still comes before tests.
+        Assert.Equal(["/client/View.vue", "/server/App.Tests/EntityTests.cs"], fetched);
+        Assert.Equal(details.ChangedFiles.Select(file => file.Path), context.ChangedFiles.Select(file => file.Path));
+        Assert.Equal("pullRequestCharacterLimit", context.ChangedFiles[0].OmissionReason);
+    }
+
     // Ported with isTestPath (frontend/src/lib/format.ts), so a test is the same file to both.
     [Theory]
     [InlineData("/src/Program.cs", 0)]

@@ -1,21 +1,5 @@
 namespace PRCockpit.Domain.Review;
 
-public record ChecklistState(
-    bool AiReview, bool Quality, bool Understand, bool Architecture, bool Debug, bool Ready,
-    DateTimeOffset? UpdatedAt, string? DebugNote = null);
-
-public record ChecklistUpdate(bool? Completed);
-
-/// <summary>
-/// The Debug Check answer: where the reviewer would start looking if the change did not
-/// work. PRODUCT.md §9 — the point is a few seconds of thinking, so nothing grades it.
-/// </summary>
-public record DebugNoteUpdate(string? Note)
-{
-    public const int MaxLength = 2000;
-}
-public record ChecklistProgress(int PullRequestId, int CompletedCount);
-
 public record FileReviewEntry(string Path, string? BlobId, string? HeadSha, DateTimeOffset UpdatedAt);
 
 public record FileReviewState(
@@ -37,10 +21,11 @@ public record ReadingPathState(
 public record FileReviewProgress(int PullRequestId, int ReviewedCount, int ChangedFilesCount);
 
 /// <summary>
-/// Raised by anything storing the reviewer's own decisions. One type for all of them,
-/// so the API failure mapper needs a single arm.
+/// Raised for a request about the reviewer's own data that cannot be honoured — bad input,
+/// a missing configuration, a quiz from an older commit. One type for all of them, so the
+/// API failure mapper needs a single arm.
 /// </summary>
-public sealed class ChecklistException(string message, int statusCode) : Exception(message)
+public sealed class ReviewRequestException(string message, int statusCode) : Exception(message)
 {
     public int StatusCode { get; } = statusCode;
 }

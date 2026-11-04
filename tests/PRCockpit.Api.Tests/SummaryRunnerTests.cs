@@ -222,6 +222,25 @@ public class SummaryRunnerTests
         Assert.Equal(503, error.StatusCode);
     }
 
+    // The quiz has an effort of its own, and the message names it, so the knob to fix is obvious.
+    [Fact]
+    public async Task CliRejectsAnUnknownQuizEffortBeforeStartingAProcess()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Ai:Summary:Executable"] = "dotnet",
+            ["Ai:Summary:Arguments:0"] = "--version",
+            ["Ai:Summary:QuizEffort"] = "high & calc"
+        }).Build();
+        var analyzer = new CliSummaryAnalyzer(config, NullLogger<CliSummaryAnalyzer>.Instance);
+
+        var error = await Assert.ThrowsAsync<SummaryAnalysisException>(() =>
+            analyzer.ComposeQuizAsync(Context(), [], CancellationToken.None));
+
+        Assert.Equal(503, error.StatusCode);
+        Assert.StartsWith("Ai:Summary:QuizEffort must be one of", error.Message);
+    }
+
     // Ten files opens a pull request of twenty; it only samples one of eighty.
     [Theory]
     [InlineData(1, 10)]
@@ -379,5 +398,12 @@ public class SummaryRunnerTests
             ReceivedQuestion = question;
             return AnalyzeAsync(context, ct);
         }
+
+        public Task<QuizDraft> ComposeQuizAsync(PrContext context, IReadOnlyList<string> focusFiles, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<QuizGradeDraft> GradeQuizAnswerAsync(
+            PrContext context, QuizQuestion question, string answer, CancellationToken ct) =>
+            throw new NotSupportedException();
     }
 }

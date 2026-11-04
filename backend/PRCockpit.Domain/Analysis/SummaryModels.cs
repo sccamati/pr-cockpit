@@ -31,7 +31,18 @@ public record StoredSummary(SummaryResponse Result, DateTimeOffset SavedAt);
 /// The part of a stored Summary a question about one file can use: what the whole change is
 /// and which files carry it. The reading order and the context report would be noise there.
 /// </summary>
-public record SummaryDigest(IReadOnlyList<string> Sentences, IReadOnlyList<CriticalFile> CriticalFiles);
+public record SummaryDigest(IReadOnlyList<string> Sentences, IReadOnlyList<CriticalFile> CriticalFiles)
+{
+    /// <summary>
+    /// The Summary describes the head it was made for; after a push it describes code that
+    /// may be gone, so it is left out by the same rule as everything else.
+    /// </summary>
+    public static SummaryDigest? Current(StoredSummary? summary, string? headCommitSha) =>
+        summary is not null &&
+        Review.ContentFreshness.IsCurrent(null, null, summary.Result.HeadCommitSha, headCommitSha)
+            ? new SummaryDigest(summary.Result.Sentences, summary.Result.CriticalFiles)
+            : null;
+}
 
 /// <summary>What one file does and what changed in it. Same draft shape as a Summary.</summary>
 public record FileExplanation(

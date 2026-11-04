@@ -1,11 +1,11 @@
 import { inject, type InjectionKey, type Ref } from 'vue'
 import type { PullRequestDetails } from './api'
-import type { useChecklist } from '@/features/context/useChecklist'
 import type { useComments } from '@/features/comments/useComments'
 import type { useDiff } from '@/features/diff/useDiff'
 import type { useFileAi } from '@/features/file-ai/useFileAi'
 import type { useFileList } from '@/features/file-tree/useFileList'
 import type { usePullRequests } from '@/features/pull-requests/usePullRequests'
+import type { useQuiz } from '@/features/quiz/useQuiz'
 import type { useReviewProgress } from '@/features/walkthrough/useReviewProgress'
 import type { useSummary } from '@/features/context/useSummary'
 import type { useWalkthrough } from '@/features/walkthrough/useWalkthrough'
@@ -28,7 +28,7 @@ export interface Cockpit extends PrScope {
   diff: ReturnType<typeof useDiff>
   fileList: ReturnType<typeof useFileList>
   summary: ReturnType<typeof useSummary>
-  checklist: ReturnType<typeof useChecklist>
+  quiz: ReturnType<typeof useQuiz>
   review: ReturnType<typeof useReviewProgress>
   walk: ReturnType<typeof useWalkthrough>
   comments: ReturnType<typeof useComments>

@@ -6,11 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '@/App.vue'
 
 const api = vi.hoisted(() => ({
-  projects: vi.fn(), repositories: vi.fn(), pullRequests: vi.fn(), checklistProgress: vi.fn(),
+  projects: vi.fn(), repositories: vi.fn(), pullRequests: vi.fn(), quizProgress: vi.fn(),
   pullRequest: vi.fn(), fileDiff: vi.fn(), generateSummary: vi.fn(), explainFile: vi.fn(),
   askAboutFile: vi.fn(), fileQuestions: vi.fn(),
-  savedSummary: vi.fn(), checklist: vi.fn(), fileReviews: vi.fn(), setFileReviewed: vi.fn(),
-  setReadingPath: vi.fn(), setDebugNote: vi.fn(), fileReviewProgress: vi.fn(),
+  savedSummary: vi.fn(), savedQuiz: vi.fn(), composeQuiz: vi.fn(), answerQuiz: vi.fn(), fileReviews: vi.fn(), setFileReviewed: vi.fn(),
+  setReadingPath: vi.fn(), fileReviewProgress: vi.fn(),
   commentThreads: vi.fn(), createThread: vi.fn(), replyToThread: vi.fn(), setThreadStatus: vi.fn(),
   editComment: vi.fn(), deleteComment: vi.fn(), config: vi.fn(),
 }))
@@ -21,7 +21,7 @@ vi.mock('@/features/diff/MonacoDiff.vue', () => ({
     name: 'MonacoDiff',
     props: ['path', 'originalPath', 'originalText', 'modifiedText', 'sideBySide', 'commentLines', 'resolvedLines', 'zoneLines'],
     emits: ['openLine', 'zones'],
-    methods: { revealLine: () => {}, goToDiff: () => {}, focusEditor: () => {}, cursorLine: () => null },
+    methods: { revealLine: () => {}, goToDiff: () => {}, focusEditor: () => {} },
     template: '<div class="test-diff">Diff</div>',
   },
 }))
@@ -64,6 +64,37 @@ function summary(criticalFiles = ranking, readingOrder: string[] | undefined = f
   }
 }
 
+// Two questions, as the backend hands them out: no answer key until a question is passed.
+function quiz(overrides: { passed?: string[]; wrong?: string } = {}) {
+  const passed = overrides.passed ?? []
+  const questions = [
+    { id: 'q1', kind: 'intent', question: 'Po co ta zmiana?', files: ['/src/b.cs'] },
+    { id: 'q2', kind: 'runtime', question: 'Czego potrzebuje na środowisku?', files: ['/src/h.cs'] },
+  ].map(question => ({
+    ...question,
+    expectedPoints: passed.includes(question.id) ? ['Wzorcowy punkt.'] : null,
+    passed: passed.includes(question.id),
+    attemptCount: passed.includes(question.id) || overrides.wrong === question.id ? 1 : 0,
+    lastAttempt: passed.includes(question.id)
+      ? { answer: 'Dobra.', correct: true, feedback: ['Zgadza się.'], answeredAt: '2026-09-01T12:00:00Z' }
+      : overrides.wrong === question.id
+        ? { answer: 'Zła.', correct: false, feedback: ['Brakuje konfiguracji, zajrzyj do h.cs.'], answeredAt: '2026-09-01T12:00:00Z' }
+        : null,
+  }))
+  return {
+    headCommitSha: HEAD, createdAt: '2026-09-01T12:00:00Z',
+    correct: passed.length, total: 2, passed: passed.length === 2, questions,
+  }
+}
+
+// The fake grader: an answer saying "dobrze" passes, anything else is wrong, and what
+// passed before stays passed.
+const graded: string[] = []
+function answered(questionId: string, answer: string) {
+  if (answer.includes('dobrze')) graded.push(questionId)
+  return quiz({ passed: [...graded], wrong: answer.includes('dobrze') ? undefined : questionId })
+}
+
 function readingPath(overrides: Partial<{ paths: string[]; position: number; headCommitSha: string | null }> = {}) {
   return { paths: [] as string[], position: 0, headCommitSha: null as string | null, updatedAt: null, ...overrides }
 }
@@ -74,7 +105,7 @@ beforeEach(() => {
   api.repositories.mockResolvedValue([{ id: 'repo-a', name: 'Repo A' }])
   api.pullRequests.mockResolvedValue([details])
   api.pullRequest.mockResolvedValue(details)
-  api.checklistProgress.mockResolvedValue([])
+  api.quizProgress.mockResolvedValue([])
   api.fileReviewProgress.mockResolvedValue([])
   api.commentThreads.mockResolvedValue([])
   api.fileQuestions.mockResolvedValue([])
@@ -88,14 +119,10 @@ beforeEach(() => {
   // and read back from the local database for free.
   api.savedSummary.mockResolvedValue({ result: summary(), savedAt: '2026-09-01T12:00:00Z' })
   api.generateSummary.mockResolvedValue(summary())
-  api.checklist.mockResolvedValue({
-    aiReview: false, quality: false, understand: false, architecture: false,
-    debug: false, ready: false, updatedAt: null, debugNote: null,
-  })
-  api.setDebugNote.mockImplementation(async (_p, _r, _i, note) => ({
-    aiReview: false, quality: false, understand: false, architecture: false, debug: false,
-    ready: false, updatedAt: '2026-09-01T12:00:00Z', debugNote: note.trim() || null,
-  }))
+  graded.length = 0
+  api.savedQuiz.mockResolvedValue(null)
+  api.composeQuiz.mockResolvedValue(quiz())
+  api.answerQuiz.mockImplementation(async (_p, _r, _i, questionId, answer) => answered(questionId, answer))
   api.fileDiff.mockImplementation(async (_p, _r, _i, path) => ({
     kind: 'text', path, originalPath: null, originalText: 'old', modifiedText: 'new',
   }))
@@ -325,7 +352,7 @@ describe('duży PR dostaje dłuższą propozycję', () => {
   })
 
   // Walking 84 files must not mean buying 84 explanations nobody asked for.
-  it('walks a big pull request without calling the model once', async () => {
+  it('walks a big pull request without asking for a single explanation', async () => {
     const wrapper = await openPr()
     await wrapper.findAll('.walk-mode-option')[1]!.trigger('click')
     await wrapper.find('.walk-actions .walk-primary').trigger('click')
@@ -489,7 +516,7 @@ describe('US-P5 — wyjaśnienie pliku tylko na prośbę', () => {
 })
 
 describe('US-P6 — domknięcie', () => {
-  it('ends on the numbers, the skipped files and one question', async () => {
+  it('ends on the numbers, the skipped files and the quiz', async () => {
     const wrapper = await openPr()
     await wrapper.find('.walk-primary').trigger('click')
     await flushPromises()
@@ -505,17 +532,118 @@ describe('US-P6 — domknięcie', () => {
     expect(done.find('.walk-done-counts').text()).toContain('5')
     expect(done.find('.walk-skipped').text()).toContain('c.cs')
 
-    await done.find('#walk-debug-answer').setValue('Zacząłbym od kolejki.')
-    await done.findAll('.debug-actions button')[0]!.trigger('click')
-    await flushPromises()
-    expect(api.setDebugNote).toHaveBeenCalledWith('project', 'repo-a', 123, 'Zacząłbym od kolejki.')
-    // Nothing on the checklist ticks itself.
-    expect(wrapper.text()).toContain('Checklista 0 / 6')
+    // The quiz composed in the background when the walkthrough started is waiting here.
+    expect(done.findAll('.quiz-question')).toHaveLength(2)
+    expect(done.find('.walk-finish').text()).toBe('Wróć do listy (PR niezakończony)')
 
     // One action returns to a file that was skipped.
     await wrapper.find('.walk-skipped .critical-open').trigger('click')
     await flushPromises()
     expect(wrapper.find('.walk-progress').text()).toBe('Krok 3 z 6')
+    wrapper.unmount()
+  })
+})
+
+describe('quiz na koniec przeglądu', () => {
+  async function walkToTheEnd(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('.walk-primary').trigger('click')
+    await flushPromises()
+    for (let index = 0; index < 6; index++) {
+      await wrapper.find('.walk-actions--sticky .walk-primary').trigger('click')
+      await flushPromises()
+    }
+  }
+
+  async function answer(wrapper: ReturnType<typeof mount>, questionId: string, text: string) {
+    await wrapper.find(`#quiz-${questionId}`).setValue(text)
+    await wrapper.find(`#quiz-${questionId}`).element.closest('li')!
+      .querySelector<HTMLButtonElement>('.quiz-check')!.click()
+    await flushPromises()
+  }
+
+  // US-P1 still holds: opening costs nothing. Starting the walkthrough is the click that
+  // spends, and the path it saved is what the backend composes from.
+  it('costs nothing on opening and starts in the background with the walkthrough', async () => {
+    const wrapper = await openPr()
+    expect(api.composeQuiz).not.toHaveBeenCalled()
+
+    await wrapper.find('.walk-primary').trigger('click')
+    await flushPromises()
+
+    expect(api.composeQuiz).toHaveBeenCalledTimes(1)
+    expect(api.composeQuiz).toHaveBeenCalledWith('project', 'repo-a', 123, false)
+    expect(api.setReadingPath.mock.invocationCallOrder[0]!).toBeLessThan(api.composeQuiz.mock.invocationCallOrder[0]!)
+    wrapper.unmount()
+  })
+
+  it('answers a wrong answer with a hint and a way back into the code, never the key', async () => {
+    const wrapper = await openPr()
+    await walkToTheEnd(wrapper)
+
+    await answer(wrapper, 'q2', 'Nic.')
+
+    expect(api.answerQuiz).toHaveBeenCalledWith('project', 'repo-a', 123, 'q2', 'Nic.')
+    expect(wrapper.find('.walk-done .quiz-wrong').text()).toContain('Brakuje konfiguracji')
+    expect(wrapper.find('.walk-done').text()).not.toContain('Wzorcowo')
+    expect(wrapper.find('.walk-finish').text()).toBe('Wróć do listy (PR niezakończony)')
+
+    // h.cs is not on the reading path, so it opens in the tree — where the rail keeps the quiz.
+    const links = wrapper.findAll('.walk-done .quiz-files .critical-open')
+    await links[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.walk-done').exists()).toBe(false)
+    expect(api.fileDiff.mock.lastCall?.[3]).toBe('/src/h.cs')
+    expect(wrapper.find('.quiz-section .quiz-wrong').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('returns into the walkthrough for a file on the path', async () => {
+    const wrapper = await openPr()
+    await walkToTheEnd(wrapper)
+
+    await wrapper.findAll('.walk-done .quiz-files .critical-open')[0]!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.walk-progress').text()).toBe('Krok 2 z 6')
+    wrapper.unmount()
+  })
+
+  it('calls the pull request done only when every question is passed', async () => {
+    const wrapper = await openPr()
+    await walkToTheEnd(wrapper)
+
+    await answer(wrapper, 'q1', 'Jest dobrze.')
+    expect(wrapper.findAll('.walk-done .quiz-question--passed')).toHaveLength(1)
+    expect(wrapper.find('.walk-done').text()).toContain('Wzorcowo')
+    expect(wrapper.find('.pr-header-progress').text()).toBe('Quiz 1 / 2')
+    expect(wrapper.find('.walk-finish').text()).toBe('Wróć do listy (PR niezakończony)')
+
+    await answer(wrapper, 'q2', 'Też dobrze.')
+    expect(wrapper.find('.quiz-status--passed').text()).toContain('PR zakończony')
+    expect(wrapper.find('.walk-finish').text()).toBe('Zakończ ten PR ✓')
+    expect(wrapper.find('.pr-header-progress').text()).toBe('Quiz ✓')
+    wrapper.unmount()
+  })
+
+  // The model may still be composing when the reviewer leaves and comes back. The request
+  // is not aborted — the backend saves its result — and coming back joins it, never pays twice.
+  it('joins a quiz still being composed instead of starting a second one', async () => {
+    let finish!: (value: ReturnType<typeof quiz>) => void
+    api.composeQuiz.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const wrapper = await openPr()
+    await wrapper.find('.walk-primary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.back-button').trigger('click')
+    await flushPromises()
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.pr-header-progress').text()).toBe('Quiz…')
+
+    finish(quiz())
+    await flushPromises()
+    expect(api.composeQuiz).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.pr-header-progress').text()).toBe('Quiz 0 / 2')
     wrapper.unmount()
   })
 })

@@ -5,7 +5,7 @@
 **Understand the pull request, not just skim the diff.**
 
 A personal cockpit for reviewing large, AI-generated pull requests on Azure DevOps —
-reading order, AI summaries, per-file explanations and a checklist, so you keep the
+reading order, AI summaries, per-file explanations and a closing quiz, so you keep the
 mental model of your system while the code ships faster than you can read it.
 
 ![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
@@ -44,7 +44,7 @@ PR Cockpit does **not** replace code review. It answers the comprehension questi
 | ✅ **Reviewed markers** | Mark files as reviewed; the marker survives unrelated commits and only goes stale when *that* file changes. |
 | 🔁 **"What changed since…"** | Filter to what arrived after iteration N, or since your last walk-through or a given comment. |
 | 💬 **Comment threads** | Read Azure DevOps threads in place, see them marked in the file tree and diff; write and resolve them when explicitly enabled. |
-| 📋 **Six-step checklist** | A manual per-PR checklist, with progress shown on the active PR list. |
+| 🎓 **Understanding quiz** | Composed by AI in the background when you start the walkthrough; answers are graded by AI and a PR counts as done only when every question is passed. Status shows on the active PR list. |
 
 ## 🏗️ Architecture
 
@@ -64,7 +64,7 @@ flowchart LR
     INF -- "JSON over stdin/stdout" --> AI["AI CLI adapter<br/>(your model)"]
 ```
 
-- **Fetched on demand.** No sync, no cache of Azure DevOps data. Only your own state is persisted: checklist, Summary, reviewed markers, reading path and AI conversations.
+- **Fetched on demand.** No sync, no cache of Azure DevOps data. Only your own state is persisted: quiz, Summary, reviewed markers, reading path and AI conversations.
 - **The PAT never leaves the backend.** The frontend talks only to `/api`.
 - **Bounded, never truncated.** Files over the diff or AI-context budget keep their path and an omission reason; text is dropped whole, never cut mid-file.
 - **Untrusted text stays data.** PR descriptions, commit titles and code go to the model in a `context` field, separate from the fixed `instruction`.
@@ -172,8 +172,10 @@ CLI recent enough to know the configured model ids.
 | `Ai:Summary:Arguments:0`, `:1`, … | Literal arguments, one per entry |
 | `Ai:Summary:TimeoutSeconds` | Default 600, allowed 1–1800 — a ~100-file PR takes a while |
 | `Ai:Summary:Effort` | `low`, `medium`, `high`, `xhigh` or `max`; empty leaves the CLI's default for the model |
-| `Ai:Summary:AskModel` | Separate model for questions; falls back to `Model` |
-| `Ai:Summary:AskEffort` | Separate effort for questions; falls back to `Effort` |
+| `Ai:Summary:AskModel` | Separate model for questions and quiz grading; falls back to `Model` |
+| `Ai:Summary:AskEffort` | Separate effort for questions and quiz grading; falls back to `Effort` |
+| `Ai:Summary:QuizModel` | Separate model for composing the quiz (e.g. `claude-opus-5-5`); falls back to `Model` |
+| `Ai:Summary:QuizEffort` | Separate effort for composing the quiz; falls back to `Effort` |
 
 The executable is started directly, without a shell, in the backend's directory. It never receives a repository path or
 repository tools.

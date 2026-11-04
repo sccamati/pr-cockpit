@@ -24,4 +24,17 @@ public interface IAiSummaryAnalyzer
     /// request's context — never folded into the instruction, which stays fixed text.
     /// </summary>
     Task<SummaryDraft> AskFileAsync(PrContext context, FileQuestion question, CancellationToken ct);
+
+    /// <summary>
+    /// The quiz that closes a review, over the whole pull request. focusFiles are the files the
+    /// reviewer chose to read — data next to the context, like the question in ask.
+    /// </summary>
+    Task<QuizDraft> ComposeQuizAsync(PrContext context, IReadOnlyList<string> focusFiles, CancellationToken ct);
+
+    /// <summary>
+    /// One answer to one quiz question, judged against the question's files. The answer is
+    /// typed text and rides in the context, never in the instruction.
+    /// </summary>
+    Task<QuizGradeDraft> GradeQuizAnswerAsync(
+        PrContext context, QuizQuestion question, string answer, CancellationToken ct);
 }

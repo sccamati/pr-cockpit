@@ -55,4 +55,10 @@ describe('extractJson', () => {
     const noise = '[claude-code:notice] {"update":"1.3.0"}'
     expect(extractJson(noise + '\n' + payload)).toBe(payload)
   })
+
+  // The quiz is the one answer without sentences; a fenced quiz must not pass through raw.
+  it('recognises a quiz as an answer', () => {
+    const quiz = '{"schemaVersion":2,"questions":[{"kind":"intent","question":"Po co?","files":["/a.cs"],"expectedPoints":["X."]}]}'
+    expect(extractJson('```json\n' + quiz + '\n```')).toBe(quiz)
+  })
 })

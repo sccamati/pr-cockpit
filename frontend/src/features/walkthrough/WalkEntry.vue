@@ -43,12 +43,12 @@ const { myOpenThreads, openMyThreads } = comments
         <!-- Regenerating costs money too, so a stale ranking says so and waits. -->
         <p v-if="summaryFreshness === 'stale'" class="notice walk-stale" role="status">
           PR zmienił się od zapisania tego Summary — propozycja niżej pochodzi ze starszego commita.
-          <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
+          <button class="retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
         </p>
       </template>
       <p v-else-if="summaryError" class="notice error" role="alert">
         Propozycja ścieżki jest niedostępna: {{ summaryError }}
-        <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Spróbuj ponownie</button>
+        <button class="retry" type="button" :disabled="summaryLoading" @click="generateSummary">Spróbuj ponownie</button>
       </p>
       <!-- Nothing saved for this pull request: the model runs when asked, not when
            the screen opens. Every AI run is money, and it is the user's money. -->
@@ -93,7 +93,7 @@ const { myOpenThreads, openMyThreads } = comments
              byłoby gorsze niż powiedzenie tego wprost i policzenie na żądanie. -->
         <p v-if="fullOrderMissing" class="notice" role="status">
           To Summary powstało, zanim doszła kolejność całego PR — mam ranking, ale nie mam ułożonych wszystkich plików.
-          <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
+          <button class="retry" type="button" :disabled="summaryLoading" @click="generateSummary">Przelicz (uruchomi AI)</button>
         </p>
         <p v-else-if="walkCandidates.length === 0" class="muted">
           Ranking nie wskazał plików. Wejdź w pełne drzewo albo dodaj pliki ręcznie ze ścieżki w prawej szynie.

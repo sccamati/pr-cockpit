@@ -1187,3 +1187,76 @@ Status: zrobione 3 lis 2026 na prośbę użytkownika.
 - Diff zamiast pełnych plików w kontekście: większa zmiana, a podniesiony budżet wystarcza.
 - Wyjaśnienie pliku bez `RelatedFiles` i `Summary`: ma 1–3 zdania i ma być szybkie.
 - Budżety ustawione tak, by zmieścić się w 200 tys. tokenów, które CLI zakłada dla nieznanego modelu. Podnieść, gdy adapter zacznie prosić o `[1m]`.
+
+## Wdrożone — quiz zamiast checklisty
+
+### B-39 — Checklista i „Skomentuj linię” do usunięcia, na koniec przeglądu quiz zrozumienia
+
+Status: zrobione 3 lis 2026 na prośbę użytkownika.
+- **Testy:**
+  - backend 217/217;
+  - frontend 134/134;
+  - `vue-tsc` i `vite build` przechodzą.
+- **Nowe testy:**
+  - `QuizTests`: walidacja quizu i oceny oraz `QuizService` (aktualny quiz bez modelu, nowy przy `regenerate` albo po pushu, ścieżka jako `focusFiles`, ocena tylko na plikach pytania, klucz ukryty do zaliczenia, 409 dla starego commita, 400 przed I/O);
+  - `ReviewStoreTests` (dawne `ExplanationAndDebugNoteStoreTests`): zapis quizu i postęp na liście;
+  - `GivesTheBudgetToTheFilesReadFirst`, `NarrowsToSeveralFilesInThePullRequestsOrder`, `CliRejectsAnUnknownQuizEffortBeforeStartingAProcess`;
+  - `extractJson`: rozpoznaje quiz;
+  - `Walkthrough.test.ts` („quiz na koniec przeglądu”): otwarcie PR nie kosztuje, start przejścia układa quiz raz, zła odpowiedź daje wskazówkę i link do kodu, „zakończony” dopiero po komplecie, powrót do PR w trakcie układania dołącza do trwającego żądania;
+  - `App.test.ts`: status na liście i w nagłówku oraz quiz z szyny w małym PR.
+- **`npm run visual`:** różnice tam, gdzie miały być:
+  - nagłówek („Quiz c / t” zamiast „Checklista n / 6”);
+  - szyna (sekcja Quiz zamiast checklisty i Debug Check);
+  - pasek pliku bez „Skomentuj linię” (diff podjeżdża wyżej);
+  - lista („quiz 1/3”, „✓ zakończony”);
+  - `done` z quizem.
+
+  Nowy scenariusz `quiz` nie ma zdjęcia bazowego. Zrzuty obejrzane w trzech wariantach, bez rozjazdów.
+- **Konfiguracja (User Secrets, ustawiona):** `Ai:Summary:QuizModel = claude-opus-5-5`, `Ai:Summary:QuizEffort = high`. Ocena odpowiedzi używa `AskModel`/`AskEffort` (Opus, medium).
+- **Migracja `ReplaceChecklistWithQuiz`** jest wygenerowana i czeka (`Pending`). Wykona się przy najbliższym starcie backendu: usuwa `pr_checklists` razem z zapisanymi odpowiedziami Debug Check i tworzy `pr_quizzes`.
+- **Niepotwierdzone:**
+  - żaden quiz nie powstał jeszcze z prawdziwym modelem na prawdziwym PR; testy używają atrapy adaptera;
+  - nie wiadomo, ile trwa i kosztuje ułożenie quizu Opusem na dużym PR ani jakie pytania faktycznie wychodzą (czy padają `domain` i `runtime`);
+  - ocena odpowiedzi na żywo.
+
+**Prośba.** Checklisty nikt nie odklikiwał, a komentarze powstają przez „+” w gutterze, nie przyciskiem. Na koniec przeglądu ma być quiz: pytania o to, co zmienia PR i jak to zrobiono, ułożone w tle przez agenta (Opus). Zła odpowiedź odsyła do kodu, a bez zaliczenia PR nie jest zakończony. Dwa dopiski w trakcie:
+- bez górnego limitu pytań, bo duża zmiana zasługuje na pytanie o każdą decyzję (kolejka, outbox, wzorzec);
+- pytania biznesowe i wdrożeniowe. Przykłady z życia: pola zmiany sprzedawcy dodane na PPE zamiast na okresie PPE, wysyłka maili w aplikacji bez skonfigurowanego maila.
+
+**Decyzje użytkownika.**
+- Quiz rusza w tle na „Rozpocznij przejście”, nie przy otwarciu PR (US-P1 zostaje).
+- Pytań nie da się pominąć.
+- Zakres pytań wybiera agent: głównie przeczytana ścieżka, a poza nią to, co ważne.
+
+**Zmiany.**
+- **Usunięte:**
+  - checklista: `ChecklistStore`, `PrChecklistRow`, `IChecklistStore`, cztery trasy `checklist*`, `useChecklist`, sekcje w szynie, licznik w nagłówku, „x/6” na liście, sufiks „Zostało w checkliście”;
+  - Debug Check (wchłonięty jako pytanie `debug`);
+  - przycisk „Skomentuj linię” (`commentOnCursorLine`, `cursorLine` w `MonacoDiff`).
+
+  `ChecklistException` → `ReviewRequestException`, `.checklist-retry` → `.retry`.
+- **Backend:**
+  - `QuizModels` (Domain);
+  - `QuizRunner`, `QuizService` (Application);
+  - `QuizStore`, `PrQuizRow` (`pr_quizzes`, kolumny `Correct`/`Total` dla listy);
+  - trasy `GET/POST .../quiz`, `POST .../quiz/answer`, `GET .../pull-requests/quiz-progress`;
+  - w `CliSummaryAnalyzer` zadania `quiz` i `grade`, a prywatny `RunAsync<T>`;
+  - `PrContextBuilder`: `onlyPaths` (kilka plików) i `readFirst` (budżet najpierw dla przeczytanych);
+  - `SummaryDigest.Current`, wspólne dla pytania o plik i quizu.
+- **Schemat pytań:**
+  - zawsze `intent` i `mechanism`;
+  - `domain`, chyba że zmiana jest czysto techniczna;
+  - według PR-a `runtime`, `design`, `impact`, `edge`, `debug`, `free`.
+
+  Ocena traktuje kod jako prawdę i zalicza odpowiedź, która wskazuje realny błąd zmiany.
+- **Frontend:**
+  - `features/quiz/useQuiz.ts` i `QuizPanel.vue` (ekran domknięcia i szyna);
+  - `useWalkthrough.onStarted` uruchamia układanie po zapisaniu ścieżki;
+  - `returnToSkipped` → `returnToWalkFile`;
+  - „Zakończ ten PR ✓” albo „Wróć do listy (PR niezakończony)”.
+- **`scripts/extract-json.mjs`** rozpoznaje też obiekt z `questions`.
+
+**Świadomie pominięte (`ponytail`).**
+- Brak kolejki w tle: żądanie układania żyje, dopóki żyje karta. Zamknięcie karty zabija proces. Hosted service, gdy to zacznie przeszkadzać.
+- Lista PR-ów nie zna głowy PR, więc „✓” zostaje po pushu, dopóki PR nie zostanie otwarty. Do domknięcia przez `lastMergeSourceCommit`, jeśli będzie mylić.
+- Zapis quizu to odczyt-zmiana-zapis jednego wiersza. UI ocenia jedną odpowiedź naraz, więc ścigać się mogą tylko dwie karty.

@@ -75,9 +75,9 @@ public sealed class SummaryStore(PrCockpitContext context, IConfiguration config
     {
         var organization = configuration["AzureDevOps:Organization"];
         if (string.IsNullOrWhiteSpace(organization))
-            throw new ChecklistException("Configure AzureDevOps:Organization on the backend.", 503);
+            throw new ReviewRequestException("Configure AzureDevOps:Organization on the backend.", 503);
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repositoryId) || pullRequestId <= 0)
-            throw new ChecklistException("Invalid pull request location.", 400);
+            throw new ReviewRequestException("Invalid pull request location.", 400);
         return organization;
     }
 }

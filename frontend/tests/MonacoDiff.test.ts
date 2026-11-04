@@ -149,7 +149,6 @@ beforeEach(() => {
     getModel: () => ({ getValueInRange: () => mocks.selectedText }),
     focus: vi.fn(),
     trigger: mocks.trigger,
-    getPosition: () => ({ lineNumber: 12 }),
     setPosition: mocks.setPosition,
     // Monaco's zone accessor, reduced to what the component actually calls.
     changeViewZones: (change: (accessor: unknown) => void) => change({
@@ -526,9 +525,6 @@ describe('Monaco reading options', () => {
     handler({ target: { type: 2, position: { lineNumber: 4 } } })
     handler({ target: { type: 3, position: { lineNumber: 7 } } })
     expect(wrapper.emitted('openLine')).toEqual([[4], [7]])
-
-    // Anchoring is right-hand side only, so the cursor line comes from the modified editor.
-    expect((wrapper.vm as unknown as { cursorLine(): number }).cursorLine()).toBe(12)
 
     wrapper.unmount()
     expect(mocks.disposeGlyphListener).toHaveBeenCalled()

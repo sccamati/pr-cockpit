@@ -74,11 +74,11 @@ public sealed class FileQuestionStore(PrCockpitContext context, IConfiguration c
     {
         var organization = configuration["AzureDevOps:Organization"];
         if (string.IsNullOrWhiteSpace(organization))
-            throw new ChecklistException("Configure AzureDevOps:Organization on the backend.", 503);
+            throw new ReviewRequestException("Configure AzureDevOps:Organization on the backend.", 503);
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repositoryId) || pullRequestId <= 0)
-            throw new ChecklistException("Invalid pull request location.", 400);
+            throw new ReviewRequestException("Invalid pull request location.", 400);
         if (string.IsNullOrWhiteSpace(path) || path.Length > PrCockpitContext.MaxPathLength)
-            throw new ChecklistException("Invalid file path.", 400);
+            throw new ReviewRequestException("Invalid file path.", 400);
         return organization;
     }
 }

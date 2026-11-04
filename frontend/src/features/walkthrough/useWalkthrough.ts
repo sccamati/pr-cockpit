@@ -10,7 +10,7 @@ import type { useSummary } from '@/features/context/useSummary'
  * stored by useReviewProgress; this owns the screens and the choice of what to walk.
  */
 export function useWalkthrough({
-  details, summary, review, orderedPaths, lastIteration, nextUnreviewedPath, selectedFilePath, openFile,
+  details, summary, review, orderedPaths, lastIteration, nextUnreviewedPath, selectedFilePath, openFile, onStarted,
 }: {
   details: Ref<PullRequestDetails | null>
   summary: ReturnType<typeof useSummary>
@@ -21,6 +21,8 @@ export function useWalkthrough({
   nextUnreviewedPath: ComputedRef<string | null>
   selectedFilePath: Ref<string>
   openFile: (path: string, sinceIteration?: number | null) => Promise<void>
+  // A reading path was just saved: the quiz is composed from it, in the background.
+  onStarted: () => void
 }) {
   const { criticalProposal, fullProposal } = summary
   const { fileReviews, walkPosition, walkHeadSha, criticalPaths, criticalPathSet, reviewedPaths, reviewState, isReviewed } = review
@@ -176,6 +178,9 @@ export function useWalkthrough({
     walkHeadSha.value = details.value?.headCommitSha ?? null
     view.value = 'walk'
     await review.saveReadingPath(paths, 0)
+    // Starting a walkthrough is the click that spends: the quiz needs the saved path, and by
+    // the time the path is read it is ready (US-P1 still holds — opening a PR costs nothing).
+    onStarted()
     const first = walkPaths.value[0]
     if (first) await openWalkFile(first)
   }
@@ -217,8 +222,9 @@ export function useWalkthrough({
     void goToWalkIndex(walkPosition.value - 1)
   }
 
-  // US-P6: the skipped files are the reason to come back, so one action returns to one.
-  function returnToSkipped(path: string) {
+  // US-P6: the skipped files are the reason to come back, so one action returns to one. The
+  // quiz uses it too, for a file a wrong answer points back to.
+  function returnToWalkFile(path: string) {
     const index = walkPaths.value.indexOf(path)
     if (index < 0) return
     view.value = 'walk'
@@ -264,6 +270,6 @@ export function useWalkthrough({
     walkReadCount, walkSkippedPaths, roundPaths, roundUnreadCount, roundAvailable,
     walkPick, walkPickSet, walkOutsideCount, walkOutsideNoiseCount, walkCandidates, fullOrderMissing,
     toggleWalkPick, enterWalkthrough, setWalkMode, leaveWalkthrough, startWalkthrough, resumeWalkthrough,
-    goToWalkIndex, walkAdvance, walkBack, returnToSkipped, resetWalkthrough, afterReviewsLoaded,
+    goToWalkIndex, walkAdvance, walkBack, returnToWalkFile, resetWalkthrough, afterReviewsLoaded,
   }
 }

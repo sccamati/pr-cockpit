@@ -9,7 +9,8 @@ public static class PrContextBuilder
         Func<string, CancellationToken, Task<FileDiff>> getDiff,
         ContextBudget budget,
         CancellationToken ct,
-        string? onlyPath = null)
+        IReadOnlyCollection<string>? onlyPaths = null,
+        IReadOnlySet<string>? readFirst = null)
     {
         ArgumentNullException.ThrowIfNull(details);
         ArgumentNullException.ThrowIfNull(getDiff);
@@ -18,14 +19,18 @@ public static class PrContextBuilder
             throw new ArgumentOutOfRangeException(nameof(budget), "Diff character limits must be positive.");
 
         var used = 0;
-        // onlyPath narrows the package to a single file for the per-file tasks. The rules stay
-        // the same — whole or nothing — and only the budget the caller passes differs.
-        var selected = details.ChangedFiles.Where(file => onlyPath is null || file.Path == onlyPath).ToList();
+        // onlyPaths narrows the package to the files a task is about — one for explain and ask,
+        // a quiz question's few for grading. The rules stay the same — whole or nothing — and
+        // only the budget the caller passes differs.
+        var selected = details.ChangedFiles.Where(file => onlyPaths is null || onlyPaths.Contains(file.Path)).ToList();
         var decided = new Dictionary<string, ContextChangedFile>(StringComparer.Ordinal);
-        // The budget is handed out code first, tests last (FileCategory.ReadPriority) — a stable
-        // sort, so files of one kind keep the pull request's order. The package itself still
-        // lists them in that order; only who gets the budget changes.
-        foreach (var change in selected.OrderBy(file => FileCategory.ReadPriority(file.Path)))
+        // The budget is handed out to readFirst (the files the reviewer actually read), then code,
+        // then notes, then tests (FileCategory.ReadPriority) — a stable sort, so files of one kind
+        // keep the pull request's order. The package itself still lists them in that order; only
+        // who gets the budget changes.
+        foreach (var change in selected
+            .OrderBy(file => readFirst?.Contains(file.Path) == true ? 0 : 1)
+            .ThenBy(file => FileCategory.ReadPriority(file.Path)))
         {
             ct.ThrowIfCancellationRequested();
             var reason = FileCategory.Of(change.Path) ??

@@ -3,13 +3,13 @@
 import { useCockpit } from '@/cockpit'
 import FileTree from './FileTree.vue'
 
-const { details, fileList, review, checklist, walk, openFile } = useCockpit()
+const { details, fileList, review, quiz, walk, openFile } = useCockpit()
 const {
   fileSearch, onlyUnreviewed, filterIteration, filterPaths, filterLoading, filterError, iterationChoices,
   matchingFiles, unreviewedMatches, codeFiles, noiseFiles, fileTree, noiseTree, expandAll, nextUnreviewedPath, setFilterIteration,
 } = fileList
 const { reviewedPaths, stalePaths, fileReviewError, remainingCount, toggleCritical } = review
-const { remainingChecklist } = checklist
+const { quizPassed } = quiz
 const { walkWorthwhile, enterWalkthrough } = walk
 
 function openNextUnreviewed() {
@@ -31,7 +31,7 @@ function openNextUnreviewed() {
       </p>
       <p v-if="fileReviewError" class="notice error file-review-error" role="alert">{{ fileReviewError }}</p>
       <p v-if="details.changedFiles.length && remainingCount === 0" class="review-complete" role="status">
-        Wszystkie pliki obejrzane.<template v-if="remainingChecklist.length"> Zostało w checkliście: {{ remainingChecklist.join(', ') }}.</template>
+        Wszystkie pliki obejrzane.<template v-if="!quizPassed"> Został quiz — w szynie po prawej.</template>
       </p>
     </div>
     <p v-if="details.changedFiles.length === 0" class="file-list-empty">Brak zmienionych plików.</p>

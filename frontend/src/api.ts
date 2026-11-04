@@ -163,9 +163,28 @@ export interface ReadingPathState {
 }
 export interface FileReviewProgress { pullRequestId: number; reviewedCount: number; changedFilesCount: number }
 
-export type ChecklistItem = 'aiReview' | 'quality' | 'understand' | 'architecture' | 'debug' | 'ready'
-export interface ChecklistState extends Record<ChecklistItem, boolean> { updatedAt: string | null; debugNote: string | null }
-export interface ChecklistProgress { pullRequestId: number; completedCount: number }
+export type QuizKind = 'intent' | 'mechanism' | 'domain' | 'runtime' | 'design' | 'impact' | 'edge' | 'debug' | 'free'
+export interface QuizAttempt { answer: string; correct: boolean; feedback: string[]; answeredAt: string }
+export interface QuizQuestion {
+  id: string
+  kind: QuizKind
+  question: string
+  files: string[]
+  // The answer key: null until the question is passed.
+  expectedPoints: string[] | null
+  passed: boolean
+  attemptCount: number
+  lastAttempt: QuizAttempt | null
+}
+export interface Quiz {
+  headCommitSha: string | null
+  createdAt: string
+  correct: number
+  total: number
+  passed: boolean
+  questions: QuizQuestion[]
+}
+export interface QuizProgress { pullRequestId: number; correct: number; total: number }
 
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`/api${path}`)
@@ -234,8 +253,8 @@ export const api = {
   repositories: (project: string) => get<Repository[]>(`/projects/${encodeURIComponent(project)}/repositories`),
   pullRequests: (project: string, repository: string) =>
     get<PullRequestSummary[]>(`${location(project, repository)}/pull-requests`),
-  checklistProgress: (project: string, repository: string) =>
-    get<ChecklistProgress[]>(`${location(project, repository)}/pull-requests/checklist-progress`),
+  quizProgress: (project: string, repository: string) =>
+    get<QuizProgress[]>(`${location(project, repository)}/pull-requests/quiz-progress`),
   pullRequest: (project: string, repository: string, id: number) =>
     get<PullRequestDetails>(`${location(project, repository)}/pull-requests/${id}`),
   fileDiff: (project: string, repository: string, id: number, path: string, sinceIteration?: number) =>
@@ -279,8 +298,14 @@ export const api = {
   savedSummary: (project: string, repository: string, id: number) =>
     get<{ stored: StoredSummary | null }>(`${location(project, repository)}/pull-requests/${id}/summary`)
       .then(response => response.stored),
-  checklist: (project: string, repository: string, id: number) =>
-    get<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist`),
+  savedQuiz: (project: string, repository: string, id: number) =>
+    get<{ stored: Quiz | null }>(`${location(project, repository)}/pull-requests/${id}/quiz`)
+      .then(response => response.stored),
+  // Runs the model unless a quiz for the current head is saved; regenerate always runs it.
+  composeQuiz: (project: string, repository: string, id: number, regenerate = false) =>
+    post<Quiz>(`${location(project, repository)}/pull-requests/${id}/quiz`, { regenerate }),
+  answerQuiz: (project: string, repository: string, id: number, questionId: string, answer: string) =>
+    post<Quiz>(`${location(project, repository)}/pull-requests/${id}/quiz/answer`, { questionId, answer }),
   fileReviews: (project: string, repository: string, id: number) =>
     get<FileReviewState>(`${location(project, repository)}/pull-requests/${id}/file-reviews`),
   setFileReviewed: (project: string, repository: string, id: number, update: FileReviewUpdate) =>
@@ -291,8 +316,4 @@ export const api = {
       { paths, position, headCommitSha }),
   fileReviewProgress: (project: string, repository: string) =>
     get<FileReviewProgress[]>(`${location(project, repository)}/pull-requests/file-review-progress`),
-  setDebugNote: (project: string, repository: string, id: number, note: string) =>
-    put<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist/debug-note`, { note }),
-  setChecklistItem: (project: string, repository: string, id: number, item: ChecklistItem, completed: boolean) =>
-    put<ChecklistState>(`${location(project, repository)}/pull-requests/${id}/checklist/${item === 'aiReview' ? 'ai-review' : item}`, { completed }),
 }

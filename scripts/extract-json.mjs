@@ -16,9 +16,13 @@
 // ponytail: brace counting outside string literals, not a JSON parser tried over every
 // prefix. It handles a ```json fence, a sentence either side, and a banner in front.
 
-/** The one field every answer carries, for both the summary and the per-file task. */
+/**
+ * The field every answer carries: `sentences` for the summary, file, ask and grade tasks,
+ * `questions` for the quiz. A new task with another shape needs its field added here.
+ */
 function looksLikeAnAnswer(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) && 'sentences' in value;
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    ('sentences' in value || 'questions' in value);
 }
 
 /** The balanced object starting at `start`, or null if the braces never close. */

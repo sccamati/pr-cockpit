@@ -11,7 +11,7 @@ namespace PRCockpit.Api.Tests;
 /// Same SQLite-in-memory harness as ReviewProgressStoreTests: no database on the machine,
 /// and what is pinned here is the stores' own behaviour, not the SQL Server schema.
 /// </summary>
-public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
+public sealed class ReviewStoreTests : IDisposable
 {
     private const string Sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
     private const string OtherSha = "00112233445566778899aabbccddeeff00112233";
@@ -22,7 +22,7 @@ public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
     private readonly DbContextOptions<PrCockpitContext> _options;
     private readonly List<PrCockpitContext> _contexts = [];
 
-    public ExplanationAndDebugNoteStoreTests()
+    public ReviewStoreTests()
     {
         _connection = new SqliteConnection("Filename=:memory:");
         _connection.Open();
@@ -104,38 +104,54 @@ public sealed class ExplanationAndDebugNoteStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task KeepsTheDebugAnswerAndClearsItOnBlank()
+    public async Task ReadsBackAQuizAndKeepsOneRowPerPullRequest()
     {
-        var saved = await Checklists().SetDebugNoteAsync("proj", "repo", 7, "  Zacząłbym od kolejki.  ", CancellationToken.None);
-        Assert.Equal("Zacząłbym od kolejki.", saved.DebugNote);
-        Assert.Equal("Zacząłbym od kolejki.",
-            (await Checklists().GetAsync("proj", "repo", 7, CancellationToken.None)).DebugNote);
+        await Quizzes().SaveAsync("proj", "repo", 7, Quiz(Sha), CancellationToken.None);
+        var answered = Quiz(OtherSha).WithAttempt("q1",
+            new QuizAttempt("Bo tak.", true, ["Dobrze."], DateTimeOffset.UtcNow));
+        await Quizzes().SaveAsync("proj", "repo", 7, answered, CancellationToken.None);
 
-        var cleared = await Checklists().SetDebugNoteAsync("proj", "repo", 7, "   ", CancellationToken.None);
-        Assert.Null(cleared.DebugNote);
+        using var context = new PrCockpitContext(_options);
+        Assert.Equal(1, await context.Quizzes.CountAsync());
+        var stored = await Quizzes().GetAsync("proj", "repo", 7, CancellationToken.None);
+        Assert.Equal(OtherSha, stored!.HeadCommitSha);
+        Assert.True(stored.Items[0].Passed);
+        Assert.Equal(["Po co ta zmiana?", "Jak działa?"], stored.Items.Select(item => item.Question.Question));
     }
 
-    // Saving an answer is not the same as declaring the step done — the six boxes stay manual.
+    // The pull request list reads two columns, not the quiz itself.
     [Fact]
-    public async Task DoesNotTickTheDebugStep()
+    public async Task ReportsProgressPerPullRequestOfOneRepository()
     {
-        var saved = await Checklists().SetDebugNoteAsync("proj", "repo", 7, "Od logów.", CancellationToken.None);
+        await Quizzes().SaveAsync("proj", "repo", 7, Quiz(Sha).WithAttempt("q2",
+            new QuizAttempt("Przez kolejkę.", true, ["Tak."], DateTimeOffset.UtcNow)), CancellationToken.None);
+        await Quizzes().SaveAsync("proj", "repo", 8, Quiz(Sha), CancellationToken.None);
+        await Quizzes().SaveAsync("proj", "other", 9, Quiz(Sha), CancellationToken.None);
 
-        Assert.False(saved.Debug);
+        var progress = await Quizzes().GetProgressAsync("proj", "repo", CancellationToken.None);
+
+        Assert.Equal([new QuizProgress(7, 1, 2), new QuizProgress(8, 0, 2)],
+            progress.OrderBy(entry => entry.PullRequestId));
     }
 
+    // Saved under an older contract: out of date, not an error that blocks the pull request.
     [Fact]
-    public async Task RejectsAnAnswerOverTheLengthLimit()
+    public async Task TreatsAQuizOfAnotherSchemaVersionAsNoQuiz()
     {
-        var error = await Assert.ThrowsAsync<ChecklistException>(() => Checklists()
-            .SetDebugNoteAsync("proj", "repo", 7, new string('x', DebugNoteUpdate.MaxLength + 1), CancellationToken.None));
+        await Quizzes().SaveAsync("proj", "repo", 7, Quiz(Sha) with { SchemaVersion = 1 }, CancellationToken.None);
 
-        Assert.Equal(400, error.StatusCode);
+        Assert.Null(await Quizzes().GetAsync("proj", "repo", 7, CancellationToken.None));
     }
+
+    private static Quiz Quiz(string head) => new(2, head,
+    [
+        new QuizItem(new QuizQuestion("q1", "intent", "Po co ta zmiana?", ["/src/file.cs"], ["Wysyłka faktur."]), []),
+        new QuizItem(new QuizQuestion("q2", "mechanism", "Jak działa?", ["/src/file.cs"], ["Przez kolejkę."]), []),
+    ], DateTimeOffset.UtcNow);
 
     private FileExplanationStore Explanations() => new(Context(), Configuration());
     private FileQuestionStore Questions() => new(Context(), Configuration());
-    private ChecklistStore Checklists() => new(Context(), Configuration());
+    private QuizStore Quizzes() => new(Context(), Configuration());
 
     private PrCockpitContext Context()
     {

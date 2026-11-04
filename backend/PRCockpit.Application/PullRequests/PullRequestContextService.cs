@@ -19,7 +19,14 @@ public sealed class PullRequestContextService(IAzureDevOpsClient client)
     public Task<PrContext> BuildAsync(
         string project, string repositoryId, PullRequestDetails details, CancellationToken ct,
         string? onlyPath = null) =>
+        BuildAsync(project, repositoryId, details,
+            onlyPath is null ? ContextBudget.Default : ContextBudget.OneFile, ct,
+            onlyPath is null ? null : [onlyPath]);
+
+    public Task<PrContext> BuildAsync(
+        string project, string repositoryId, PullRequestDetails details, ContextBudget budget,
+        CancellationToken ct, IReadOnlyCollection<string>? onlyPaths = null, IReadOnlySet<string>? readFirst = null) =>
         PrContextBuilder.BuildAsync(details,
             (path, token) => client.GetFileDiffAsync(project, repositoryId, details, path, token),
-            onlyPath is null ? ContextBudget.Default : ContextBudget.OneFile, ct, onlyPath);
+            budget, ct, onlyPaths, readFirst);
 }

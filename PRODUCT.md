@@ -101,9 +101,9 @@ Użytkownik widzi swoje aktywne PR-y.
 Przykład:
 
 ```text
-PR #1842   KSeF integration       4/6
-PR #1845   Customer details       6/6
-PR #1848   Authorization          2/6
+PR #1842   KSeF integration       quiz 2/5
+PR #1845   Customer details       ✓ zakończony
+PR #1848   Authorization          bez quizu
 ```
 
 Kliknięcie otwiera PR Cockpit.
@@ -146,20 +146,28 @@ Risk nie blokuje merge — pomaga jedynie określić, gdzie warto poświęcić w
 
 ---
 
-# 6. Checklista PR
+# 6. Quiz na koniec przeglądu
 
-Każdy PR ma prostą checklistę:
+Ręczna checklista sześciu kroków została usunięta (B-39): nikt jej nie odklikiwał, więc niczego nie
+dowodziła. Jej miejsce zajął quiz, który sprawdza zrozumienie zamiast deklaracji.
 
-* [ ] `aiReview` — „Review AI"
-* [ ] `quality` — „Jakość"
-* [ ] `understand` — „Rozumiem zmianę"
-* [ ] `architecture` — „Architektura"
-* [ ] `debug` — „Diagnoza"
-* [ ] `ready` — „Gotowe"
-
-Kolejność jest tą listą. Klucze idą do API i bazy, etykiety są tekstem UI, więc po polsku.
-
-Status checklisty zapisujemy w aplikacji.
+* Agent układa quiz **w tle, gdy zaczynasz przejście** („Rozpocznij przejście”). Samo otwarcie PR nic
+  nie kosztuje (US-P1). W małym PR, bez przejścia, quiz układa się z przycisku w szynie.
+* Pytania dotyczą tego, co zmienia PR i jak to zrobiono. Domyślny zestaw:
+  * zawsze cel zmiany (`intent`) i mechanizm (`mechanism`);
+  * aspekt biznesowy (`domain`): do której encji należą dane, jaki jest ich cykl życia i zależności.
+    Ma pozwolić zauważyć np., że pola zmiany sprzedawcy powinny leżeć na okresie PPE, a nie na PPE;
+  * według PR-a: wdrożenie (`runtime`, np. wysyłka maili bez skonfigurowanego maila), wzorzec
+    (`design`: kolejka, outbox, idempotencja), wpływ, przypadki brzegowe, diagnoza (dawny Debug Check)
+    i cokolwiek, co agent uzna za warte pytania.
+* Liczba pytań zależy od zmiany i nie ma górnego limitu.
+* Agent pyta głównie o pliki, które przeczytałeś. Gdy ważna część zmiany leży poza nimi, pyta też o nią.
+* Każdą odpowiedź ocenia AI. Zła odpowiedź dostaje wskazówkę i link do pliku, do którego trzeba wrócić,
+  ale nie dostaje odpowiedzi. Wzorzec widać dopiero po zaliczeniu.
+* Ocena traktuje kod jako prawdę. Poprawna odpowiedź spoza wzorca przechodzi, a odpowiedź, która
+  wskazuje realny błąd zmiany, też przechodzi i jest tak nazwana.
+* **PR jest zakończony dopiero po zaliczeniu wszystkich pytań** dla bieżącego commita. Pytań nie da się
+  pominąć; na złe pytanie jest „Ułóż quiz od nowa”.
 
 ---
 
@@ -283,6 +291,10 @@ Priorytet:
 ---
 
 # 9. Debug Check
+
+> Wchłonięty przez quiz (§6, B-39) jako pytanie typu `debug`. Zdanie „Nie budujemy systemu
+> egzaminowania developera” zostało świadomie odwrócone na prośbę użytkownika: deklaracja „rozumiem”
+> niczego nie dowodziła. Poniżej pierwotny opis.
 
 Prosty test:
 
@@ -461,7 +473,7 @@ PR Cockpit UI
       │
       ├── Analysis
       │
-      ├── Checklist
+      ├── Quiz
       │
       └── ProjectKnowledge
                 │
@@ -555,17 +567,16 @@ Impact
 Status
 ```
 
-## Checklist
+## Quiz
 
 ```text
 PullRequestId
+HeadCommitSha
 
-AiReview
-Quality
-Understand
-Architecture
-Debug
-Ready
+Questions: kind, question, files, expectedPoints
+Attempts: answer, correct, feedback
+
+Correct / Total
 ```
 
 ---
@@ -604,15 +615,15 @@ Stan: działa pierwszy vertical slice (Azure DevOps → PR → lista plików →
 
 ### UI
 
-* [x] Dashboard PR (lista aktywnych PR pokazuje postęp zapisanej checklisty jako `x/6`)
+* [x] Dashboard PR (lista aktywnych PR pokazuje status quizu: „✓ zakończony”, „quiz c/t” albo „bez quizu”)
 * [ ] PR Overview (podstawowe szczegóły są; brak affected areas i risk z sekcji 5)
 * [ ] Understand
 * [ ] Quality
-* [x] Checklist — sześć ręcznych pól w widoku PR
+* [x] Quiz na koniec przeglądu (zastąpił checklistę, B-39)
 
 ### Persistence
 
-* [x] zapis checklist w lokalnej bazie SQL Server przez EF Core
+* [x] zapis quizu w lokalnej bazie SQL Server przez EF Core
 * [ ] zapis analizy (Summary jest zapisywane; pozostałe wyniki jeszcze nie)
 * [ ] ponowne otwarcie wcześniej przeanalizowanego PR (zapisane Summary jest wczytywane)
 
@@ -649,7 +660,7 @@ Kolejność najbliższych, małych zadań i warunki ich zakończenia są w [docs
 
 * [x] Utworzyć solution .NET
 * [x] Utworzyć Vue frontend
-* [x] Dodać lokalną bazę dla checklisty (SQLite w MVP, obecnie SQL Server przez EF Core)
+* [x] Dodać lokalną bazę (SQLite w MVP, obecnie SQL Server przez EF Core)
 * [x] Przygotować podstawowy layout
 * [x] Przygotować konfigurację aplikacji
 
@@ -752,19 +763,16 @@ Aplikacja wskazuje istotne techniczne niuanse poza podstawowym code review.
 
 ---
 
-## EPIC 7 — Checklist
+## EPIC 7 — Quiz (dawniej Checklist)
 
-* [x] AI Review — ręczne oznaczenie
-* [x] Quality — ręczne oznaczenie
-* [x] Understand — ręczne oznaczenie
-* [x] Architecture — ręczne oznaczenie
-* [x] Debug — ręczne oznaczenie
-* [x] Ready — ręczne oznaczenie
-* [x] zapis statusu
+* [x] ręczna checklista sześciu kroków — wdrożona, potem usunięta (B-39)
+* [x] quiz układany w tle przy starcie przejścia
+* [x] ocena odpowiedzi przez AI, wskazówka i link do pliku przy złej odpowiedzi
+* [x] PR zakończony dopiero po zaliczeniu quizu
 
 ### Wynik
 
-Każdy PR ma jasny postęp review.
+Każdy PR ma jasny stan review: zakończony znaczy zrozumiany, nie odklikany.
 
 ---
 
@@ -811,7 +819,7 @@ Quality
 następnie:
 
 ```text
-Checklist
+Quiz (dawniej Checklist)
 ```
 
 a na końcu MVP:
@@ -835,7 +843,7 @@ MVP jest gotowe, jeżeli mogę:
 7. [ ] zobaczyć główny flow,
 8. [ ] dostać listę najważniejszych plików,
 9. [ ] dostać sensowne Quality Findings,
-10. [x] odklikać checklistę,
+10. [x] zaliczyć quiz na koniec przeglądu (zastąpił checklistę),
 11. [ ] wrócić później i nadal widzieć wynik.
 
 ---

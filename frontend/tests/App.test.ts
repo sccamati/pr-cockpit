@@ -8,7 +8,7 @@ const api = vi.hoisted(() => ({
   projects: vi.fn(),
   repositories: vi.fn(),
   pullRequests: vi.fn(),
-  checklistProgress: vi.fn(),
+  quizProgress: vi.fn(),
   pullRequest: vi.fn(),
   fileDiff: vi.fn(),
   generateSummary: vi.fn(),
@@ -16,11 +16,12 @@ const api = vi.hoisted(() => ({
   askAboutFile: vi.fn(),
   fileQuestions: vi.fn(),
   savedSummary: vi.fn(),
-  checklist: vi.fn(),
+  savedQuiz: vi.fn(),
+  composeQuiz: vi.fn(),
+  answerQuiz: vi.fn(),
   fileReviews: vi.fn(),
   setFileReviewed: vi.fn(),
   setReadingPath: vi.fn(),
-  setDebugNote: vi.fn(),
   fileReviewProgress: vi.fn(),
   changedPathsSince: vi.fn(),
   commentThreads: vi.fn(),
@@ -47,7 +48,6 @@ vi.mock('@/features/diff/MonacoDiff.vue', () => ({
       revealLine: (line: number) => revealed.push(line),
       goToDiff: () => {},
       focusEditor: () => {},
-      cursorLine: () => null,
       selectedText: () => 'zaznaczony kod',
       // Stands in for Monaco's view zones: a real container per line, so the teleported
       // conversation actually renders and can be asserted on.
@@ -110,17 +110,10 @@ beforeEach(() => {
   api.projects.mockResolvedValue([{ id: 'project', name: 'Project' }])
   api.repositories.mockResolvedValue([{ id: 'repo-a', name: 'Repo A' }])
   api.pullRequests.mockResolvedValue([details])
-  api.checklistProgress.mockResolvedValue([])
+  api.quizProgress.mockResolvedValue([])
   api.pullRequest.mockResolvedValue(details)
   api.savedSummary.mockResolvedValue(null)
-  api.checklist.mockResolvedValue({
-    aiReview: false, quality: false, understand: false,
-    architecture: false, debug: false, ready: false, updatedAt: null, debugNote: null,
-  })
-  api.setDebugNote.mockImplementation(async (_project, _repository, _id, note) => ({
-    aiReview: false, quality: false, understand: false, architecture: false,
-    debug: false, ready: false, updatedAt: '2026-09-01T12:00:00Z', debugNote: note.trim() || null,
-  }))
+  api.savedQuiz.mockResolvedValue(null)
   api.fileDiff.mockImplementation(async (_project, _repository, _id, path) => ({
     kind: 'text', path, originalPath: null, originalText: 'old', modifiedText: 'new',
   }))
@@ -454,22 +447,47 @@ describe('PR review', () => {
     wrapper.unmount()
   })
 
-  it('saves the Debug Check answer without ticking anything for you', async () => {
+  // A pull request is done when its quiz is passed; the list says so, and nothing else does.
+  it('shows the quiz on the list and in the header, and composes nothing on open', async () => {
+    api.quizProgress.mockResolvedValue([{ pullRequestId: 123, correct: 2, total: 2 }])
+    api.savedQuiz.mockResolvedValue({
+      headCommitSha: null, createdAt: '2026-09-01T12:00:00Z', correct: 1, total: 2, passed: false, questions: [],
+    })
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.find('.pr-progress').text()).toBe('✓ zakończony')
+    await wrapper.find('.pr-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.pr-header-progress').text()).toBe('Quiz 1 / 2')
+    expect(api.composeQuiz).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('offers to compose a quiz from the rail on a small pull request, on a click', async () => {
+    api.composeQuiz.mockResolvedValue({
+      headCommitSha: null, createdAt: '2026-09-01T12:00:00Z', correct: 0, total: 2, passed: false,
+      questions: [
+        { id: 'q1', kind: 'intent', question: 'Po co ta zmiana?', files: ['/src/first.cs'], expectedPoints: null, passed: false, attemptCount: 0, lastAttempt: null },
+        { id: 'q2', kind: 'domain', question: 'Do czego należą nowe dane?', files: ['/src/second.cs'], expectedPoints: null, passed: false, attemptCount: 0, lastAttempt: null },
+      ],
+    })
     const wrapper = mount(App)
     await flushPromises()
     await wrapper.find('.pr-row').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.debug-question').text()).toBe('Gdyby ta zmiana nie zadziałała, gdzie zacząłbyś szukać?')
-    await wrapper.find('#debug-answer').setValue('  Od kolejki wysyłki.  ')
-    await wrapper.find('.debug-save').trigger('click')
+    await wrapper.find('.quiz-section .quiz-compose').trigger('click')
     await flushPromises()
 
-    expect(api.setDebugNote).toHaveBeenCalledWith('project', 'repo-a', 123, '  Od kolejki wysyłki.  ')
-    // The field shows what the server stored, and no checklist box moved.
-    expect((wrapper.find('#debug-answer').element as HTMLTextAreaElement).value).toBe('Od kolejki wysyłki.')
-    expect(wrapper.text()).toContain('Zapisano')
-    expect(wrapper.findAll('.checklist-item input').every(box => !(box.element as HTMLInputElement).checked)).toBe(true)
+    expect(api.composeQuiz).toHaveBeenCalledWith('project', 'repo-a', 123, false)
+    expect(wrapper.findAll('.quiz-section .quiz-kind').map(kind => kind.text()))
+      .toEqual(['Pytanie 1 z 2 · Cel', 'Pytanie 2 z 2 · Biznes'])
+    // A file under a question opens it, from the tree.
+    await wrapper.findAll('.quiz-section .quiz-files .critical-open')[1]!.trigger('click')
+    await flushPromises()
+    expect(api.fileDiff.mock.lastCall?.[3]).toBe('/src/second.cs')
     wrapper.unmount()
   })
 

@@ -18,6 +18,7 @@ builder.Services.AddScoped<SummaryService>();
 builder.Services.AddScoped<FileExplanationService>();
 builder.Services.AddScoped<FileQuestionService>();
 builder.Services.AddScoped<CodeUsageService>();
+builder.Services.AddScoped<QuizService>();
 
 // No authentication, by decision (D-01) — so the port is not offered to the network.
 var remote = LocalOnly.RemoteAddresses(builder.Configuration);
@@ -66,8 +67,8 @@ api.MapGet(PullRequests, async (
 
 // The literal segments below win over the {pullRequestId:int} routes, the way route
 // matching prefers a literal over a constrained parameter.
-api.MapGet($"{PullRequests}/checklist-progress", async (
-    string project, string repositoryId, IChecklistStore store, CancellationToken ct) =>
+api.MapGet($"{PullRequests}/quiz-progress", async (
+    string project, string repositoryId, IQuizStore store, CancellationToken ct) =>
     await Execute(() => store.GetProgressAsync(project, repositoryId, ct)));
 
 api.MapGet($"{PullRequests}/file-review-progress", async (
@@ -170,27 +171,29 @@ api.MapPost($"{PullRequests}/{{pullRequestId:int}}/summary/ask", async (
         request.Path ?? "", request.Question, request.Selection, ct)));
 
 // Reading a conversation back touches nothing but our own rows — no pull request to fetch
-// and no allowlist to apply — so it goes straight to the store, like the checklist read.
+// and no allowlist to apply — so it goes straight to the store.
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/summary/ask", async (
     string project, string repositoryId, int pullRequestId, string path,
     IFileQuestionStore store, CancellationToken ct) =>
     await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, path, ct)));
 
-api.MapGet($"{PullRequests}/{{pullRequestId:int}}/checklist", async (
-    string project, string repositoryId, int pullRequestId, IChecklistStore store, CancellationToken ct) =>
-    await Execute(() => store.GetAsync(project, repositoryId, pullRequestId, ct)));
+// Reading the saved quiz is free; composing one runs the model, and the browser asks for it
+// only when a walkthrough starts or on a click (US-P1). A second compose for the same head
+// returns the saved quiz, so the background start and a click cannot pay twice.
+api.MapGet($"{PullRequests}/{{pullRequestId:int}}/quiz", async (
+    string project, string repositoryId, int pullRequestId, QuizService quizzes, CancellationToken ct) =>
+    await Execute(async () => new { stored = await quizzes.GetAsync(project, repositoryId, pullRequestId, ct) }));
 
-// A literal segment beats the {item} parameter in routing, so this stays a separate
-// endpoint rather than a seventh name inside the checklist item switch.
-api.MapPut($"{PullRequests}/{{pullRequestId:int}}/checklist/debug-note", async (
-    string project, string repositoryId, int pullRequestId, DebugNoteUpdate update,
-    IChecklistStore store, CancellationToken ct) =>
-    await Execute(() => store.SetDebugNoteAsync(project, repositoryId, pullRequestId, update.Note, ct)));
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/quiz", async (
+    string project, string repositoryId, int pullRequestId, QuizComposeRequest request,
+    QuizService quizzes, CancellationToken ct) =>
+    await Execute(() => quizzes.ComposeAsync(project, repositoryId, pullRequestId, request.Regenerate ?? false, ct)));
 
-api.MapPut($"{PullRequests}/{{pullRequestId:int}}/checklist/{{item}}", async (
-    string project, string repositoryId, int pullRequestId, string item, ChecklistUpdate update,
-    IChecklistStore store, CancellationToken ct) =>
-    await Execute(() => store.SetAsync(project, repositoryId, pullRequestId, item, update.Completed, ct)));
+api.MapPost($"{PullRequests}/{{pullRequestId:int}}/quiz/answer", async (
+    string project, string repositoryId, int pullRequestId, QuizAnswerRequest request,
+    QuizService quizzes, CancellationToken ct) =>
+    await Execute(() => quizzes.AnswerAsync(project, repositoryId, pullRequestId,
+        request.QuestionId, request.Answer, ct)));
 
 api.MapGet($"{PullRequests}/{{pullRequestId:int}}/file-reviews", async (
     string project, string repositoryId, int pullRequestId, IReviewProgressStore store, CancellationToken ct) =>
@@ -226,7 +229,7 @@ static async Task<IResult> Execute<T>(Func<Task<T>> action)
     {
         return Results.Problem(ex.Message, statusCode: ex.StatusCode);
     }
-    catch (ChecklistException ex)
+    catch (ReviewRequestException ex)
     {
         return Results.Problem(ex.Message, statusCode: ex.StatusCode);
     }

@@ -25,7 +25,7 @@ const { view, walkPaths, walkFilePath, walkAdvance, walkBack, leaveWalkthrough }
 const {
   commentsOpen, draft, commentError, inlineThreadId, inlineThread, inlineThreadIndex, lineDraft, threadsInFile,
   commentLinesForFile, resolvedLinesForFile, zoneTargets, zoneCards, zoneLines, showComments, useZones,
-  openLineComments, openThreadInFile, stepThreadInFile, closeInlineComments, commentOnCursorLine,
+  openLineComments, openThreadInFile, stepThreadInFile, closeInlineComments,
 } = comments
 const {
   explanation, explanationLoading, explanationError, explanationOpen, questionOpen, questionTurns,
@@ -61,7 +61,7 @@ const readingStatus = computed(() => filePosition.value && details.value
       <p v-if="explanation" class="walk-explanation-text">{{ explanation.sentences.join(' ') }}</p>
       <p v-else class="notice error" role="alert">
         {{ explanationError }}
-        <button class="checklist-retry" type="button" :disabled="explanationLoading" @click="explainFile">Ponów</button>
+        <button class="retry" type="button" :disabled="explanationLoading" @click="explainFile">Ponów</button>
       </p>
     </section>
     <CommentsView v-if="commentsOpen" />
@@ -85,8 +85,6 @@ const readingStatus = computed(() => filePosition.value && details.value
           <button type="button" class="comments-toggle" :disabled="!threadsInFile.length"
             :aria-pressed="showComments" :title="showComments ? 'Ukryj komentarze w kodzie' : 'Pokaż komentarze w kodzie'"
             @click="showComments = !showComments">{{ showComments && threadsInFile.length ? 'Ukryj komentarze' : `Pokaż komentarze (${threadsInFile.length})` }}</button>
-          <button type="button" class="comment-line-button" title="Skomentuj linię pod kursorem"
-            :disabled="!fileDiff || fileDiff.kind !== 'text'" @click="commentOnCursorLine">Skomentuj linię</button>
           <button type="button" class="explain-button" title="Wyjaśnij ten plik (e)"
             :disabled="explanationLoading" @click="explainFile">{{ explanationLoading ? 'Wyjaśniam…' : 'Wyjaśnij ten plik' }}</button>
           <button type="button" class="ask-button" title="Zapytaj o ten plik (a)"
@@ -97,7 +95,7 @@ const readingStatus = computed(() => filePosition.value && details.value
       </div>
       <p v-if="diffSinceIteration" class="notice diff-since" role="status">
         Pokazuję wyłącznie zmiany od iteracji {{ diffSinceIteration }} — czyli to, co dopisano później.
-        <button type="button" class="checklist-retry" @click="openFile(selectedFilePath, null)">Pokaż cały diff</button>
+        <button type="button" class="retry" @click="openFile(selectedFilePath, null)">Pokaż cały diff</button>
       </p>
       <p class="reading-status" aria-live="polite">{{ readingStatus }}</p>
       <!-- Every thread in this file, so comments are visible on arrival instead of

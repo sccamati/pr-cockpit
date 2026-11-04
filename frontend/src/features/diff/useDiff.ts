@@ -24,7 +24,7 @@ export function useDiff({ details, projectId, repositoryId, defaultSince, onLeav
   const sideBySide = ref(false)
   // ponytail: hand-written structural type for the exposed diff instance. MonacoDiff is a
   // dynamic import, so InstanceType<typeof MonacoDiff> is not available here.
-  const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; cursorLine(): number | null; revealLine(line: number): void; selectedText(): string } | null>(null)
+  const diffView = ref<{ goToDiff(target: 'next' | 'previous'): void; focusEditor(): void; revealLine(line: number): void; selectedText(): string } | null>(null)
   let diffRequestId = 0
 
   // Usages for the file on screen, bound to this pull request and path now, so a late call

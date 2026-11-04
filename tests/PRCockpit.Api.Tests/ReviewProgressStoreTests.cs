@@ -136,7 +136,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [InlineData("/src/\0One.cs")]   // no NUL
     public async Task RejectsAMalformedPath(string path)
     {
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().SetFileAsync("proj", "repo", 7, Mark(path), CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
@@ -145,7 +145,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task RejectsABlobIdThatIsNotACommitSha()
     {
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().SetFileAsync("proj", "repo", 7,
                 new FileReviewUpdate("/src/One.cs", true, "not-a-sha", Sha, 3), CancellationToken.None));
 
@@ -155,7 +155,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task RejectsAnUnspecifiedReviewedFlag()
     {
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().SetFileAsync("proj", "repo", 7,
                 new FileReviewUpdate("/src/One.cs", null, null, null, 3), CancellationToken.None));
 
@@ -169,7 +169,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     {
         var paths = Enumerable.Range(0, 2001).Select(index => $"/file{index}.cs").ToArray();
 
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(paths), CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
@@ -192,7 +192,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task RejectsADuplicateInTheReadingPath()
     {
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().SetReadingPathAsync("proj", "repo", 7, new ReadingPathUpdate(["/a.cs", "/a.cs"]), CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
@@ -215,7 +215,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task APositionPastTheEndOfThePathIsRefused()
     {
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().SetReadingPathAsync("proj", "repo", 7,
                 new ReadingPathUpdate(["/a.cs"], 2), CancellationToken.None));
 
@@ -247,7 +247,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
     [Fact]
     public async Task RejectsAnInvalidPullRequestId()
     {
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             Store().GetAsync("proj", "repo", 0, CancellationToken.None));
 
         Assert.Equal(400, failure.StatusCode);
@@ -271,7 +271,7 @@ public sealed class ReviewProgressStoreTests : IDisposable
         for (var index = 0; index < 2000; index++)
             await store.SetFileAsync("proj", "repo", 7, Mark($"/file{index}.cs"), CancellationToken.None);
 
-        var failure = await Assert.ThrowsAsync<ChecklistException>(() =>
+        var failure = await Assert.ThrowsAsync<ReviewRequestException>(() =>
             store.SetFileAsync("proj", "repo", 7, Mark("/one-too-many.cs"), CancellationToken.None));
         Assert.Equal(400, failure.StatusCode);
 

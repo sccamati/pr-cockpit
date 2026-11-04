@@ -17,10 +17,26 @@ public class PrContextBuilderSinglePathTests
         {
             fetched.Add(path);
             return Task.FromResult(new FileDiff(path, null, "text", "old", "new"));
-        }, ContextBudget.Default, CancellationToken.None, "/src/Other.cs");
+        }, ContextBudget.Default, CancellationToken.None, ["/src/Other.cs"]);
 
         Assert.Equal(["/src/Other.cs"], fetched);
         Assert.Equal("/src/Other.cs", Assert.Single(context.ChangedFiles).Path);
+    }
+
+    // Grading a quiz answer reads only the few files the question points at.
+    [Fact]
+    public async Task NarrowsToSeveralFilesInThePullRequestsOrder()
+    {
+        var details = Details(
+            new ChangedFile("/src/A.cs", "edit", null),
+            new ChangedFile("/src/B.cs", "edit", null),
+            new ChangedFile("/src/C.cs", "edit", null));
+
+        var context = await PrContextBuilder.BuildAsync(details,
+            (path, _) => Task.FromResult(new FileDiff(path, null, "text", "old", "new")),
+            ContextBudget.OneFile, CancellationToken.None, ["/src/C.cs", "/src/A.cs"]);
+
+        Assert.Equal(["/src/A.cs", "/src/C.cs"], context.ChangedFiles.Select(file => file.Path));
     }
 
     // The same budget applies to a single file as inside a whole-PR package: over budget
@@ -32,7 +48,7 @@ public class PrContextBuilderSinglePathTests
 
         var context = await PrContextBuilder.BuildAsync(details,
             (path, _) => Task.FromResult(new FileDiff(path, null, "text", new string('x', 30), "")),
-            new ContextBudget(10, 100), CancellationToken.None, "/src/Big.cs");
+            new ContextBudget(10, 100), CancellationToken.None, ["/src/Big.cs"]);
 
         var file = Assert.Single(context.ChangedFiles);
         Assert.Equal("fileCharacterLimit", file.OmissionReason);

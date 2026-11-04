@@ -22,52 +22,6 @@ namespace PRCockpit.Infrastructure.Persistence.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("PRCockpit.Infrastructure.Persistence.Entities.PrChecklistRow", b =>
-                {
-                    b.Property<string>("Organization")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Project")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("RepositoryId")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int>("PullRequestId")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("AiReview")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("Architecture")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("Debug")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("DebugNote")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool>("Quality")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("Ready")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("Understand")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.HasKey("Organization", "Project", "RepositoryId", "PullRequestId");
-
-                    b.ToTable("pr_checklists", (string)null);
-                });
-
             modelBuilder.Entity("PRCockpit.Infrastructure.Persistence.Entities.PrFileExplanationRow", b =>
                 {
                     b.Property<string>("Organization")
@@ -192,6 +146,45 @@ namespace PRCockpit.Infrastructure.Persistence.Migrations
                     b.HasKey("Organization", "Project", "RepositoryId", "PullRequestId", "FilePath");
 
                     b.ToTable("pr_file_reviews", (string)null);
+                });
+
+            modelBuilder.Entity("PRCockpit.Infrastructure.Persistence.Entities.PrQuizRow", b =>
+                {
+                    b.Property<string>("Organization")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Project")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("RepositoryId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("PullRequestId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Correct")
+                        .HasColumnType("int");
+
+                    b.Property<string>("HeadCommitSha")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("QuizJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Organization", "Project", "RepositoryId", "PullRequestId");
+
+                    b.ToTable("pr_quizzes", (string)null);
                 });
 
             modelBuilder.Entity("PRCockpit.Infrastructure.Persistence.Entities.PrReadingPathRow", b =>

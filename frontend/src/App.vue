@@ -8,7 +8,6 @@ import { cockpitKey } from './cockpit'
 import { scrollBehavior } from '@/lib/format'
 import { useComments } from '@/features/comments/useComments'
 import ContextRail from '@/features/context/ContextRail.vue'
-import { useChecklist } from '@/features/context/useChecklist'
 import { useSummary } from '@/features/context/useSummary'
 import DiffPanel from '@/features/diff/DiffPanel.vue'
 import { useDiff } from '@/features/diff/useDiff'
@@ -19,6 +18,7 @@ import PrHeader from '@/features/pull-requests/PrHeader.vue'
 import PullRequestList from '@/features/pull-requests/PullRequestList.vue'
 import PullRequestPicker from '@/features/pull-requests/PullRequestPicker.vue'
 import { usePullRequests } from '@/features/pull-requests/usePullRequests'
+import { useQuiz } from '@/features/quiz/useQuiz'
 import ShortcutHelp from '@/features/shortcuts/ShortcutHelp.vue'
 import { useShortcuts } from '@/features/shortcuts/useShortcuts'
 import WalkDone from '@/features/walkthrough/WalkDone.vue'
@@ -37,7 +37,7 @@ const pullRequests = usePullRequests({
     // US-P3: a pull request big enough to get lost in opens on the proposal, not on the
     // tree. The tree is one click away and everything in it still works.
     if (walk.walkWorthwhile.value) walk.view.value = 'entry'
-    void loadChecklist(project, repository, id)
+    void loadQuiz(project, repository, id)
     void loadSavedSummary(project, repository, id)
     void loadFileReviews(project, repository, id)
     void loadThreads(project, repository, id)
@@ -46,7 +46,7 @@ const pullRequests = usePullRequests({
 const { details, projectId, repositoryId, loading, error, backToList } = pullRequests
 const scope = { details, projectId, repositoryId }
 const summaryState = useSummary(scope)
-const checklistState = useChecklist(scope)
+const quiz = useQuiz(scope)
 const review = useReviewProgress({ ...scope, onLoaded: () => walk.afterReviewsLoaded() })
 const diff = useDiff({
   ...scope,
@@ -62,11 +62,12 @@ const { orderedPaths, lastIteration, nextUnreviewedPath, resetFileList } = fileL
 const comments = useComments({ ...scope, selectedFilePath, fileDiff, orderedPaths, lastIteration, diffView, openFile })
 const walk = useWalkthrough({
   details, summary: summaryState, review, orderedPaths, lastIteration, nextUnreviewedPath, selectedFilePath, openFile,
+  onStarted: () => void quiz.composeQuiz(),
 })
 const fileAi = useFileAi({ ...scope, selectedFilePath, diffRequest: diff.diffRequest })
 
 const { resetSummary, loadSavedSummary } = summaryState
-const { resetChecklist, loadChecklist } = checklistState
+const { resetQuiz, loadQuiz } = quiz
 const { walkPosition, isReviewed, setFileReviewed, resetFileReviews, loadFileReviews } = review
 const {
   commentsOpen, draft, editing, deleting, commentError, commentsEnabled, inlineThreadId,
@@ -77,7 +78,7 @@ const { questionOpen, resetExplanation, resetFileAi, explainFile, openQuestions 
 
 provide(cockpitKey, {
   ...scope, selectedFilePath, pullRequests, diff, fileList,
-  summary: summaryState, checklist: checklistState, review, walk, comments, fileAi,
+  summary: summaryState, quiz, review, walk, comments, fileAi,
   openFile, openCriticalFile, backToList, stepFile, showBriefing, toggleReviewed,
 })
 
@@ -109,7 +110,7 @@ function leaveFileAndFilters() {
 function resetPullRequest() {
   leaveFileAndFilters()
   resetSummary()
-  resetChecklist()
+  resetQuiz()
   resetFileReviews()
   resetWalkthrough()
   resetThreads()
@@ -274,7 +275,6 @@ main.main--details { max-width: 1920px; padding: 12px 28px; }
 .pr-workspace--readonly :deep(.thread-actions),
 .pr-workspace--readonly :deep(.comment-own-actions),
 .pr-workspace--readonly :deep(.thread-new),
-.pr-workspace--readonly :deep(.comment-line-button),
 .pr-workspace--readonly :deep(.comment-add-glyph::before) { display: none; }
 /* One file at a time, full width: the tree and the rail are the thing it is a relief from. */
 .pr-workspace--walk { grid-template-columns: minmax(0, 1fr); }

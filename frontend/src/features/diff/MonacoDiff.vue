@@ -398,9 +398,6 @@ defineExpose({
   selectedText,
   goToDiff: (target: 'next' | 'previous') => editor?.goToDiff(target),
   focusEditor: () => editor?.getModifiedEditor().focus(),
-  // Anchoring is always right-hand side, so the cursor line of the modified editor is the
-  // line a new comment gets. The cursor works even though the editor is read-only.
-  cursorLine: () => editor?.getModifiedEditor().getPosition()?.lineNumber ?? null,
   // Opening a comment must bring its line into view — otherwise the panel scrolls the
   // conversation into the space where the code was, and the line is nowhere to be seen.
   revealLine: (line: number) => {

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// US-P6. One question, one decision, and the walkthrough has an end.
+// US-P6. The walkthrough has an end, and the quiz is what makes it the end of the review: the
+// pull request counts as done only once every question is passed.
 import { useCockpit } from '@/cockpit'
 import { fileDirectory, fileName } from '@/lib/format'
+import QuizPanel from '@/features/quiz/QuizPanel.vue'
 
-const { summary, checklist, walk, backToList } = useCockpit()
-const { criticalProposal } = summary
-const { debugAnswer, debugSaving, debugSaved, showDebugHint, saveDebugAnswer } = checklist
-const { walkPaths, walkReadCount, walkSkippedPaths, walkOutsideCount, returnToSkipped, leaveWalkthrough } = walk
+const { quiz, walk, backToList } = useCockpit()
+const { quizPassed } = quiz
+const { walkPaths, walkReadCount, walkSkippedPaths, walkOutsideCount, returnToWalkFile, leaveWalkthrough } = walk
 </script>
 
 <template>
@@ -21,29 +22,17 @@ const { walkPaths, walkReadCount, walkSkippedPaths, walkOutsideCount, returnToSk
       <h4>Pominięte pliki</h4>
       <ul class="walk-file-list">
         <li v-for="path in walkSkippedPaths" :key="path">
-          <button type="button" class="critical-open" :title="path" @click="returnToSkipped(path)">{{ fileName(path) }}<small>{{ fileDirectory(path) }}</small></button>
+          <button type="button" class="critical-open" :title="path" @click="returnToWalkFile(path)">{{ fileName(path) }}<small>{{ fileDirectory(path) }}</small></button>
         </li>
       </ul>
     </div>
-    <div class="walk-debug">
-      <label class="debug-label" for="walk-debug-answer">Gdzie zacząłbyś szukać, gdyby to nie zadziałało?</label>
-      <textarea id="walk-debug-answer" v-model="debugAnswer" class="debug-answer" rows="3" :maxlength="2000"></textarea>
-      <div class="debug-actions">
-        <button type="button" :disabled="debugSaving" @click="saveDebugAnswer">{{ debugSaving ? 'Zapisywanie…' : 'Zapisz odpowiedź' }}</button>
-        <span v-if="debugSaved" class="muted" role="status">Zapisano.</span>
-        <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
-      </div>
-      <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
-        <li v-for="(file, index) in criticalProposal" :key="file.path">
-          <span class="debug-hint-order">{{ index + 1 }}</span>
-          <span class="debug-hint-file" :title="file.path">{{ fileName(file.path) }}<small>{{ fileDirectory(file.path) }}</small></span>
-          <span class="debug-hint-why">{{ file.why }}</span>
-        </li>
-      </ol>
-    </div>
+    <section class="walk-quiz" aria-label="Quiz">
+      <h4>Quiz</h4>
+      <QuizPanel />
+    </section>
     <div class="walk-actions">
       <button type="button" class="walk-primary" @click="leaveWalkthrough">Zejdź do pozostałych plików</button>
-      <button type="button" @click="backToList">Zakończ ten PR</button>
+      <button type="button" class="walk-finish" @click="backToList">{{ quizPassed ? 'Zakończ ten PR ✓' : 'Wróć do listy (PR niezakończony)' }}</button>
     </div>
   </section>
 </template>
@@ -53,5 +42,6 @@ const { walkPaths, walkReadCount, walkSkippedPaths, walkOutsideCount, returnToSk
 .walk-done h3 { margin: 0 0 8px; }
 .walk-done-counts { margin: 0; font-size: 14px; }
 .walk-skipped { margin-top: 14px; }
-.walk-debug { margin-top: 16px; }
+.walk-quiz { margin-top: 16px; }
+.walk-quiz h4 { margin: 0; }
 </style>

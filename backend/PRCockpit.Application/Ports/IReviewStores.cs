@@ -3,19 +3,17 @@ using PRCockpit.Domain.Review;
 
 namespace PRCockpit.Application.Ports;
 
-/// <summary>The reviewer's six manual steps.</summary>
-public interface IChecklistStore
+/// <summary>
+/// The quiz that closes a review, one per pull request, overwritten when recomposed. The
+/// progress read serves the pull request list and never parses the quiz itself.
+/// </summary>
+public interface IQuizStore
 {
-    Task<ChecklistState> GetAsync(string project, string repositoryId, int pullRequestId, CancellationToken ct);
+    Task<Quiz?> GetAsync(string project, string repositoryId, int pullRequestId, CancellationToken ct);
 
-    Task<IReadOnlyList<ChecklistProgress>> GetProgressAsync(
-        string project, string repositoryId, CancellationToken ct);
+    Task<Quiz> SaveAsync(string project, string repositoryId, int pullRequestId, Quiz quiz, CancellationToken ct);
 
-    Task<ChecklistState> SetAsync(
-        string project, string repositoryId, int pullRequestId, string item, bool? completed, CancellationToken ct);
-
-    Task<ChecklistState> SetDebugNoteAsync(
-        string project, string repositoryId, int pullRequestId, string? note, CancellationToken ct);
+    Task<IReadOnlyList<QuizProgress>> GetProgressAsync(string project, string repositoryId, CancellationToken ct);
 }
 
 /// <summary>A generated summary, kept so reopening a pull request costs no model run.</summary>

@@ -26,7 +26,7 @@ public static class InfrastructureServices
             options.UseSqlServer(configuration.GetConnectionString("PrCockpit")));
 
         // Scoped, because they depend on the scoped DbContext.
-        services.AddScoped<IChecklistStore, ChecklistStore>();
+        services.AddScoped<IQuizStore, QuizStore>();
         services.AddScoped<ISummaryStore, SummaryStore>();
         services.AddScoped<IReviewProgressStore, ReviewProgressStore>();
         services.AddScoped<IFileExplanationStore, FileExplanationStore>();

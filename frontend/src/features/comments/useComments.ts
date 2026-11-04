@@ -62,7 +62,7 @@ export function useComments({
   fileDiff: Ref<FileDiff | null>
   orderedPaths: ComputedRef<string[]>
   lastIteration: ComputedRef<number>
-  diffView: Ref<{ cursorLine?(): number | null; revealLine?(line: number): void } | null>
+  diffView: Ref<{ revealLine?(line: number): void } | null>
   openFile: (path: string, sinceIteration?: number | null) => Promise<void>
 }) {
   const threads = ref<ReadableThread[]>([])
@@ -453,12 +453,6 @@ export function useComments({
     if (lineDraft.value !== null) draft.value = null
   }
 
-  function commentOnCursorLine() {
-    const line = diffView.value?.cursorLine?.() ?? null
-    if (!selectedFilePath.value || !line) return
-    openLineComments(line)
-  }
-
   // The open file is about to change or close: its conversation, zones and line draft go
   // with it. Called before the path changes, so the draft being dropped is this file's.
   function leaveFile() {
@@ -495,6 +489,6 @@ export function useComments({
     resetThreads, loadThreads, toggleComments, openMyThreads,
     startDraft, sendDraft, setThreadStatus, startEdit, sendEdit, confirmDelete,
     toggleZone, openLineComments, openThreadInFile, stepThreadInFile, closeInlineComments,
-    commentOnCursorLine, leaveFile, openThread, showChangesSinceComment,
+    leaveFile, openThread, showChangesSinceComment,
   }
 }

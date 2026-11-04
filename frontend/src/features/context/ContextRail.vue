@@ -1,23 +1,20 @@
 <script setup lang="ts">
-// The right-hand rail of an open pull request: Summary, checklist, threads at a glance, Debug
-// Check, the reading path and the plain PR metadata. Hidden in focus mode and in the
-// walkthrough, which is why the header carries the checklist and comment counters too.
+// The right-hand rail of an open pull request: Summary, the quiz, threads at a glance, the
+// reading path and the plain PR metadata. Hidden in focus mode and in the walkthrough, which
+// is why the header carries the quiz and comment counters too.
 import { computed } from 'vue'
 import { useCockpit } from '@/cockpit'
 import { commentPreview } from '@/lib/description'
-import { commitTitle, fileDirectory, fileName, formatDate, omissionLabel, reviewerVote, threadStatusLabels } from '@/lib/format'
-import { checklistItems } from './useChecklist'
+import { commitTitle, formatDate, omissionLabel, reviewerVote, threadStatusLabels } from '@/lib/format'
+import QuizPanel from '@/features/quiz/QuizPanel.vue'
 import { threadLocation } from '@/features/comments/useComments'
 
-const { details, projectId, repositoryId, summary: summaryState, checklist: checklistState, review, comments, openCriticalFile } = useCockpit()
+const { details, projectId, repositoryId, summary: summaryState, quiz: quizState, review, comments, openCriticalFile } = useCockpit()
 const {
   summary, summaryLoading, summaryError, summaryReadLoading, summaryReadError, summarySavedAt, summaryFreshness,
   criticalProposal, proposalDismissed, generateSummary, loadSavedSummary,
 } = summaryState
-const {
-  checklist, checklistLoading, checklistError, checklistSaving, debugAnswer, debugSaving, debugSaved, showDebugHint,
-  loadChecklist, setChecklistItem, saveDebugAnswer,
-} = checklistState
+const { quiz, quizPassed, quizComposing } = quizState
 const { remainingCount, criticalPaths, manualCriticalLimit, moveCritical, toggleCritical, saveReadingPath } = review
 const { threads, threadsLoading, threadsError, activeThreadCount, movedSinceComment, loadThreads, openThread, toggleComments } = comments
 
@@ -42,7 +39,7 @@ function acceptProposal() {
         <button class="summary-button" type="button" :disabled="summaryLoading" @click="generateSummary">{{ summaryLoading ? 'Generowanie…' : summary ? 'Generuj ponownie' : 'Generuj Summary' }}</button>
       </div>
       <p v-if="summaryReadLoading" class="notice" role="status">Wczytywanie zapisanego Summary…</p>
-      <div v-if="summaryReadError" class="notice error" role="alert">Nie udało się wczytać zapisanego Summary: {{ summaryReadError }} <button class="checklist-retry" type="button" :disabled="summaryLoading" @click="loadSavedSummary(projectId, repositoryId, details!.id)">Spróbuj ponownie</button></div>
+      <div v-if="summaryReadError" class="notice error" role="alert">Nie udało się wczytać zapisanego Summary: {{ summaryReadError }} <button class="retry" type="button" :disabled="summaryLoading" @click="loadSavedSummary(projectId, repositoryId, details!.id)">Spróbuj ponownie</button></div>
       <p v-if="summaryLoading" class="notice" role="status">Generowanie Summary…</p>
       <p v-if="summaryError" class="notice error" role="alert">{{ summaryError }}</p>
       <template v-if="summary">
@@ -59,25 +56,18 @@ function acceptProposal() {
       </template>
     </div>
 
-    <details class="rail-block checklist-section" open>
-      <summary>Checklista PR</summary>
-      <p class="muted">Zaznaczaj ręcznie po wykonaniu każdego kroku. Stan zapisuje się lokalnie.</p>
-      <p v-if="checklistLoading" class="notice" role="status">Wczytywanie checklisty…</p>
-      <p v-if="checklistError" class="notice error" role="alert">{{ checklistError }}</p>
-      <div v-if="checklist" class="checklist-items">
-        <label v-for="item in checklistItems" :key="item.key" class="checklist-item" :class="{ 'checklist-item--done': checklist[item.key] }">
-          <input type="checkbox" :checked="checklist[item.key]" :disabled="checklistSaving !== null" @change="setChecklistItem(item.key, ($event.target as HTMLInputElement).checked)">
-          <span>{{ item.label }}</span>
-        </label>
-      </div>
-      <button v-else-if="!checklistLoading" class="checklist-retry" type="button" @click="loadChecklist(projectId, repositoryId, details!.id)">Spróbuj ponownie</button>
+    <!-- The quiz belongs at the end of reading, so it opens itself once everything is read
+         or once it is on its way; the walkthrough's closing screen shows the same panel. -->
+    <details class="rail-block quiz-section" :open="remainingCount === 0 || quizComposing || quiz !== null">
+      <summary>Quiz<span v-if="quizPassed"> · zaliczony ✓</span><span v-else-if="quiz"> · {{ quiz.correct }} / {{ quiz.total }}</span></summary>
+      <QuizPanel />
     </details>
 
     <details class="rail-block threads-section" :open="threads.length > 0">
       <summary>Komentarze<span v-if="threads.length"> · {{ activeThreadCount }} nierozwiązanych z {{ threads.length }}</span></summary>
       <p v-if="threadsLoading" class="muted" role="status">Wczytywanie komentarzy…</p>
       <p v-else-if="threadsError" class="notice error" role="alert">{{ threadsError }}
-        <button class="checklist-retry" type="button" @click="loadThreads(projectId, repositoryId, details!.id)">Spróbuj ponownie</button>
+        <button class="retry" type="button" @click="loadThreads(projectId, repositoryId, details!.id)">Spróbuj ponownie</button>
       </p>
       <template v-else>
         <p v-if="threads.length === 0" class="muted">Brak komentarzy w tym PR.</p>
@@ -96,29 +86,6 @@ function acceptProposal() {
         </ul>
         <button type="button" class="comments-open" title="Widok komentarzy (c)" @click="toggleComments">Otwórz widok komentarzy</button>
       </template>
-    </details>
-
-    <details class="rail-block debug-check" :open="remainingCount === 0">
-      <summary>Debug Check</summary>
-      <p class="debug-question">Gdyby ta zmiana nie zadziałała, gdzie zacząłbyś szukać?</p>
-      <p v-if="remainingCount > 0" class="muted debug-hint-later">Pytanie ma sens po przeczytaniu PR — zostało {{ remainingCount }} {{ remainingCount === 1 ? 'plik' : 'plików' }}.</p>
-      <label class="debug-label" for="debug-answer">Twoja odpowiedź</label>
-      <textarea id="debug-answer" v-model="debugAnswer" class="debug-answer" rows="3"
-        :maxlength="2000" placeholder="Jedno zdanie wystarczy."></textarea>
-      <div class="debug-actions">
-        <button type="button" class="debug-save" :disabled="debugSaving" @click="saveDebugAnswer">{{ debugSaving ? 'Zapisywanie…' : 'Zapisz' }}</button>
-        <button v-if="criticalProposal.length > 0" type="button" @click="showDebugHint = !showDebugHint">{{ showDebugHint ? 'Ukryj podpowiedź' : 'Pokaż, gdzie patrzeć' }}</button>
-        <span v-if="debugSaved" class="debug-saved" role="status">Zapisano</span>
-      </div>
-      <!-- "Show me" reuses the ranking the Summary already returned — no second
-           model run, and nothing here is scored against your answer. -->
-      <ol v-if="showDebugHint" class="debug-hint" aria-label="Podpowiedź">
-        <li v-for="(file, index) in criticalProposal" :key="file.path">
-          <span class="debug-hint-order">{{ index + 1 }}</span>
-          <span class="debug-hint-file" :title="file.path">{{ fileName(file.path) }}<small>{{ fileDirectory(file.path) }}</small></span>
-          <span class="debug-hint-why">{{ file.why }}</span>
-        </li>
-      </ol>
     </details>
 
     <details class="rail-block critical-section" :open="criticalPaths.length > 0 || showProposal">
@@ -193,11 +160,6 @@ function acceptProposal() {
 .metadata strong { overflow-wrap: anywhere; font-size: 14px; }
 .details-section { padding: 22px 0; border-top: 1px solid var(--line); }
 .details-section:last-child { padding-bottom: 0; }
-.checklist-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
-.checklist-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--text-soft); cursor: pointer; }
-.checklist-item--done { border-color: var(--ok-line); background: var(--ok-bg); color: var(--ok); }
-.checklist-item:has(input:disabled) { opacity: .65; cursor: wait; }
-.checklist-item input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
 /* Szyna jest jednym przewijanym słupkiem: bez position: sticky tekst Summary zaczyna się
    w środku zdania, bez nagłówka nad nim. To samo niżej dla sekcji <details> szyny. */
 .summary-heading { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px 0; background: var(--surface); }
@@ -230,7 +192,6 @@ function acceptProposal() {
 .details-section .muted { margin-bottom: 0; }
 .context-rail { min-width: 0; min-height: 0; overflow-y: auto; padding: 0 14px 18px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
 .context-rail .details-section { padding-top: 14px; border-top: 0; }
-.context-rail .checklist-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .context-rail .metadata { grid-template-columns: 1fr; gap: 10px; padding: 10px 0; }
 .context-rail h4 { margin: 16px 0 6px; font-size: 13px; }
 .rail-block { padding: 12px 0; border-top: 1px solid var(--line); }
@@ -244,10 +205,6 @@ function acceptProposal() {
 .critical-proposal-why { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
 .critical-proposal-actions { display: flex; gap: 8px; margin-top: 8px; }
 .critical-accept { font-weight: 600; }
-.debug-question { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
-.debug-hint-later { font-size: 12px; margin: 0 0 6px; }
-.debug-save { font-weight: 600; }
-.debug-saved { font-size: 12px; color: var(--text-muted); }
 .thread-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .thread-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .comments-open { margin-top: 10px; width: 100%; }
@@ -256,7 +213,6 @@ function acceptProposal() {
 .critical-more { margin: 8px 0 0; font-size: 12px; }
 
 @media (max-width: 720px) {
-  .checklist-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .critical-list li { align-items: stretch; flex-direction: column; gap: 4px; }
   .critical-actions { padding-left: 34px; }
   .summary-heading { align-items: stretch; flex-direction: column; }

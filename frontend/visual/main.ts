@@ -57,13 +57,31 @@ const summaryFor = (pr: any) => ({
   contextReport: { changedFiles: pr.changedFiles.length, includedFiles: pr.changedFiles.length - 1, includedDiffCharacters: 1200, wasLimited: true,
     omittedFiles: [{ path: '/package-lock.json', reason: 'noise' }] },
 })
+// Three questions in the three states a quiz has: passed (key shown), answered wrong (hint,
+// no key) and not answered yet. The answer endpoint passes whatever it is sent.
+const quizFor = (pr: any, passedAll = false) => {
+  const files = pr.changedFiles.filter((f: any) => !f.category).map((f: any) => f.path)
+  const attempt = (correct: boolean, answer: string, feedback: string) => ({ answer, correct, feedback: [feedback], answeredAt: '2026-09-02T10:00:00Z' })
+  const questions = [
+    { id: 'q1', kind: 'intent', question: 'Po co jest ta zmiana i co działa inaczej niż przed nią?', files: [files[0]],
+      expectedPoints: ['Zamówienie jest walidowane przed zapisem.', 'Błędne zamówienie nie trafia do bazy.'], passed: true, attemptCount: 1,
+      lastAttempt: attempt(true, 'Walidacja zamówienia przed zapisem, złe nie trafiają do bazy.', 'Zgadza się — i walidator jest wołany tylko z serwisu.') },
+    { id: 'q2', kind: 'domain', question: 'Do której encji należą nowe pola i jak długo żyją te dane?', files: files.slice(0, 2),
+      expectedPoints: passedAll ? ['Do linii zamówienia, na czas jednego zamówienia.'] : null, passed: passedAll, attemptCount: 1,
+      lastAttempt: attempt(passedAll, 'Do klienta.', passedAll ? 'Tak.' : 'Nie do klienta — zobacz, gdzie walidator czyta te pola, w OrderValidator.cs.') },
+    { id: 'q3', kind: 'runtime', question: 'Czego ta zmiana potrzebuje na środowisku, żeby zadziałać?', files: [files[files.length - 1]],
+      expectedPoints: passedAll ? ['Klucza konfiguracji limitu.'] : null, passed: passedAll, attemptCount: passedAll ? 1 : 0,
+      lastAttempt: passedAll ? attempt(true, 'Limitu w konfiguracji.', 'Tak.') : null },
+  ]
+  return { headCommitSha: 'head', createdAt: '2026-09-02T10:00:00Z', correct: passedAll ? 3 : 1, total: 3, passed: passedAll, questions }
+}
 const params = new URLSearchParams(location.search)
 const routes: [RegExp, (m: RegExpMatchArray, body: any) => unknown][] = [
   [/^\/config$/, () => ({ commentsEnabled: !params.has('ro') })],
   [/^\/projects$/, () => [{ id: 'p', name: 'Sklep' }]],
   [/^\/projects\/p\/repositories$/, () => [{ id: 'r', name: 'Shop' }]],
   [/\/pull-requests$/, () => [prs[123], prs[200]]],
-  [/\/pull-requests\/checklist-progress$/, () => [{ pullRequestId: 123, completedCount: 2 }]],
+  [/\/pull-requests\/quiz-progress$/, () => [{ pullRequestId: 123, correct: 1, total: 3 }, { pullRequestId: 200, correct: 3, total: 3 }]],
   [/\/pull-requests\/file-review-progress$/, () => [{ pullRequestId: 123, reviewedCount: 1, changedFilesCount: 5 }]],
   [/\/pull-requests\/(\d+)$/, m => prs[+m[1]!]],
   [/\/pull-requests\/\d+\/diff\?path=([^&]+)/, m => {
@@ -77,7 +95,9 @@ const routes: [RegExp, (m: RegExpMatchArray, body: any) => unknown][] = [
   [/\/pull-requests\/\d+\/summary\/file$/, (_, body) => ({ schemaVersion: 1, path: body.path, headCommitSha: 'head', sentences: ['Plik liczy sumę.', 'Korzysta z Money.'] })],
   [/\/pull-requests\/\d+\/summary\/ask\?/, () => [{ schemaVersion: 1, path: '/assets/logo.png', question: 'Co robi Total?', selection: 'order.Lines.Sum()',
     sentences: ['Sumuje ceny linii.'], blobId: null, headCommitSha: 'head', askedAt: '2026-09-02T10:00:00Z' }]],
-  [/\/pull-requests\/\d+\/checklist$/, () => ({ aiReview: true, quality: true, understand: false, architecture: false, debug: false, ready: false, updatedAt: null, debugNote: null })],
+  // GET reads the saved quiz (PR 123 has one, PR 200 gets one when its walkthrough starts); POST composes.
+  [/\/pull-requests\/(\d+)\/quiz$/, (m, body) => body ? quizFor(prs[+m[1]!]) : { stored: +m[1]! === 123 ? quizFor(prs[123]) : null }],
+  [/\/pull-requests\/(\d+)\/quiz\/answer$/, m => quizFor(prs[+m[1]!], true)],
   [/\/pull-requests\/\d+\/file-reviews$/, () => ({ files: [{ path: '/src/Shared/Money.cs', blobId: null, headSha: 'head', updatedAt: '2026-09-02T10:00:00Z' }],
     readingPath: { paths: [], position: 0, headCommitSha: null, updatedAt: null }, updatedAt: null })],
   [/\/pull-requests\/\d+\/changed-paths/, () => ['/src/Orders/OrderService.cs']],
@@ -138,6 +158,7 @@ const steps: Record<string, () => Promise<void>> = {
     }
     await waitFor('.walk-done')
   },
+  quiz: async () => { await steps.done!(); (await waitFor('.walk-done .quiz-question')).scrollIntoView(); await sleep(200) },
   rail: async () => { await steps.binary!(); document.querySelectorAll<HTMLDetailsElement>('.context-rail details').forEach(d => { d.open = true }); await sleep(100) },
 }
 ;(window as any).__scenarios = Object.keys(steps)

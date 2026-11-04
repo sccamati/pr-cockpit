@@ -5,8 +5,8 @@ using PRCockpit.Infrastructure.Persistence.Entities;
 namespace PRCockpit.Infrastructure.Persistence;
 
 /// <summary>
-/// The local review database. It holds only what the reviewer decided — checklists,
-/// generated summaries, which files were read and in what order — never a copy of Azure
+/// The local review database. It holds only what the reviewer decided or asked for —
+/// generated summaries and quizzes, which files were read and in what order — never a copy of Azure
 /// DevOps data, which is always fetched on demand.
 /// </summary>
 public sealed class PrCockpitContext(DbContextOptions<PrCockpitContext> options) : DbContext(options)
@@ -15,19 +15,21 @@ public sealed class PrCockpitContext(DbContextOptions<PrCockpitContext> options)
     private const int MaxNameLength = 200;
     private const int ShaLength = 40;
 
-    public DbSet<PrChecklistRow> Checklists => Set<PrChecklistRow>();
     public DbSet<PrSummaryRow> Summaries => Set<PrSummaryRow>();
     public DbSet<PrFileReviewRow> FileReviews => Set<PrFileReviewRow>();
     public DbSet<PrReadingPathRow> ReadingPaths => Set<PrReadingPathRow>();
     public DbSet<PrFileExplanationRow> FileExplanations => Set<PrFileExplanationRow>();
     public DbSet<PrFileQuestionRow> FileQuestions => Set<PrFileQuestionRow>();
+    public DbSet<PrQuizRow> Quizzes => Set<PrQuizRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<PrChecklistRow>(entity =>
+        modelBuilder.Entity<PrQuizRow>(entity =>
         {
-            entity.ToTable("pr_checklists");
+            entity.ToTable("pr_quizzes");
             ScopedKey(entity);
+            entity.Property(row => row.HeadCommitSha).HasMaxLength(ShaLength);
+            entity.Property(row => row.QuizJson).IsRequired();
         });
 
         modelBuilder.Entity<PrSummaryRow>(entity =>

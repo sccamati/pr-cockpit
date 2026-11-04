@@ -33,9 +33,9 @@ public sealed class FileQuestionService(
         // DevOps round trip, let alone a model run.
         var asked = (question ?? "").Trim();
         if (asked.Length == 0)
-            throw new ChecklistException("Ask a question first.", 400);
+            throw new ReviewRequestException("Ask a question first.", 400);
         if (asked.Length > FileQuestionRequest.MaxQuestionLength)
-            throw new ChecklistException(
+            throw new ReviewRequestException(
                 $"The question may be at most {FileQuestionRequest.MaxQuestionLength} characters.", 400);
         // ponytail: the snippet is taken on trust — we do not check that it occurs in the
         // file. The whole file is already in the context, so a snippet is a pointer rather
@@ -43,7 +43,7 @@ public sealed class FileQuestionService(
         // and get an answer about it. Harmless for one local reviewer, wrong for a shared tool.
         var snippet = selection?.Trim();
         if (snippet is { Length: > FileQuestionRequest.MaxSelectionLength })
-            throw new ChecklistException(
+            throw new ReviewRequestException(
                 $"The selected snippet may be at most {FileQuestionRequest.MaxSelectionLength} characters.", 400);
         if (snippet is { Length: 0 }) snippet = null;
 
@@ -62,12 +62,7 @@ public sealed class FileQuestionService(
             Usages = callers,
             RelatedFiles = await usages.RelatedForAiAsync(project, repositoryId, details, path,
                 callers?.Excerpts.Where(excerpt => excerpt.InPullRequest).Select(excerpt => excerpt.Path) ?? [], ct),
-            // The Summary describes the head it was made for; after a push it describes code
-            // that may be gone, so it is left out by the same rule the history follows.
-            Summary = summary is not null &&
-                ContentFreshness.IsCurrent(null, null, summary.Result.HeadCommitSha, details.HeadCommitSha)
-                    ? new SummaryDigest(summary.Result.Sentences, summary.Result.CriticalFiles)
-                    : null
+            Summary = SummaryDigest.Current(summary, details.HeadCommitSha)
         };
         var turn = await SummaryRunner.RunAskAsync(context,
             new FileQuestion(asked, snippet, changed.ObjectId,

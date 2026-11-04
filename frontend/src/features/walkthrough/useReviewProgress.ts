@@ -93,7 +93,7 @@ export function useReviewProgress({ details, projectId, repositoryId, onLoaded }
     saveReadingPath(selected)
   }
 
-  // Optimistic with rollback, the same shape as setChecklistItem: the request id is captured
+  // Optimistic with rollback: the request id is captured
   // without incrementing, because this is a mutation of the current generation, not a load.
   // The position travels with the path: editing the path from the rail is a new path, so it
   // starts from zero, while the walkthrough passes the place it has reached (US-P7).
@@ -173,7 +173,7 @@ export function useReviewProgress({ details, projectId, repositoryId, onLoaded }
     fileReviewError.value = ''
   }
 
-  // Same shape as loadChecklist: capture the id, compare before every write including finally.
+  // Capture the id, compare before every write including finally.
   async function loadFileReviews(project: string, repository: string, id: number) {
     const current = ++reviewRequestId
     fileReviewError.value = ''

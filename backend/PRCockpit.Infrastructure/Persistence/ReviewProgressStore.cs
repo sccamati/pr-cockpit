@@ -11,7 +11,7 @@ namespace PRCockpit.Infrastructure.Persistence;
 
 /// <summary>
 /// Remembers which files of a pull request have been read, and the order the user wants to
-/// read them in. Reuses <see cref="ChecklistException"/> so <c>Execute</c> in Program.cs
+/// read them in. Reuses <see cref="ReviewRequestException"/> so <c>Execute</c> in Program.cs
 /// needs no extra arm.
 /// </summary>
 public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration configuration) : IReviewProgressStore
@@ -60,11 +60,11 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
     {
         var organization = ValidateKey(project, repositoryId, pullRequestId);
         ArgumentNullException.ThrowIfNull(update);
-        if (update.Reviewed is null) throw new ChecklistException("Specify reviewed as true or false.", 400);
+        if (update.Reviewed is null) throw new ReviewRequestException("Specify reviewed as true or false.", 400);
         var path = ValidatePath(update.Path);
         var blobId = ValidateSha(update.BlobId, "blob id");
         var headSha = ValidateSha(update.HeadCommitSha, "commit sha");
-        if (update.ChangedFilesCount is < 0) throw new ChecklistException("Invalid changed file count.", 400);
+        if (update.ChangedFilesCount is < 0) throw new ReviewRequestException("Invalid changed file count.", 400);
 
         var scope = Scope(organization, project, repositoryId, pullRequestId);
         var row = await context.FileReviews.FirstOrDefaultAsync(
@@ -81,7 +81,7 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
                 // blocked; only a genuinely new file can run into the cap.
                 var count = await context.FileReviews.CountAsync(scope, ct);
                 if (count >= MaxFilesPerPullRequest)
-                    throw new ChecklistException("This pull request has too many reviewed files.", 400);
+                    throw new ReviewRequestException("This pull request has too many reviewed files.", 400);
                 row = new PrFileReviewRow
                 {
                     Organization = organization,
@@ -115,15 +115,15 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
         var organization = ValidateKey(project, repositoryId, pullRequestId);
         ArgumentNullException.ThrowIfNull(update);
         var paths = update.Paths;
-        if (paths is null) throw new ChecklistException("Specify the reading path.", 400);
+        if (paths is null) throw new ReviewRequestException("Specify the reading path.", 400);
         if (paths.Count > MaxReadingPath)
-            throw new ChecklistException($"The reading path holds at most {MaxReadingPath} files.", 400);
+            throw new ReviewRequestException($"The reading path holds at most {MaxReadingPath} files.", 400);
         var validated = paths.Select(ValidatePath).ToArray();
         if (validated.Distinct(StringComparer.Ordinal).Count() != validated.Length)
-            throw new ChecklistException("The reading path contains a duplicate file.", 400);
+            throw new ReviewRequestException("The reading path contains a duplicate file.", 400);
         var position = update.Position ?? 0;
         if (position < 0 || position > validated.Length)
-            throw new ChecklistException("Invalid position in the reading path.", 400);
+            throw new ReviewRequestException("Invalid position in the reading path.", 400);
         var headSha = ValidateSha(update.HeadCommitSha, "commit sha");
 
         var row = await context.ReadingPaths.FirstOrDefaultAsync(entry =>
@@ -185,7 +185,7 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
         }
         catch (JsonException)
         {
-            throw new ChecklistException("Saved reading path is invalid.", 503);
+            throw new ReviewRequestException("Saved reading path is invalid.", 503);
         }
     }
 
@@ -193,7 +193,7 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
     {
         if (string.IsNullOrWhiteSpace(path) || !path.StartsWith('/') ||
             path.Contains('\0') || path.Length > PrCockpitContext.MaxPathLength)
-            throw new ChecklistException("Invalid file path.", 400);
+            throw new ReviewRequestException("Invalid file path.", 400);
         return path;
     }
 
@@ -201,14 +201,14 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
     {
         if (value is null) return null;
         if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^[a-fA-F0-9]{40}$"))
-            throw new ChecklistException($"Invalid {name}.", 400);
+            throw new ReviewRequestException($"Invalid {name}.", 400);
         return value;
     }
 
     private string ValidateKey(string project, string repositoryId, int pullRequestId)
     {
         var organization = ValidateLocation(project, repositoryId);
-        if (pullRequestId <= 0) throw new ChecklistException("Invalid pull request location.", 400);
+        if (pullRequestId <= 0) throw new ReviewRequestException("Invalid pull request location.", 400);
         return organization;
     }
 
@@ -216,9 +216,9 @@ public sealed class ReviewProgressStore(PrCockpitContext context, IConfiguration
     {
         var organization = configuration["AzureDevOps:Organization"];
         if (string.IsNullOrWhiteSpace(organization))
-            throw new ChecklistException("Configure AzureDevOps:Organization on the backend.", 503);
+            throw new ReviewRequestException("Configure AzureDevOps:Organization on the backend.", 503);
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repositoryId))
-            throw new ChecklistException("Invalid pull request location.", 400);
+            throw new ReviewRequestException("Invalid pull request location.", 400);
         return organization;
     }
 }

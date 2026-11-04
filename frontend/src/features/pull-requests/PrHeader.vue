@@ -6,8 +6,8 @@ import { useCockpit } from '@/cockpit'
 
 defineEmits<{ help: [] }>()
 
-const { details, checklist: checklistState, comments, pullRequests, backToList } = useCockpit()
-const { checklist, checklistCompleted } = checklistState
+const { details, quiz: quizState, comments, pullRequests, backToList } = useCockpit()
+const { quiz, quizPassed, quizComposing } = quizState
 const { threads, activeThreadCount, toggleComments, commentsEnabled } = comments
 const { voteSaving, voteError, toggleWaitingForAuthor } = pullRequests
 const waitingForAuthor = computed(() => details.value?.reviewers.some(reviewer => reviewer.isMine && reviewer.vote === -5) ?? false)
@@ -31,7 +31,8 @@ async function copyLink() {
     <span class="status">{{ details.status }}</span>
     <span class="pr-header-meta pr-header-branch" :title="`${details.sourceBranch} → ${details.targetBranch}`">{{ details.sourceBranch }} → {{ details.targetBranch }}</span>
     <span class="pr-header-meta">{{ details.author }}</span>
-    <span v-if="checklist" class="pr-header-progress">Checklista {{ checklistCompleted }} / 6</span>
+    <span v-if="quizComposing" class="pr-header-progress">Quiz…</span>
+    <span v-else-if="quiz" class="pr-header-progress" :class="{ 'pr-header-progress--done': quizPassed }">{{ quizPassed ? 'Quiz ✓' : `Quiz ${quiz.correct} / ${quiz.total}` }}</span>
     <span v-if="voteError" class="pr-header-error" role="alert" :title="voteError">{{ voteError }}</span>
     <!-- Like every other write, gone rather than greyed out when writing is off. -->
     <button v-if="commentsEnabled" type="button" class="pr-header-pill pr-header-vote"
@@ -61,6 +62,7 @@ async function copyLink() {
 .pr-header-number { color: var(--accent); font-weight: 800; }
 .pr-header-meta { flex: none; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 12px; }
 .pr-header-progress { flex: none; color: var(--accent); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.pr-header-progress--done { color: var(--ok); }
 .pr-header-error { flex: 0 1 auto; min-width: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--error-text); font-size: 12px; }
 .pr-header-pill, .pr-header-comments { flex: none; padding: 4px 9px; border: 1px solid var(--border-button); border-radius: 999px; background: var(--surface); color: var(--text-muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .pr-header-pill--on, .pr-header-comments--open { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }

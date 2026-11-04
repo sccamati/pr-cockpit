@@ -21,7 +21,7 @@ export function usePullRequests({ onReset, onOpened }: {
   const repositoryId = ref('')
   const loading = ref(false)
   const error = ref('')
-  const checklistProgress = ref<Record<number, number>>({})
+  const quizProgress = ref<Record<number, { correct: number; total: number }>>({})
   const progressLoading = ref(false)
   const progressError = ref('')
   const fileReviewProgress = ref<Record<number, { reviewed: number; total: number }>>({})
@@ -59,13 +59,13 @@ export function usePullRequests({ onReset, onOpened }: {
   }
 
   function resetListProgress() {
-    checklistProgress.value = {}
+    quizProgress.value = {}
     progressLoading.value = false
     progressError.value = ''
     fileReviewProgress.value = {}
   }
 
-  // Guards the outer requestId, not its own, exactly like loadChecklistProgress.
+  // Guards the outer requestId, not its own, exactly like loadQuizProgress.
   async function loadFileReviewProgress(current: number, project: string, repository: string) {
     try {
       const result = await api.fileReviewProgress(project, repository)
@@ -74,19 +74,20 @@ export function usePullRequests({ onReset, onOpened }: {
           [item.pullRequestId, { reviewed: item.reviewedCount, total: item.changedFilesCount }]))
       }
     } catch {
-      // The checklist progress row already reports loading failures for this list; a second
+      // The quiz progress row already reports loading failures for this list; a second
       // banner for the file counter would be noise. Missing counters simply do not render.
       if (current === requestId) fileReviewProgress.value = {}
     }
   }
 
-  async function loadChecklistProgress(current: number, project: string, repository: string) {
+  async function loadQuizProgress(current: number, project: string, repository: string) {
     progressLoading.value = true
     progressError.value = ''
     try {
-      const result = await api.checklistProgress(project, repository)
+      const result = await api.quizProgress(project, repository)
       if (current === requestId) {
-        checklistProgress.value = Object.fromEntries(result.map(item => [item.pullRequestId, item.completedCount]))
+        quizProgress.value = Object.fromEntries(result.map(item =>
+          [item.pullRequestId, { correct: item.correct, total: item.total }]))
       }
     } catch (cause) {
       if (current === requestId) progressError.value = message(cause)
@@ -95,8 +96,8 @@ export function usePullRequests({ onReset, onOpened }: {
     }
   }
 
-  function retryChecklistProgress() {
-    void loadChecklistProgress(requestId, projectId.value, repositoryId.value)
+  function retryQuizProgress() {
+    void loadQuizProgress(requestId, projectId.value, repositoryId.value)
   }
 
   async function loadProjects() {
@@ -154,7 +155,7 @@ export function usePullRequests({ onReset, onOpened }: {
       if (current === requestId) {
         pullRequests.value = result
         if (result.length > 0) {
-          void loadChecklistProgress(current, projectId.value, repositoryId.value)
+          void loadQuizProgress(current, projectId.value, repositoryId.value)
           void loadFileReviewProgress(current, projectId.value, repositoryId.value)
         }
       }
@@ -187,15 +188,15 @@ export function usePullRequests({ onReset, onOpened }: {
     resetPullRequest()
     loading.value = false
     if (repositoryId.value && pullRequests.value.length > 0) {
-      void loadChecklistProgress(requestId, projectId.value, repositoryId.value)
+      void loadQuizProgress(requestId, projectId.value, repositoryId.value)
       void loadFileReviewProgress(requestId, projectId.value, repositoryId.value)
     }
   }
 
   return {
     projects, repositories, pullRequests, details, projectId, repositoryId, loading, error,
-    checklistProgress, progressLoading, progressError, fileReviewProgress, voteSaving, voteError,
-    loadProjects, loadRepositories, loadPullRequests, openPullRequest, backToList, retryChecklistProgress,
+    quizProgress, progressLoading, progressError, fileReviewProgress, voteSaving, voteError,
+    loadProjects, loadRepositories, loadPullRequests, openPullRequest, backToList, retryQuizProgress,
     toggleWaitingForAuthor,
   }
 }

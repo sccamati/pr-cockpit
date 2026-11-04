@@ -22,7 +22,7 @@ public class FileQuestionServiceTests
         foreach (var (question, selection) in new (string?, string?)[]
             { (null, null), ("", null), ("   ", null), (longQuestion, null), ("Po co to?", longSelection) })
         {
-            var rejected = await Assert.ThrowsAsync<ChecklistException>(() => service.AskAsync(
+            var rejected = await Assert.ThrowsAsync<ReviewRequestException>(() => service.AskAsync(
                 "project", "repo", 1, "/src/file.cs", question, selection, CancellationToken.None));
             Assert.Equal(400, rejected.StatusCode);
         }
@@ -167,6 +167,13 @@ public class FileQuestionServiceTests
             LastContext = context;
             return Answer();
         }
+
+        public Task<QuizDraft> ComposeQuizAsync(PrContext context, IReadOnlyList<string> focusFiles, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<QuizGradeDraft> GradeQuizAnswerAsync(
+            PrContext context, QuizQuestion question, string answer, CancellationToken ct) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeStore : IFileQuestionStore
