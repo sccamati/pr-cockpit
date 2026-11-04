@@ -90,10 +90,12 @@ W przeglądarce rozmowa siedzi w **szufladzie po prawej** (`position: fixed`), a
 - **Kiedy powstaje.** Model nie rusza przy otwarciu PR (US-P1 dalej obowiązuje). Kliknięcie „Rozpocznij przejście” zapisuje ścieżkę czytania i od razu, w tle, woła `POST .../quiz`. Przeglądarka nie czeka na to żądanie w UI i nie przerywa go przy wyjściu z PR: backend kończy i zapisuje, a powrót do PR czyta gotowy quiz przez `GET .../quiz`. Gdy żądanie wciąż trwa, `useQuiz` dołącza do niego (mapa na poziomie modułu), zamiast płacić drugi raz. Drugi `POST` dla tej samej głowy zwraca zapisany quiz bez modelu. W trybie drzewa (mały PR) jest przycisk „Ułóż quiz (uruchomi AI)” w szynie. `// ponytail:` zamknięcie karty przerywa żądanie i zabija proces; sufitem jest kolejka w hosted service.
 - **Co dostaje model.** Cały PR w budżecie `ContextBudget.Default` plus `focusFiles`, czyli zapisaną ścieżkę czytania. `PrContextBuilder` dostał `readFirst`: pliki ze ścieżki biorą budżet jako pierwsze, więc duży PR nie wypchnie tego, co recenzent przeczytał. Do tego dochodzi `SummaryDigest`, jeśli jest aktualne (`SummaryDigest.Current`, ta sama reguła co w pytaniu o plik).
 - **Schemat pytań** jest w `QuizInstruction`:
-  - zawsze jedno `intent` i co najmniej jedno `mechanism`;
-  - `domain` (biznes: do której encji należą dane, ich cykl życia, zależności), chyba że zmiana jest czysto techniczna;
-  - według PR-a: `runtime` (konfiguracja, sekrety, infrastruktura, zewnętrzna usługa), `design` (wzorzec: kolejka, outbox, idempotencja…), `impact`, `edge`, `debug`, `free`.
-- **Liczba pytań** nie ma górnego limitu (decyzja właściciela). Ogranicza ją limit wyjścia adaptera, a odrzucenie długiego quizu wyrzucałoby opłacony przebieg.
+  - zawsze jedno `intent` i jedno `mechanism`;
+  - jedno `domain` (biznes: do której encji należą dane, ich cykl życia, zależności), chyba że zmiana jest czysto techniczna;
+  - według PR-a: `runtime` (konfiguracja, sekrety, infrastruktura, zewnętrzna usługa), `design` (najważniejsza decyzja: kolejka, outbox, idempotencja…), `impact`, `edge`, `debug`, `free`;
+  - jedno pytanie pyta o jedną rzecz, prostym językiem, najlepiej o konkretną sytuację („Użytkownik zapisuje formularz bez e-maila. Co się stanie?”), do 250 znaków, 1–3 pliki i 1–2 punkty wzorca (B-41).
+- **Liczba pytań** nie ma górnego limitu w kodzie (decyzja właściciela), ale instrukcja każe pytać mało: 2–3 przy wąskiej poprawce, zwykle 3–6 przy funkcji, więcej tylko przy kilku niezależnych ryzykownych decyzjach. Liczba plików nie jest powodem do większej liczby pytań. Limity `QuizRunner` (500 znaków, 5 plików, 4 punkty) zostały luźniejsze niż instrukcja, bo odrzucenie quizu wyrzucałoby opłacony przebieg.
+- **Ocena** wymaga tylko tego, o co pyta pytanie. Punkt wzorca spoza pytania jest niuansem do dopowiedzenia, nie powodem niezaliczenia.
 - **Walidacja** w `QuizRunner`, która przy złamaniu reguły mówi, która reguła padła:
   - co najmniej 2 pytania, znany `kind`, wymagane `intent` i `mechanism`;
   - `files` 1–5 z listy zmienionych plików, bez powtórzeń;

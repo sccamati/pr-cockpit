@@ -1270,3 +1270,17 @@ Status: zrobione 4 lis 2026 na prośbę użytkownika. Frontend 134/134 (rozszerz
 **Poprawka.** Każde wyjście z ekranu domknięcia do pliku (plik pytania, pominięty plik, „Zejdź do pozostałych plików”) ustawia `quizBehind` w `useWalkthrough`. Wtedy nagłówek PR pokazuje „↩ Wróć do quizu” — w przejściu i w drzewie. Kliknięcie to `goToWalkIndex(walkPaths.length)`, czyli krok za ostatni plik: ekran domknięcia z quizem, bez oznaczania czegokolwiek. Wpisane odpowiedzi zostają, bo `drafts` żyją w `useQuiz`.
 
 **Świadomie pominięte (`ponytail`).** Brak skrótu klawiszowego i Esc nadal wychodzi z przejścia do drzewa, nie do quizu. Do dodania, jeśli przycisk okaże się za daleko od ręki.
+
+### B-41 — Quiz za długi i za trudny: 12 złożonych pytań przy PR na 50 plików
+
+Status: zrobione 4 lis 2026 na prośbę użytkownika. Zmienione same instrukcje dla modelu (`QuizInstruction`, jedno zdanie w `GradeInstruction`), bez zmian w kodzie walidacji. Backend 217/217. **Niepotwierdzone:** nowy quiz nie został jeszcze ułożony prawdziwym modelem. Zapisany quiz dla bieżącej głowy zostaje — nowe pytania daje dopiero „Ułóż quiz od nowa”.
+
+**Objaw.** Quiz do PR na 50 plików miał 12 pytań. Większość pytała o kilka rzeczy naraz („opisz, co było wcześniej, od jakiego miesiąca startowało i co jest teraz”), była napisana żargonem kodu (port, handler, nazwy klas) i kazała „prześledzić przepływ”. Ocena odrzucała odpowiedź, gdy brakowało w niej punktu wzorca, o który pytanie wprost nie pytało.
+
+**Decyzja użytkownika.** Mniej pytań, prostszych i konkretniejszych, prostym językiem — ale bez twardego limitu.
+
+**Zmiany.**
+- `intent`, `mechanism` i `domain` po jednym; pozostałe rodzaje tylko tam, gdzie coś ważnego jest; `design` o najważniejszej decyzji, nie o każdej.
+- Liczba: 2–3 przy wąskiej poprawce, zwykle 3–6 przy funkcji, więcej tylko przy kilku niezależnych ryzykownych decyzjach. Liczba plików nie jest powodem. Dwa pytania sprawdzające to samo — zostaje jedno.
+- Jedno pytanie = jedna rzecz, prosty język, najlepiej konkretna sytuacja zamiast „opisz” i „prześledź”, bez nazw klas, gdy da się opisać zachowanie słowami. Do 250 znaków, 1–3 pliki, 1–2 punkty wzorca tylko z tego, o co pyta.
+- Ocena: wymaga tylko tego, o co pyta pytanie; informacja zwrotna prostym językiem.
