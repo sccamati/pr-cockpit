@@ -159,6 +159,8 @@ const steps: Record<string, () => Promise<void>> = {
     await waitFor('.walk-done')
   },
   quiz: async () => { await steps.done!(); (await waitFor('.walk-done .quiz-question')).scrollIntoView(); await sleep(200) },
+  // A question's file opened from the closing screen: the header offers the way back.
+  quizback: async () => { await steps.done!(); (await waitFor('.walk-done .quiz-files .critical-open')).click(); await waitFor('.pr-header-quiz'); await sleep(2500) },
   rail: async () => { await steps.binary!(); document.querySelectorAll<HTMLDetailsElement>('.context-rail details').forEach(d => { d.open = true }); await sleep(100) },
 }
 ;(window as any).__scenarios = Object.keys(steps)

@@ -1260,3 +1260,13 @@ Status: zrobione 3 lis 2026 na prośbę użytkownika.
 - Brak kolejki w tle: żądanie układania żyje, dopóki żyje karta. Zamknięcie karty zabija proces. Hosted service, gdy to zacznie przeszkadzać.
 - Lista PR-ów nie zna głowy PR, więc „✓” zostaje po pushu, dopóki PR nie zostanie otwarty. Do domknięcia przez `lastMergeSourceCommit`, jeśli będzie mylić.
 - Zapis quizu to odczyt-zmiana-zapis jednego wiersza. UI ocenia jedną odpowiedź naraz, więc ścigać się mogą tylko dwie karty.
+
+### B-40 — Z pliku pod pytaniem quizu nie było szybkiej drogi z powrotem do quizu
+
+Status: zrobione 4 lis 2026 na prośbę użytkownika. Frontend 134/134 (rozszerzone dwa testy w `Walkthrough.test.ts`), `vue-tsc` i `vite build` przechodzą. `npm run visual`: 16 dotychczasowych scenariuszy bez zmian (szum poniżej 150 px), nowy scenariusz `quizback` nie ma zdjęcia bazowego — obejrzany w wariancie jasnym i wąskim. **Niepotwierdzone na prawdziwym PR.**
+
+**Objaw.** Link do pliku pod pytaniem na ekranie domknięcia przejścia otwierał plik w przejściu, na jego kroku. Powrót do quizu wymagał przeklikania „Przeczytane, dalej” przez resztę ścieżki.
+
+**Poprawka.** Każde wyjście z ekranu domknięcia do pliku (plik pytania, pominięty plik, „Zejdź do pozostałych plików”) ustawia `quizBehind` w `useWalkthrough`. Wtedy nagłówek PR pokazuje „↩ Wróć do quizu” — w przejściu i w drzewie. Kliknięcie to `goToWalkIndex(walkPaths.length)`, czyli krok za ostatni plik: ekran domknięcia z quizem, bez oznaczania czegokolwiek. Wpisane odpowiedzi zostają, bo `drafts` żyją w `useQuiz`.
+
+**Świadomie pominięte (`ponytail`).** Brak skrótu klawiszowego i Esc nadal wychodzi z przejścia do drzewa, nie do quizu. Do dodania, jeśli przycisk okaże się za daleko od ręki.

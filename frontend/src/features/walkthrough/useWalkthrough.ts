@@ -39,6 +39,9 @@ export function useWalkthrough({
   // so the default follows the ranking as it arrives.
   const walkPicked = ref<string[] | null>(null)
   const walkResumeDismissed = ref(false)
+  // The closing screen was left to read a file — a quiz question's or a skipped one. The quiz
+  // is then one click back, instead of the rest of the path walked again.
+  const quizBehind = ref(false)
 
   // Only code files count: a pull request that is five sources plus a lockfile is small.
   const codeFileCount = computed(() =>
@@ -159,6 +162,7 @@ export function useWalkthrough({
   }
 
   function leaveWalkthrough() {
+    if (view.value === 'done') quizBehind.value = true
     view.value = 'tree'
   }
 
@@ -174,6 +178,7 @@ export function useWalkthrough({
   async function startWalkthrough(paths: string[] = walkPick.value) {
     if (paths.length === 0) return
     walkSkipped.value = []
+    quizBehind.value = false
     walkPosition.value = 0
     walkHeadSha.value = details.value?.headCommitSha ?? null
     view.value = 'walk'
@@ -197,6 +202,7 @@ export function useWalkthrough({
     walkPosition.value = next
     void review.saveReadingPath(paths, next)
     if (next >= paths.length) {
+      quizBehind.value = false
       view.value = 'done'
       return
     }
@@ -227,12 +233,19 @@ export function useWalkthrough({
   function returnToWalkFile(path: string) {
     const index = walkPaths.value.indexOf(path)
     if (index < 0) return
+    quizBehind.value = true
     view.value = 'walk'
     void goToWalkIndex(index)
   }
 
+  // The end of the path is the closing screen, so going back is stepping past the last file.
+  function backToQuiz() {
+    void goToWalkIndex(walkPaths.value.length)
+  }
+
   function resetWalkthrough() {
     view.value = 'tree'
+    quizBehind.value = false
     walkSkipped.value = []
     walkPicked.value = null
     walkResumeDismissed.value = false
@@ -265,11 +278,11 @@ export function useWalkthrough({
   }
 
   return {
-    view, walkMode, walkSkipped, walkPicked, walkResumeDismissed,
+    view, walkMode, walkSkipped, walkPicked, walkResumeDismissed, quizBehind,
     walkWorthwhile, walkPaths, walkFilePath, walkFinished, walkResumable, walkChangedSincePicked,
     walkReadCount, walkSkippedPaths, roundPaths, roundUnreadCount, roundAvailable,
     walkPick, walkPickSet, walkOutsideCount, walkOutsideNoiseCount, walkCandidates, fullOrderMissing,
     toggleWalkPick, enterWalkthrough, setWalkMode, leaveWalkthrough, startWalkthrough, resumeWalkthrough,
-    goToWalkIndex, walkAdvance, walkBack, returnToWalkFile, resetWalkthrough, afterReviewsLoaded,
+    goToWalkIndex, walkAdvance, walkBack, returnToWalkFile, backToQuiz, resetWalkthrough, afterReviewsLoaded,
   }
 }

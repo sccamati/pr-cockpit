@@ -594,6 +594,10 @@ describe('quiz na koniec przeglądu', () => {
     expect(wrapper.find('.walk-done').exists()).toBe(false)
     expect(api.fileDiff.mock.lastCall?.[3]).toBe('/src/h.cs')
     expect(wrapper.find('.quiz-section .quiz-wrong').exists()).toBe(true)
+
+    await wrapper.find('.pr-header-quiz').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.walk-done .quiz-wrong').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -605,6 +609,12 @@ describe('quiz na koniec przeglądu', () => {
     await flushPromises()
 
     expect(wrapper.find('.walk-progress').text()).toBe('Krok 2 z 6')
+
+    // Back to the quiz in one click, not through the four files after this one.
+    await wrapper.find('.pr-header-quiz').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.walk-done').exists()).toBe(true)
+    expect(wrapper.find('.pr-header-quiz').exists()).toBe(false)
     wrapper.unmount()
   })
 

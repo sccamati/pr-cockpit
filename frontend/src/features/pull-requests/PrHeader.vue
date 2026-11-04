@@ -6,8 +6,9 @@ import { useCockpit } from '@/cockpit'
 
 defineEmits<{ help: [] }>()
 
-const { details, quiz: quizState, comments, pullRequests, backToList } = useCockpit()
+const { details, quiz: quizState, walk, comments, pullRequests, backToList } = useCockpit()
 const { quiz, quizPassed, quizComposing } = quizState
+const { quizBehind, backToQuiz } = walk
 const { threads, activeThreadCount, toggleComments, commentsEnabled } = comments
 const { voteSaving, voteError, toggleWaitingForAuthor } = pullRequests
 const waitingForAuthor = computed(() => details.value?.reviewers.some(reviewer => reviewer.isMine && reviewer.vote === -5) ?? false)
@@ -33,6 +34,9 @@ async function copyLink() {
     <span class="pr-header-meta">{{ details.author }}</span>
     <span v-if="quizComposing" class="pr-header-progress">Quiz…</span>
     <span v-else-if="quiz" class="pr-header-progress" :class="{ 'pr-header-progress--done': quizPassed }">{{ quizPassed ? 'Quiz ✓' : `Quiz ${quiz.correct} / ${quiz.total}` }}</span>
+    <!-- A file opened from the closing screen: the quiz is one click back, from the walkthrough or the tree. -->
+    <button v-if="quizBehind" type="button" class="pr-header-pill pr-header-pill--on pr-header-quiz" aria-label="Wróć do quizu"
+      title="Wróć do quizu" @click="backToQuiz"><span aria-hidden="true">↩</span><span class="pr-header-label"> Wróć do quizu</span></button>
     <span v-if="voteError" class="pr-header-error" role="alert" :title="voteError">{{ voteError }}</span>
     <!-- Like every other write, gone rather than greyed out when writing is off. -->
     <button v-if="commentsEnabled" type="button" class="pr-header-pill pr-header-vote"

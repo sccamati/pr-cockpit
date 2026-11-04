@@ -18,7 +18,7 @@ cd frontend; npm run visual:baseline                                            
 cd frontend; npm run visual                                                      # screenshots after, pixel diff, exit 1 on change
 ```
 
-Backend and frontend tests both run without Azure DevOps (HTTP fakes / mocked `src/api`). Nothing verifies real PR data — when a change touches it, say what is unverified rather than implying it passed. Layout is checked by `npm run visual`: the real `App` on fixtures (`frontend/visual/main.ts`), 15 scenarios × light/dark/700 px in headless Chrome or Edge, against a baseline you take yourself before the change (`visual/out/`, never committed — pixels are machine-specific). Under 150 px is antialiasing noise. A new screen or state needs a scenario there, and an API change needs its fixture route (unmocked calls are reported).
+Backend and frontend tests both run without Azure DevOps (HTTP fakes / mocked `src/api`). Nothing verifies real PR data — when a change touches it, say what is unverified rather than implying it passed. Layout is checked by `npm run visual`: the real `App` on fixtures (`frontend/visual/main.ts`), 17 scenarios × light/dark/700 px in headless Chrome or Edge, against a baseline you take yourself before the change (`visual/out/`, never committed — pixels are machine-specific). Under 150 px is antialiasing noise. A new screen or state needs a scenario there, and an API change needs its fixture route (unmocked calls are reported).
 
 Secrets (`AzureDevOps:Organization`, `AzureDevOps:Pat`, `Ai:Summary:*`) come from User Secrets or `AzureDevOps__*` env vars. See [README.md](README.md).
 
