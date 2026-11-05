@@ -101,9 +101,11 @@ Health check: `http://localhost:7180/api/health`.
 
 </details>
 
-The shortcut runs [`scripts/start.ps1`](scripts/start.ps1): it frees ports 7180/7181, runs `npm ci` if needed, starts
-both servers in one console and opens the browser. Close the window or press Ctrl+C to stop both. Rerun the installer
-after moving the repository; drop an `icon.ico` next to the script to change the icon.
+The installer builds the frontend, publishes the backend in Release to `publish/` and points the shortcut at
+`PRCockpit.Api.exe`: one process that also serves the built UI on http://localhost:7180 — no MSBuild, Vite or Node at
+runtime. Its console starts minimized; closing it stops the app, and a second click only opens the browser. **Rerun the
+installer after pulling changes** — the shortcut runs what was built. Drop an `icon.ico` next to the script to change
+the icon. [`scripts/start.ps1`](scripts/start.ps1) still starts the dev setup (both dev servers, hot reload) in one console.
 
 ## ⚙️ Configuration
 

@@ -43,6 +43,11 @@ using (var scope = app.Services.CreateScope())
     await scope.ServiceProvider.GetRequiredService<PrCockpitContext>().Database.MigrateAsync();
 }
 
+// The published build (scripts/install-shortcut.ps1) carries the built frontend in wwwroot,
+// so one process serves everything. Under `dotnet run` there is no wwwroot and Vite serves it.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
 var api = app.MapGroup("/api");
@@ -210,7 +215,21 @@ api.MapPut($"{PullRequests}/{{pullRequestId:int}}/reading-path", async (
     IReviewProgressStore store, CancellationToken ct) =>
     await Execute(() => store.SetReadingPathAsync(project, repositoryId, pullRequestId, update, ct)));
 
-app.Run();
+// Set by the desktop shortcut. A second click while the app runs fails to bind the port;
+// then the right answer is the already running instance, not an error.
+// ponytail: assumes whatever holds the port is PR Cockpit.
+var openBrowser = app.Configuration.GetValue("OpenBrowser", false);
+void OpenUi() => System.Diagnostics.Process.Start(
+    new System.Diagnostics.ProcessStartInfo(app.Configuration["urls"] ?? "http://localhost:7180") { UseShellExecute = true });
+if (openBrowser) app.Lifetime.ApplicationStarted.Register(OpenUi);
+try
+{
+    app.Run();
+}
+catch (IOException) when (openBrowser)
+{
+    OpenUi();
+}
 return 0;
 
 // Every failure kind is mapped here rather than in a try/catch per endpoint, so a new one

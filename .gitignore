@@ -40,3 +40,6 @@ frontend/src/assets/hero.png
 # Local agent tooling
 .claude/
 .codegraph/
+
+# Published build the desktop shortcut runs (scripts/install-shortcut.ps1)
+/publish/

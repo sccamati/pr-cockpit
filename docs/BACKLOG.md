@@ -1298,3 +1298,18 @@ Status: zrobione 4 lis 2026 na prośbę użytkownika. Backend 217/217 (test kluc
 **Co zostaje.** Reguła „zakończony” się nie zmienia. Pytanie zalicza tylko sprawdzona odpowiedź, a podejrzenie nie uruchamia modelu i niczego nie zapisuje. Nadal da się po podejrzeniu odpowiedzieć własnymi słowami i zaliczyć.
 
 **Świadomie pominięte (`ponytail`).** Podejrzenie nie jest zapisywane. Jeśli PR ma liczyć się jako zakończony po samym przeczytaniu odpowiedzi, trzeba dodać utrwalony stan „podejrzane” i zmienić regułę „zakończony”. Tego nie zrobiono bez decyzji użytkownika.
+
+### B-43 — Skrót na pulpicie odpala jeden proces zamiast całego środowiska deweloperskiego
+
+Status: zrobione 5 lis 2026 na prośbę użytkownika. Backend 217/217 (Release). Opublikowany `PRCockpit.Api.exe` sprawdzony na porcie 7190: `/` zwraca zbudowany frontend, `/api/health` odpowiada, druga instancja kończy się `IOException` przy bindowaniu portu (ten wyjątek łapie skrót). Pamięć: ~97 MB jednego procesu. **Niepotwierdzone: samo kliknięcie skrótu (otwarcie przeglądarki, drugie kliknięcie).**
+
+**Potrzeba.** Skrót uruchamiał `dotnet run` (MSBuild, serwer kompilatora ~400 MB, który zostaje po buildzie) i serwer Vite na Node — kilka procesów i kilkaset MB na samo przeglądanie PR.
+
+**Zmiana.**
+- `scripts/install-shortcut.ps1` buduje frontend, publikuje backend w Release do `publish/` (git-ignored), kopiuje `frontend/dist` do `publish/wwwroot` i kieruje skrót na `PRCockpit.Api.exe` (`--environment Development`, bo tylko to środowisko czyta User Secrets; okno zminimalizowane).
+- `Program.cs`: `UseDefaultFiles` + `UseStaticFiles` serwują frontend z `wwwroot`; przy `OpenBrowser=true` otwiera przeglądarkę po starcie, a gdy port jest zajęty — tylko przeglądarkę.
+- `PRCockpit.Api.csproj`: workstation GC bez GC współbieżnego zamiast server GC (jedna sterta zamiast jednej na rdzeń).
+
+**Co zostaje.** `scripts/start.ps1` dalej uruchamia tryb deweloperski z hot reload. Po zmianach w kodzie trzeba ponownie uruchomić `install-shortcut.ps1`, bo skrót odpala to, co zostało zbudowane.
+
+**Świadomie pominięte (`ponytail`).** Brak automatycznego przebudowania przy nieaktualnym `publish/` i brak ReadyToRun/trimmingu — do dodania, jeśli start albo zapominanie o przebudowie zacznie przeszkadzać.
