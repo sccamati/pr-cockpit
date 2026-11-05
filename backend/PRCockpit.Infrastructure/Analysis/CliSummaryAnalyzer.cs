@@ -219,7 +219,12 @@ public sealed class CliSummaryAnalyzer(
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
-            WorkingDirectory = AppContext.BaseDirectory
+            WorkingDirectory = AppContext.BaseDirectory,
+            // The default is the console's code page (CP852 on a Polish Windows console), which
+            // turned every "ę" of the answer into "─Ö" once the app ran from its own console.
+            StandardInputEncoding = new System.Text.UTF8Encoding(false),
+            StandardOutputEncoding = new System.Text.UTF8Encoding(false),
+            StandardErrorEncoding = new System.Text.UTF8Encoding(false)
         };
         foreach (var argument in configuration.GetSection("Ai:Summary:Arguments").Get<string[]>() ?? [])
             start.ArgumentList.Add(argument);
