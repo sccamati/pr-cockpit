@@ -58,7 +58,7 @@ const summaryFor = (pr: any) => ({
     omittedFiles: [{ path: '/package-lock.json', reason: 'noise' }] },
 })
 // Three questions in the three states a quiz has: passed (key shown), answered wrong (hint,
-// no key) and not answered yet. The answer endpoint passes whatever it is sent.
+// key folded) and not answered yet. The answer endpoint passes whatever it is sent.
 const quizFor = (pr: any, passedAll = false) => {
   const files = pr.changedFiles.filter((f: any) => !f.category).map((f: any) => f.path)
   const attempt = (correct: boolean, answer: string, feedback: string) => ({ answer, correct, feedback: [feedback], answeredAt: '2026-09-02T10:00:00Z' })
@@ -67,10 +67,10 @@ const quizFor = (pr: any, passedAll = false) => {
       expectedPoints: ['Zamówienie jest walidowane przed zapisem.', 'Błędne zamówienie nie trafia do bazy.'], passed: true, attemptCount: 1,
       lastAttempt: attempt(true, 'Walidacja zamówienia przed zapisem, złe nie trafiają do bazy.', 'Zgadza się — i walidator jest wołany tylko z serwisu.') },
     { id: 'q2', kind: 'domain', question: 'Do której encji należą nowe pola i jak długo żyją te dane?', files: files.slice(0, 2),
-      expectedPoints: passedAll ? ['Do linii zamówienia, na czas jednego zamówienia.'] : null, passed: passedAll, attemptCount: 1,
+      expectedPoints: ['Do linii zamówienia, na czas jednego zamówienia.'], passed: passedAll, attemptCount: 1,
       lastAttempt: attempt(passedAll, 'Do klienta.', passedAll ? 'Tak.' : 'Nie do klienta — zobacz, gdzie walidator czyta te pola, w OrderValidator.cs.') },
     { id: 'q3', kind: 'runtime', question: 'Czego ta zmiana potrzebuje na środowisku, żeby zadziałać?', files: [files[files.length - 1]],
-      expectedPoints: passedAll ? ['Klucza konfiguracji limitu.'] : null, passed: passedAll, attemptCount: passedAll ? 1 : 0,
+      expectedPoints: ['Klucza konfiguracji limitu.'], passed: passedAll, attemptCount: passedAll ? 1 : 0,
       lastAttempt: passedAll ? attempt(true, 'Limitu w konfiguracji.', 'Tak.') : null },
   ]
   return { headCommitSha: 'head', createdAt: '2026-09-02T10:00:00Z', correct: passedAll ? 3 : 1, total: 3, passed: passedAll, questions }
@@ -159,6 +159,14 @@ const steps: Record<string, () => Promise<void>> = {
     await waitFor('.walk-done')
   },
   quiz: async () => { await steps.done!(); (await waitFor('.walk-done .quiz-question')).scrollIntoView(); await sleep(200) },
+  // The answer folded open on a question not answered yet — a quick look instead of the work.
+  quizreveal: async () => {
+    await steps.done!()
+    const reveal = (await waitFor('.walk-done .quiz-reveal')) as HTMLDetailsElement
+    reveal.open = true
+    reveal.closest('li')!.scrollIntoView()
+    await sleep(200)
+  },
   // A question's file opened from the closing screen: the header offers the way back.
   quizback: async () => { await steps.done!(); (await waitFor('.walk-done .quiz-files .critical-open')).click(); await waitFor('.pr-header-quiz'); await sleep(2500) },
   rail: async () => { await steps.binary!(); document.querySelectorAll<HTMLDetailsElement>('.context-rail details').forEach(d => { d.open = true }); await sleep(100) },

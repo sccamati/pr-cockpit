@@ -128,15 +128,22 @@ public class QuizTests
         Assert.Single(store.Saved!.Items[1].Attempts);
     }
 
-    // The answer key is what a right answer must say: shown after passing, never before.
+    // The answer key goes out from the start, so the reviewer can read it on a pull request not
+    // worth digging into — but reading it passes nothing; only a graded answer does.
     [Fact]
-    public async Task HidesTheExpectedPointsUntilTheQuestionIsPassed()
+    public async Task HandsOutTheExpectedPointsBeforeThePassWithoutPassing()
     {
         var (service, analyzer, _, _) = Service(Stored());
 
+        var fresh = await service.GetAsync("p", "r", 1, CancellationToken.None);
+        Assert.Equal(["Wysyłka faktur."], fresh!.Questions[0].ExpectedPoints);
+        Assert.False(fresh.Questions[0].Passed);
+        Assert.Equal(0, fresh.Correct);
+
         analyzer.Grade = new QuizGradeDraft(2, false, ["Nie."]);
         var wrong = await service.AnswerAsync("p", "r", 1, "q1", "Nie wiem.", CancellationToken.None);
-        Assert.Null(wrong.Questions[0].ExpectedPoints);
+        Assert.Equal(["Wysyłka faktur."], wrong.Questions[0].ExpectedPoints);
+        Assert.False(wrong.Questions[0].Passed);
 
         analyzer.Grade = new QuizGradeDraft(2, true, ["Tak."]);
         var right = await service.AnswerAsync("p", "r", 1, "q1", "Wysyłka faktur.", CancellationToken.None);

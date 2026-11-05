@@ -162,8 +162,9 @@ dowodziła. Jej miejsce zajął quiz, który sprawdza zrozumienie zamiast deklar
     i cokolwiek, co agent uzna za warte pytania.
 * Liczba pytań zależy od zmiany i nie ma górnego limitu.
 * Agent pyta głównie o pliki, które przeczytałeś. Gdy ważna część zmiany leży poza nimi, pyta też o nią.
-* Każdą odpowiedź ocenia AI. Zła odpowiedź dostaje wskazówkę i link do pliku, do którego trzeba wrócić,
-  ale nie dostaje odpowiedzi. Wzorzec widać dopiero po zaliczeniu.
+* Każdą odpowiedź ocenia AI. Zła odpowiedź dostaje wskazówkę i link do pliku, do którego trzeba wrócić.
+* Pod każdym pytaniem jest zwinięte „Pokaż odpowiedź”. Przy mało ważnym PR można przeczytać odpowiedź
+  zamiast ją wypracowywać. Podejrzenie nie zalicza pytania.
 * Ocena traktuje kod jako prawdę. Poprawna odpowiedź spoza wzorca przechodzi, a odpowiedź, która
   wskazuje realny błąd zmiany, też przechodzi i jest tak nazwana.
 * **PR jest zakończony dopiero po zaliczeniu wszystkich pytań** dla bieżącego commita. Pytań nie da się

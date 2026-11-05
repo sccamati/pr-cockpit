@@ -170,8 +170,8 @@ export interface QuizQuestion {
   kind: QuizKind
   question: string
   files: string[]
-  // The answer key: null until the question is passed.
-  expectedPoints: string[] | null
+  // The answer key, always sent; the panel keeps it folded until the reviewer opens it.
+  expectedPoints: string[]
   passed: boolean
   attemptCount: number
   lastAttempt: QuizAttempt | null

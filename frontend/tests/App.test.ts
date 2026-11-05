@@ -469,8 +469,8 @@ describe('PR review', () => {
     api.composeQuiz.mockResolvedValue({
       headCommitSha: null, createdAt: '2026-09-01T12:00:00Z', correct: 0, total: 2, passed: false,
       questions: [
-        { id: 'q1', kind: 'intent', question: 'Po co ta zmiana?', files: ['/src/first.cs'], expectedPoints: null, passed: false, attemptCount: 0, lastAttempt: null },
-        { id: 'q2', kind: 'domain', question: 'Do czego należą nowe dane?', files: ['/src/second.cs'], expectedPoints: null, passed: false, attemptCount: 0, lastAttempt: null },
+        { id: 'q1', kind: 'intent', question: 'Po co ta zmiana?', files: ['/src/first.cs'], expectedPoints: ['Pierwszy.'], passed: false, attemptCount: 0, lastAttempt: null },
+        { id: 'q2', kind: 'domain', question: 'Do czego należą nowe dane?', files: ['/src/second.cs'], expectedPoints: ['Drugi.'], passed: false, attemptCount: 0, lastAttempt: null },
       ],
     })
     const wrapper = mount(App)

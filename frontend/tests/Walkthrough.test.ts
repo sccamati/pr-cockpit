@@ -64,7 +64,7 @@ function summary(criticalFiles = ranking, readingOrder: string[] | undefined = f
   }
 }
 
-// Two questions, as the backend hands them out: no answer key until a question is passed.
+// Two questions, as the backend hands them out: each with its answer key, passed or not.
 function quiz(overrides: { passed?: string[]; wrong?: string } = {}) {
   const passed = overrides.passed ?? []
   const questions = [
@@ -72,7 +72,7 @@ function quiz(overrides: { passed?: string[]; wrong?: string } = {}) {
     { id: 'q2', kind: 'runtime', question: 'Czego potrzebuje na środowisku?', files: ['/src/h.cs'] },
   ].map(question => ({
     ...question,
-    expectedPoints: passed.includes(question.id) ? ['Wzorcowy punkt.'] : null,
+    expectedPoints: [`Punkt ${question.id}.`],
     passed: passed.includes(question.id),
     attemptCount: passed.includes(question.id) || overrides.wrong === question.id ? 1 : 0,
     lastAttempt: passed.includes(question.id)
@@ -576,7 +576,28 @@ describe('quiz na koniec przeglądu', () => {
     wrapper.unmount()
   })
 
-  it('answers a wrong answer with a hint and a way back into the code, never the key', async () => {
+  // A quick look instead of working it out: the answer sits folded under every open question,
+  // and reading it costs no model run and passes nothing.
+  it('folds the answer under an open question and does not pass it for reading', async () => {
+    const wrapper = await openPr()
+    await walkToTheEnd(wrapper)
+
+    const reveals = wrapper.findAll('.walk-done .quiz-reveal')
+    expect(reveals).toHaveLength(2)
+    expect(reveals.every(reveal => !(reveal.element as HTMLDetailsElement).open)).toBe(true)
+    expect(reveals[1]!.find('summary').text()).toBe('Pokaż odpowiedź')
+    expect(reveals[1]!.text()).toContain('Punkt q2.')
+
+    ;(reveals[1]!.element as HTMLDetailsElement).open = true
+    await flushPromises()
+    expect(api.answerQuiz).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.walk-done .quiz-question--passed')).toHaveLength(0)
+    expect(wrapper.find('.pr-header-progress').text()).toBe('Quiz 0 / 2')
+    expect(wrapper.find('.walk-finish').text()).toBe('Wróć do listy (PR niezakończony)')
+    wrapper.unmount()
+  })
+
+  it('answers a wrong answer with a hint and a way back into the code, the key still folded', async () => {
     const wrapper = await openPr()
     await walkToTheEnd(wrapper)
 
@@ -584,7 +605,9 @@ describe('quiz na koniec przeglądu', () => {
 
     expect(api.answerQuiz).toHaveBeenCalledWith('project', 'repo-a', 123, 'q2', 'Nic.')
     expect(wrapper.find('.walk-done .quiz-wrong').text()).toContain('Brakuje konfiguracji')
+    expect(wrapper.find('.walk-done .quiz-wrong').text()).not.toContain('Punkt q2.')
     expect(wrapper.find('.walk-done').text()).not.toContain('Wzorcowo')
+    expect((wrapper.findAll('.walk-done .quiz-reveal')[1]!.element as HTMLDetailsElement).open).toBe(false)
     expect(wrapper.find('.walk-finish').text()).toBe('Wróć do listy (PR niezakończony)')
 
     // h.cs is not on the reading path, so it opens in the tree — where the rail keeps the quiz.

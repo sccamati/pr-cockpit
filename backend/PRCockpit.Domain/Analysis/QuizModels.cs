@@ -12,7 +12,7 @@ public record QuizGradeDraft(int SchemaVersion, bool? Correct, IReadOnlyList<str
 
 /// <summary>
 /// A validated question. The id is ours, never the model's; ExpectedPoints are what a right
-/// answer has to say, and stay on the server until the question is passed.
+/// answer has to say — the grader's key and the answer the reviewer can fold open.
 /// </summary>
 public record QuizQuestion(
     string Id, string Kind, string Question, IReadOnlyList<string> Files, IReadOnlyList<string> ExpectedPoints);
@@ -40,18 +40,19 @@ public record Quiz(int SchemaVersion, string? HeadCommitSha, IReadOnlyList<QuizI
             : item)]
     };
 
-    // The expected points are the answer key: shown once the question is passed, as the model
-    // answer to compare with, never before — a wrong attempt gets the grader's hint instead.
+    // The expected points are the answer key, and they always go out: the reviewer may fold
+    // one open to read the answer on a pull request not worth digging into. Reading is not
+    // passing — only a graded answer passes, so the "done" rule above is untouched.
     public QuizView ToView() => new(HeadCommitSha, CreatedAt, Correct, Items.Count, Correct == Items.Count,
         [.. Items.Select(item => new QuizQuestionView(
             item.Question.Id, item.Question.Kind, item.Question.Question, item.Question.Files,
-            item.Passed ? item.Question.ExpectedPoints : null, item.Passed,
+            item.Question.ExpectedPoints, item.Passed,
             item.Attempts.Count, item.Attempts.Count > 0 ? item.Attempts[^1] : null))]);
 }
 
 public record QuizQuestionView(
     string Id, string Kind, string Question, IReadOnlyList<string> Files,
-    IReadOnlyList<string>? ExpectedPoints, bool Passed, int AttemptCount, QuizAttempt? LastAttempt);
+    IReadOnlyList<string> ExpectedPoints, bool Passed, int AttemptCount, QuizAttempt? LastAttempt);
 
 public record QuizView(
     string? HeadCommitSha, DateTimeOffset CreatedAt, int Correct, int Total, bool Passed,

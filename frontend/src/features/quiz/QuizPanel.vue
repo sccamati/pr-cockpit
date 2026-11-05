@@ -46,7 +46,7 @@ function openQuestionFile(path: string) {
             <summary><span class="quiz-mark">✓</span> {{ index + 1 }}/{{ quiz.total }} · {{ quizKindLabels[question.kind] }} · {{ question.question }}</summary>
             <p v-if="question.lastAttempt" class="quiz-answer"><strong>Twoja odpowiedź:</strong> {{ question.lastAttempt.answer }}</p>
             <p v-for="(sentence, line) in question.lastAttempt?.feedback ?? []" :key="line" class="quiz-feedback">{{ sentence }}</p>
-            <div v-if="question.expectedPoints" class="quiz-expected">
+            <div class="quiz-expected">
               <strong>Wzorcowo:</strong>
               <ul><li v-for="(point, line) in question.expectedPoints" :key="line">{{ point }}</li></ul>
             </div>
@@ -73,6 +73,13 @@ function openQuestionFile(path: string) {
               <span v-if="question.attemptCount > 0" class="muted">Próby: {{ question.attemptCount }}</span>
             </div>
             <p v-if="answerError?.id === question.id" class="notice error" role="alert">{{ answerError.text }}</p>
+            <!-- For a pull request not worth digging into: read the answer instead of working it
+                 out. Folded, so it never gives itself away, and reading it passes nothing. -->
+            <details class="quiz-reveal">
+              <summary>Pokaż odpowiedź</summary>
+              <ul><li v-for="(point, line) in question.expectedPoints" :key="line">{{ point }}</li></ul>
+              <p class="muted">Podejrzenie nie zalicza pytania — zalicza je tylko sprawdzona odpowiedź.</p>
+            </details>
           </template>
         </li>
       </ol>
@@ -103,6 +110,9 @@ function openQuestionFile(path: string) {
 .quiz-wrong p { margin: 4px 0 0; }
 .quiz-answer, .quiz-feedback { margin: 8px 0 0; font-size: 13px; }
 .quiz-expected { margin-top: 8px; font-size: 13px; }
-.quiz-expected ul { margin: 4px 0 0; padding-left: 20px; }
+.quiz-expected ul, .quiz-reveal ul { margin: 4px 0 0; padding-left: 20px; }
+.quiz-reveal { margin-top: 8px; font-size: 13px; }
+.quiz-reveal summary { cursor: pointer; color: var(--text-soft); }
+.quiz-reveal .muted { margin: 4px 0 0; font-size: 12px; }
 .quiz-regenerate { align-self: flex-start; font-size: 12px; }
 </style>

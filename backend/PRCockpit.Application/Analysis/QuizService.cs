@@ -9,8 +9,8 @@ namespace PRCockpit.Application.Analysis;
 /// <summary>
 /// The quiz that closes a review. Composed once per head — the browser starts it in the
 /// background when a walkthrough starts, and a second call for the same head costs nothing —
-/// and graded one answer at a time. The answer key never leaves this service before the
-/// question is passed.
+/// and graded one answer at a time. The answer key goes out with every question, folded in
+/// the UI; only a graded answer passes one.
 /// </summary>
 public sealed class QuizService(
     IAzureDevOpsClient client,

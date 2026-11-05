@@ -1284,3 +1284,17 @@ Status: zrobione 4 lis 2026 na prośbę użytkownika. Zmienione same instrukcje 
 - Liczba: 2–3 przy wąskiej poprawce, zwykle 3–6 przy funkcji, więcej tylko przy kilku niezależnych ryzykownych decyzjach. Liczba plików nie jest powodem. Dwa pytania sprawdzające to samo — zostaje jedno.
 - Jedno pytanie = jedna rzecz, prosty język, najlepiej konkretna sytuacja zamiast „opisz” i „prześledź”, bez nazw klas, gdy da się opisać zachowanie słowami. Do 250 znaków, 1–3 pliki, 1–2 punkty wzorca tylko z tego, o co pyta.
 - Ocena: wymaga tylko tego, o co pyta pytanie; informacja zwrotna prostym językiem.
+
+### B-42 — Odpowiedź na pytanie quizu do rozwinięcia bez odpowiadania
+
+Status: zrobione 4 lis 2026 na prośbę użytkownika. Backend 217/217 (test klucza w `QuizTests` odwrócony: wzorzec jest od początku, zaliczenia nie daje), frontend 135/135 (nowy test w `Walkthrough.test.ts`), `vue-tsc` i `vite build` przechodzą. `npm run visual`: różnice tylko tam, gdzie widać otwarte pytanie quizu (`quiz`, `done` i wąskie scenariusze z quizem w szynie) — o nowy wiersz „Pokaż odpowiedź”. Pozostałe scenariusze bez zmian (szum poniżej 150 px). Nowy scenariusz `quizreveal` nie ma zdjęcia bazowego, obejrzany w trzech wariantach. **Niepotwierdzone na prawdziwym PR.**
+
+**Potrzeba.** Przy mało ważnym PR użytkownik nie wgryza się w kod, tylko rzuca okiem. Pytania są wartościowe same w sobie, więc chce zawsze móc przeczytać odpowiedź, zamiast ją wypracować.
+
+**Zmiana.**
+- `Quiz.ToView` wysyła `expectedPoints` przy każdym pytaniu, nie dopiero po zaliczeniu. `QuizQuestionView.ExpectedPoints` nie jest już nullable.
+- `QuizPanel`: pod każdym niezaliczonym pytaniem jest zwinięte `<details class="quiz-reveal">` „Pokaż odpowiedź” z punktami wzorca i dopiskiem, że podejrzenie nie zalicza pytania. Zła odpowiedź go nie rozwija.
+
+**Co zostaje.** Reguła „zakończony” się nie zmienia. Pytanie zalicza tylko sprawdzona odpowiedź, a podejrzenie nie uruchamia modelu i niczego nie zapisuje. Nadal da się po podejrzeniu odpowiedzieć własnymi słowami i zaliczyć.
+
+**Świadomie pominięte (`ponytail`).** Podejrzenie nie jest zapisywane. Jeśli PR ma liczyć się jako zakończony po samym przeczytaniu odpowiedzi, trzeba dodać utrwalony stan „podejrzane” i zmienić regułę „zakończony”. Tego nie zrobiono bez decyzji użytkownika.
